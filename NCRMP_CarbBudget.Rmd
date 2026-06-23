@@ -1,0 +1,2272 @@
+---
+title: "NCRMP Carbonate Budget"
+author: "john morris"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+editor_options:
+  chunk_output_type: console
+params:
+  rootFolder: "/Users/john.morris/Desktop/projections/ReefPersistenceTool/analysis"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+
+`%||%` <- function(x, y) if (!is.null(x) && length(x) > 0 && !all(is.na(x))) x else y
+```
+
+```{r loadPackages, echo=FALSE}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+```
+
+```{r read Data and define output directory, echo = FALSE}
+
+ncrmp_data <- read_csv(
+  file.path(params$rootFolder, "NCRMP_CarbonateBudgets_2014_to_2024.csv"),
+  show_col_types = FALSE
+)
+
+# Toggle figure export here:
+# TRUE  = export PNG and SVG files
+# FALSE = do not export files
+export_figures <- FALSE
+
+png_dir <- file.path(params$rootFolder, "png")
+svg_dir <- file.path(params$rootFolder, "svg")
+
+if (export_figures) {
+  dir.create(png_dir, showWarnings = FALSE, recursive = TRUE)
+  dir.create(svg_dir, showWarnings = FALSE, recursive = TRUE)
+}
+
+# Quick check
+#glimpse(ncrmp_data)
+```
+
+```{r regression-plot-function, echo = FALSE}
+
+make_regression_plot <- function(data,
+                                 x_var,
+                                 x_label,
+                                 y_var = "net_G",
+                                 y_label = "Net Carbonate Production",
+                                 group_var,
+                                 color_values,
+                                 legend_title,
+                                 output_stub,
+                                 export_figures = FALSE,
+                                 png_dir = NULL,
+                                 svg_dir = NULL) {
+  
+  plot_data <- data %>%
+    filter(
+      !is.na(.data[[x_var]]),
+      !is.na(.data[[y_var]]),
+      !is.na(.data[[group_var]])
+    )
+  
+  lm_formula <- as.formula(paste(y_var, "~", x_var))
+  lm_fit <- lm(lm_formula, data = plot_data)
+  lm_summary <- summary(lm_fit)
+  
+  intercept <- coef(lm_fit)[1]
+  slope <- coef(lm_fit)[2]
+  p_value <- lm_summary$coefficients[2, 4]
+  
+  equation_label <- paste0(
+    "y = ",
+    round(intercept, 3),
+    if_else(slope >= 0, " + ", " - "),
+    abs(round(slope, 3)),
+    "x"
+  )
+  
+  p_label <- case_when(
+    p_value < 0.001 ~ "p < 0.001",
+    TRUE ~ paste0("p = ", round(p_value, 3))
+  )
+  
+  annotation_label <- paste0(equation_label, "\n", p_label)
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = .data[[x_var]],
+      y = .data[[y_var]],
+      color = .data[[group_var]]
+    )
+  ) +
+    geom_point(size = 1.2, alpha = 0.75) +
+    geom_smooth(
+      aes(group = 1),
+      method = "lm",
+      se = TRUE,
+      color = "black",
+      fill = "grey75",
+      linewidth = 0.8
+    ) +
+    annotate(
+      "text",
+      x = Inf,
+      y = Inf,
+      label = annotation_label,
+      hjust = 1.1,
+      vjust = 1.3,
+      size = 4.2
+    ) +
+    scale_color_manual(
+      values = color_values,
+      name = legend_title,
+      drop = FALSE
+    ) +
+    labs(
+      x = x_label,
+      y = y_label
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "right",
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 8,
+      height = 5,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 8,
+      height = 5
+    )
+  }
+  
+  return(p)
+}
+```
+
+```{r faceted-regression-plot-function, echo = FALSE}
+
+make_faceted_regression_plot <- function(data,
+                                         x_var,
+                                         x_label,
+                                         y_var = "net_G",
+                                         y_label = "Net Carbonate Production",
+                                         group_var,
+                                         color_values,
+                                         legend_title,
+                                         output_stub,
+                                         export_figures = FALSE,
+                                         png_dir = NULL,
+                                         svg_dir = NULL) {
+  
+  plot_data <- data %>%
+    filter(
+      !is.na(.data[[x_var]]),
+      !is.na(.data[[y_var]]),
+      !is.na(.data[[group_var]])
+    )
+  
+  calc_group_p <- function(df, x_var, y_var) {
+    
+    if (nrow(df) < 3 || length(unique(df[[x_var]])) < 2) {
+      return(NA_real_)
+    }
+    
+    lm_fit <- lm(
+      formula = as.formula(paste(y_var, "~", x_var)),
+      data = df
+    )
+    
+    lm_summary <- summary(lm_fit)
+    
+    if (nrow(lm_summary$coefficients) < 2) {
+      return(NA_real_)
+    }
+    
+    lm_summary$coefficients[2, 4]
+  }
+  
+  reg_stats <- plot_data %>%
+    group_by(.data[[group_var]]) %>%
+    group_modify(
+      ~ tibble(
+        p_value = calc_group_p(.x, x_var = x_var, y_var = y_var)
+      )
+    ) %>%
+    ungroup() %>%
+    mutate(
+      p_label = case_when(
+        is.na(p_value) ~ "p = NA",
+        p_value < 0.0001 ~ "p < 0.0001",
+        p_value < 0.001 ~ "p < 0.001",
+        TRUE ~ paste0("p = ", round(p_value, 3))
+      )
+    )
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = .data[[x_var]],
+      y = .data[[y_var]],
+      color = .data[[group_var]]
+    )
+  ) +
+    geom_hline(
+      yintercept = 0,
+      linewidth = 0.45,
+      color = "grey40"
+    ) +
+    geom_point(
+      size = 1.2,
+      alpha = 0.7
+    ) +
+    geom_smooth(
+      method = "lm",
+      se = TRUE,
+      linewidth = 0.8,
+      fill = "grey80",
+      alpha = 0.6
+    ) +
+    geom_text(
+      data = reg_stats,
+      aes(
+        x = Inf,
+        y = Inf,
+        label = p_label
+      ),
+      inherit.aes = FALSE,
+      hjust = 1.1,
+      vjust = 1.3,
+      size = 4.2
+    ) +
+    facet_wrap(
+      as.formula(paste("~", group_var))
+    ) +
+    scale_color_manual(
+      values = color_values,
+      name = legend_title,
+      drop = FALSE
+    ) +
+    labs(
+      x = x_label,
+      y = y_label
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "right",
+      strip.background = element_blank(),
+      strip.text = element_text(face = "bold", size = 15),
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 10,
+      height = 5.5,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 10,
+      height = 5.5
+    )
+  }
+  
+  return(p)
+}
+```
+
+```{r regional-lineplot-function, echo = FALSE}
+
+regional_data <- ncrmp_data %>%
+  mutate(
+    REGION_PLOT = case_when(
+      REGION == "SEFCRI" ~ "SEFCRI",
+      REGION %in% c("FLK", "FLA KEYS") ~ "FLK",
+      REGION == "DRTO" ~ "DRTO",
+      TRUE ~ NA_character_
+    ),
+    REGION_PLOT = factor(
+      REGION_PLOT,
+      levels = c("SEFCRI", "FLK", "DRTO")
+    ),
+    YEAR = as.integer(YEAR)
+  ) %>%
+  filter(!is.na(REGION_PLOT))
+
+# Region colors
+region_colors <- c(
+  "SEFCRI" = "red3",
+  "FLK"    = "green3",
+  "DRTO"   = "blue3"
+)
+
+# Force x-axis years, including 2020 even though there is no data
+year_breaks <- c(2014, 2016, 2018, 2020, 2022, 2024)
+
+make_regional_lineplot <- function(data,
+                                   y_var,
+                                   y_label,
+                                   output_stub,
+                                   export_figures = FALSE,
+                                   png_dir = NULL,
+                                   svg_dir = NULL) {
+  
+  plot_data <- data %>%
+    group_by(YEAR, REGION_PLOT) %>%
+    summarise(
+      mean_value = mean(.data[[y_var]], na.rm = TRUE),
+      sd_value = sd(.data[[y_var]], na.rm = TRUE),
+      n = sum(!is.na(.data[[y_var]])),
+      se_value = if_else(n > 1, sd_value / sqrt(n), NA_real_),
+      .groups = "drop"
+    ) %>%
+    filter(n > 0)
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = YEAR,
+      y = mean_value,
+      color = REGION_PLOT,
+      group = REGION_PLOT
+    )
+  ) +
+    geom_line(linewidth = 0.7) +
+    geom_point(size = 1.2) +
+    geom_errorbar(
+      aes(
+        ymin = mean_value - se_value,
+        ymax = mean_value + se_value
+      ),
+      width = 0.12,
+      linewidth = 0.45,
+      na.rm = TRUE
+    ) +
+    scale_color_manual(
+      values = region_colors,
+      name = "Region",
+      drop = FALSE
+    ) +
+    scale_x_continuous(
+      breaks = year_breaks,
+      limits = range(year_breaks)
+    ) +
+    labs(
+      x = "Year",
+      y = y_label
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "right",
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 8,
+      height = 5,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 8,
+      height = 5
+    )
+  }
+  
+  return(p)
+}
+```
+
+```{r subregional-lineplot-function, echo = FALSE}
+
+subregional_data <- ncrmp_data %>%
+  mutate(
+    SUB_REGION_PLOT = case_when(
+      SUB_REGION_2 == "SEFCRI" ~ "SEFCRI",
+      SUB_REGION_2 == "Biscayne" ~ "BISC",
+      SUB_REGION_2 %in% c("Upper Keys", "Upper_Keys") ~ "UK",
+      SUB_REGION_2 %in% c("Middle Keys", "Middle_Keys") ~ "MK",
+      SUB_REGION_2 %in% c("Lower Keys", "Lower_Keys") ~ "LK",
+      SUB_REGION_2 %in% c("Tortugas", "DRTO") ~ "DRTO",
+      TRUE ~ NA_character_
+    ),
+    SUB_REGION_PLOT = factor(
+      SUB_REGION_PLOT,
+      levels = c("SEFCRI", "BISC", "UK", "MK", "LK", "DRTO")
+    ),
+    YEAR = as.integer(YEAR)
+  ) %>%
+  filter(!is.na(SUB_REGION_PLOT))
+
+# Distinct subregion colors
+subregion_colors <- c(
+  "SEFCRI" = "#D55E00",
+  "BISC"   = "#CC79A7",
+  "UK"     = "#009E73",
+  "MK"     = "#E69F00",
+  "LK"     = "#0072B2",
+  "DRTO"   = "#000000"
+)
+
+# Force x-axis years, including 2020 even though there is no data
+year_breaks <- c(2014, 2016, 2018, 2020, 2022, 2024)
+make_subregional_lineplot <- function(data,
+                                      y_var,
+                                      y_label,
+                                      output_stub,
+                                      export_figures = FALSE,
+                                      png_dir = NULL,
+                                      svg_dir = NULL) {
+  
+  plot_data <- data %>%
+    group_by(YEAR, SUB_REGION_PLOT) %>%
+    summarise(
+      mean_value = mean(.data[[y_var]], na.rm = TRUE),
+      sd_value = sd(.data[[y_var]], na.rm = TRUE),
+      n = sum(!is.na(.data[[y_var]])),
+      se_value = if_else(n > 1, sd_value / sqrt(n), NA_real_),
+      .groups = "drop"
+    ) %>%
+    filter(n > 0)
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = YEAR,
+      y = mean_value,
+      color = SUB_REGION_PLOT,
+      group = SUB_REGION_PLOT
+    )
+  ) +
+    geom_line(linewidth = 0.7) +
+    geom_point(size = 1.2) +
+    geom_errorbar(
+      aes(
+        ymin = mean_value - se_value,
+        ymax = mean_value + se_value
+      ),
+      width = 0.12,
+      linewidth = 0.45,
+      na.rm = TRUE
+    ) +
+    scale_color_manual(
+      values = subregion_colors,
+      name = "Sub-region",
+      drop = FALSE
+    ) +
+    scale_x_continuous(
+      breaks = year_breaks,
+      limits = range(year_breaks)
+    ) +
+    labs(
+      x = "Year",
+      y = y_label
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "right",
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 8,
+      height = 5,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 8,
+      height = 5
+    )
+  }
+  
+  return(p)
+}
+```
+
+```{r habitat-type-lineplot-function, echo = FALSE}
+
+habitat_data <- ncrmp_data %>%
+  mutate(
+    YEAR = as.integer(YEAR),
+    
+    HABITAT_PLOT = case_when(
+      HABITAT_TYPE == "SEFCRI" ~ "SEFCRI",
+      HABITAT_TYPE == "Inshore" ~ "Inshore",
+      HABITAT_TYPE %in% c("MidChannel", "Mid Channel", "Midchannel") ~ "MidChannel",
+      HABITAT_TYPE == "Offshore" ~ "Offshore",
+      HABITAT_TYPE == "Lagoon" ~ "Lagoon",
+      HABITAT_TYPE %in% c("Forereef", "ForeReef", "Fore Reef") ~ "Forereef",
+      HABITAT_TYPE == "Bank" ~ "Bank",
+      TRUE ~ NA_character_
+    ),
+    
+    HABITAT_PLOT = factor(
+      HABITAT_PLOT,
+      levels = c(
+        "SEFCRI",
+        "Inshore",
+        "MidChannel",
+        "Offshore",
+        "Lagoon",
+        "Forereef",
+        "Bank"
+      )
+    ),
+    
+    SUB_REGION_PLOT = case_when(
+      SUB_REGION_2 == "SEFCRI" ~ "SEFCRI",
+      SUB_REGION_2 == "Biscayne" ~ "BISC",
+      SUB_REGION_2 %in% c("Upper Keys", "Upper_Keys") ~ "UK",
+      SUB_REGION_2 %in% c("Middle Keys", "Middle_Keys") ~ "MK",
+      SUB_REGION_2 %in% c("Lower Keys", "Lower_Keys") ~ "LK",
+      SUB_REGION_2 %in% c("Tortugas", "DRTO") ~ "DRTO",
+      TRUE ~ NA_character_
+    ),
+    
+    SUB_REGION_PLOT = factor(
+      SUB_REGION_PLOT,
+      levels = c("SEFCRI", "BISC", "UK", "MK", "LK", "DRTO")
+    )
+  ) %>%
+  filter(!is.na(HABITAT_PLOT))
+
+# Habitat colors
+habitat_colors <- c(
+  "SEFCRI"     = "#8B0000",  # dark red
+  "Inshore"    = "#E69F00",  # orange/gold
+  "MidChannel" = "#009E73",  # green
+  "Offshore"   = "#CC79A7",  # purple/pink
+  "Lagoon"     = "#56B4E9",  # sky blue
+  "Forereef"   = "#0072B2",  # blue
+  "Bank"       = "#000000"   # black
+)
+
+# FLK-only habitat colors
+flk_habitat_colors <- habitat_colors[c("Inshore", "MidChannel", "Offshore")]
+
+# DRTO-only habitat colors
+drto_habitat_colors <- habitat_colors[c("Lagoon", "Forereef", "Bank")]
+
+make_habitat_lineplot <- function(data,
+                                  y_var,
+                                  y_label,
+                                  plot_title,
+                                  output_stub,
+                                  color_values,
+                                  export_figures = FALSE,
+                                  png_dir = NULL,
+                                  svg_dir = NULL) {
+  
+  plot_data <- data %>%
+    filter(
+      !is.na(YEAR),
+      !is.na(HABITAT_PLOT),
+      !is.na(.data[[y_var]])
+    ) %>%
+    group_by(YEAR, HABITAT_PLOT) %>%
+    summarise(
+      mean_value = mean(.data[[y_var]], na.rm = TRUE),
+      sd_value = sd(.data[[y_var]], na.rm = TRUE),
+      n = sum(!is.na(.data[[y_var]])),
+      se_value = if_else(n > 1, sd_value / sqrt(n), NA_real_),
+      .groups = "drop"
+    ) %>%
+    filter(n > 0)
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = YEAR,
+      y = mean_value,
+      color = HABITAT_PLOT,
+      group = HABITAT_PLOT
+    )
+  ) +
+    geom_line(linewidth = 0.7) +
+    geom_point(size = 1.2) +
+    geom_errorbar(
+      aes(
+        ymin = mean_value - se_value,
+        ymax = mean_value + se_value
+      ),
+      width = 0.12,
+      linewidth = 0.45,
+      na.rm = TRUE
+    ) +
+    scale_color_manual(
+      values = color_values,
+      name = "Habitat Type",
+      drop = FALSE
+    ) +
+    scale_x_continuous(
+      breaks = year_breaks,
+      limits = range(year_breaks)
+    ) +
+    labs(
+      title = plot_title,
+      x = "Year",
+      y = y_label
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right",
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 8,
+      height = 5,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 8,
+      height = 5
+    )
+  }
+  
+  return(p)
+}
+```
+
+```{r reef-state-plot-prep, echo = FALSE}
+
+reef_state_levels <- c("Growth", "Stasis", "Erosion")
+
+reef_state_colors <- c(
+  "Growth" = "#006400",  # dark green
+  "Stasis" = "#B8860B",  # dark yellow / goldenrod
+  "Erosion" = "#8B0000"   # dark red
+)
+
+reef_state_data <- ncrmp_data %>%
+  mutate(
+    YEAR = as.integer(YEAR),
+    
+    budget_State = factor(
+      budget_State,
+      levels = reef_state_levels
+    ),
+    
+    REGION_PLOT = case_when(
+      REGION == "SEFCRI" ~ "SEFCRI",
+      REGION %in% c("FLK", "FLA KEYS") ~ "FLK",
+      REGION == "DRTO" ~ "DRTO",
+      TRUE ~ NA_character_
+    ),
+    
+    REGION_PLOT = factor(
+      REGION_PLOT,
+      levels = c("SEFCRI", "FLK", "DRTO")
+    ),
+    
+    SUB_REGION_PLOT = case_when(
+      SUB_REGION_2 == "SEFCRI" ~ "SEFCRI",
+      SUB_REGION_2 == "Biscayne" ~ "BISC",
+      SUB_REGION_2 %in% c("Upper Keys", "Upper_Keys") ~ "UK",
+      SUB_REGION_2 %in% c("Middle Keys", "Middle_Keys") ~ "MK",
+      SUB_REGION_2 %in% c("Lower Keys", "Lower_Keys") ~ "LK",
+      SUB_REGION_2 %in% c("Tortugas", "DRTO") ~ "DRTO",
+      TRUE ~ NA_character_
+    ),
+    
+    SUB_REGION_PLOT = factor(
+      SUB_REGION_PLOT,
+      levels = c("SEFCRI", "BISC", "UK", "MK", "LK", "DRTO")
+    ),
+    
+    HABITAT_PLOT = case_when(
+      HABITAT_TYPE == "Inshore" ~ "Inshore",
+      HABITAT_TYPE %in% c("MidChannel", "Mid Channel", "Midchannel") ~ "MidChannel",
+      HABITAT_TYPE == "Offshore" ~ "Offshore",
+      HABITAT_TYPE == "Lagoon" ~ "Lagoon",
+      HABITAT_TYPE %in% c("Forereef", "ForeReef", "Fore Reef") ~ "Forereef",
+      HABITAT_TYPE == "Bank" ~ "Bank",
+      TRUE ~ NA_character_
+    ),
+    
+    HABITAT_PLOT = factor(
+      HABITAT_PLOT,
+      levels = c("Inshore", "MidChannel", "Offshore", "Lagoon", "Forereef", "Bank")
+    )
+  ) %>%
+  filter(!is.na(budget_State))
+
+
+make_reef_state_barplot <- function(data,
+                                    plot_title,
+                                    output_stub,
+                                    export_figures = FALSE,
+                                    png_dir = NULL,
+                                    svg_dir = NULL) {
+  
+  plot_data <- data %>%
+    filter(!is.na(YEAR), !is.na(budget_State)) %>%
+    count(YEAR, budget_State, name = "site_count") %>%
+    complete(
+      YEAR = year_breaks,
+      budget_State = factor(reef_state_levels, levels = reef_state_levels),
+      fill = list(site_count = 0)
+    ) %>%
+    group_by(YEAR) %>%
+    mutate(
+      annual_total = sum(site_count),
+      annual_proportion = if_else(
+        annual_total > 0,
+        site_count / annual_total,
+        NA_real_
+      )
+    ) %>%
+    ungroup() %>%
+    filter(!is.na(annual_proportion))
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = factor(YEAR, levels = year_breaks),
+      y = annual_proportion,
+      fill = budget_State
+    )
+  ) +
+    geom_col(
+      position = position_dodge(width = 0.8),
+      width = 0.7,
+      color = "black",
+      linewidth = 0.25
+    ) +
+    scale_fill_manual(
+      values = reef_state_colors,
+      name = "Budget State",
+      drop = FALSE
+    ) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, 0.2),
+      expand = expansion(mult = c(0, 0.04))
+    ) +
+    labs(
+      title = plot_title,
+      x = "Year",
+      y = "Annual Proportion"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right",
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 8,
+      height = 5,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 8,
+      height = 5
+    )
+  }
+  
+  return(p)
+}
+```
+
+```{r carbonate-production-barplot-function, echo = FALSE}
+make_carbonate_barplot <- function(data,
+                                   plot_title,
+                                   output_stub,
+                                   export_figures = FALSE,
+                                   png_dir = NULL,
+                                   svg_dir = NULL) {
+  
+  metric_levels <- c(
+    "Net carbonate production",
+    "Gross carbonate production",
+    "Gross carbonate erosion"
+  )
+  
+  metric_colors <- c(
+    "Net carbonate production" = "black",
+    "Gross carbonate production" = "white",
+    "Gross carbonate erosion" = "grey65"
+  )
+  
+  plot_wide <- data %>%
+    filter(
+      !is.na(YEAR),
+      !is.na(net_G),
+      !is.na(grossP_G),
+      !is.na(grossE_G)
+    ) %>%
+    mutate(
+      YEAR = factor(as.integer(YEAR), levels = year_breaks),
+      
+      # Plot gross erosion downward to match carbonate-budget convention
+      grossE_G_plot = -abs(grossE_G)
+    )
+  
+  plot_data <- plot_wide %>%
+    select(YEAR, net_G, grossP_G, grossE_G_plot) %>%
+    pivot_longer(
+      cols = c(net_G, grossP_G, grossE_G_plot),
+      names_to = "metric",
+      values_to = "value"
+    ) %>%
+    mutate(
+      metric = case_when(
+        metric == "net_G" ~ "Net carbonate production",
+        metric == "grossP_G" ~ "Gross carbonate production",
+        metric == "grossE_G_plot" ~ "Gross carbonate erosion",
+        TRUE ~ metric
+      ),
+      metric = factor(metric, levels = metric_levels)
+    ) %>%
+    group_by(YEAR, metric) %>%
+    summarise(
+      mean_value = mean(value, na.rm = TRUE),
+      sd_value = sd(value, na.rm = TRUE),
+      n = sum(!is.na(value)),
+      se_value = if_else(n > 1, sd_value / sqrt(n), NA_real_),
+      .groups = "drop"
+    ) %>%
+    filter(n > 0)
+  
+  n_data <- plot_wide %>%
+    group_by(YEAR) %>%
+    summarise(
+      n_sites = n(),
+      .groups = "drop"
+    )
+  
+  y_min <- min(plot_data$mean_value - replace_na(plot_data$se_value, 0), na.rm = TRUE)
+  y_max <- max(plot_data$mean_value + replace_na(plot_data$se_value, 0), na.rm = TRUE)
+  y_range <- y_max - y_min
+  
+  if (!is.finite(y_range) || y_range == 0) {
+    y_range <- 1
+  }
+  
+  y_limits <- c(
+    y_min - 0.15 * y_range,
+    y_max + 0.10 * y_range
+  )
+  
+  n_data <- n_data %>%
+    mutate(
+      metric = factor("Net carbonate production", levels = metric_levels),
+      y_pos = y_limits[1] + 0.04 * diff(y_limits),
+      n_label = paste0("n=", n_sites)
+    )
+  
+  p <- ggplot(
+    plot_data,
+    aes(
+      x = metric,
+      y = mean_value,
+      fill = metric
+    )
+  ) +
+    geom_hline(
+      yintercept = 0,
+      linewidth = 0.45,
+      color = "black"
+    ) +
+    geom_col(
+      width = 0.75,
+      color = "black",
+      linewidth = 0.45
+    ) +
+    geom_errorbar(
+      aes(
+        ymin = mean_value - se_value,
+        ymax = mean_value + se_value
+      ),
+      width = 0.20,
+      linewidth = 0.45,
+      na.rm = TRUE
+    ) +
+    geom_text(
+      data = n_data,
+      aes(
+        x = metric,
+        y = y_pos,
+        label = n_label
+      ),
+      inherit.aes = FALSE,
+      hjust = 0,
+      size = 3.7
+    ) +
+    facet_wrap(
+      ~ YEAR,
+      nrow = 1,
+      drop = TRUE
+    ) +
+    scale_fill_manual(
+      values = metric_colors,
+      name = NULL,
+      drop = FALSE
+    ) +
+    coord_cartesian(
+      ylim = y_limits,
+      clip = "off"
+    ) +
+    labs(
+      title = plot_title,
+      x = NULL,
+      y = "Carbonate Production"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "bottom",
+      legend.box = "vertical",
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      strip.background = element_blank(),
+      strip.text = element_text(face = "bold", size = 15),
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+      axis.line = element_line(linewidth = 0.8),
+      axis.ticks = element_line(linewidth = 0.7)
+    )
+  
+  if (export_figures) {
+    
+    ggsave(
+      filename = file.path(png_dir, paste0(output_stub, ".png")),
+      plot = p,
+      width = 11,
+      height = 4.8,
+      dpi = 300
+    )
+    
+    ggsave(
+      filename = file.path(svg_dir, paste0(output_stub, ".svg")),
+      plot = p,
+      width = 11,
+      height = 4.8
+    )
+  }
+  
+  return(p)
+}
+```
+
+
+
+
+
+# Pooled Data
+## Carbonate Budget
+```{r pooled-carbonate-production-bars, echo = FALSE, fig.width = 11, fig.height = 4.8}
+p_pooled_carbonate_bars <- make_carbonate_barplot(
+  data = ncrmp_data,
+  plot_title = "Pooled Data - Carbonate Production",
+  output_stub = "pooled_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_pooled_carbonate_bars
+```
+
+## Budget State
+```{r reef-state-pooled, echo = FALSE, fig.width = 8, fig.height = 5}
+p_reef_state_pooled <- make_reef_state_barplot(
+  data = reef_state_data,
+  plot_title = "Pooled Data - Proportional Reef State",
+  output_stub = "reef_state_pooled_data",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_reef_state_pooled
+```
+
+## Regressions
+### Coral Cover
+```{r pooled-coral-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_coral_cover_regression <- make_regression_plot(
+  data = regional_data,
+  x_var = "hardCoral_PrctCvr",
+  x_label = "Coral Cover (%)",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "REGION_PLOT",
+  color_values = region_colors,
+  legend_title = "Region",
+  output_stub = "regional_regression_netG_vs_coral_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_coral_cover_regression
+```
+
+### Parrotfish Biomass
+```{r pooled-parrotBio-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_biomass_regression <- make_regression_plot(
+  data = regional_data,
+  x_var = "parrotfish_Biomass",
+  x_label = "Parrotfish Biomass",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "REGION_PLOT",
+  color_values = region_colors,
+  legend_title = "Region",
+  output_stub = "regional_regression_netG_vs_parrotfish_biomass",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_parrotfish_biomass_regression
+```
+
+### Parrotfish Density
+```{r pooled-parrotDen-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_density_regression <- make_regression_plot(
+  data = regional_data,
+  x_var = "parrotfish_Density",
+  x_label = "Parrotfish Density",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "REGION_PLOT",
+  color_values = region_colors,
+  legend_title = "Region",
+  output_stub = "regional_regression_netG_vs_parrotfish_density",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_parrotfish_density_regression
+```
+
+
+
+
+
+# Regional
+## Carbonate Budget
+```{r regional-carbonate-production-bars, echo = FALSE, fig.width = 11, fig.height = 4.8}
+p_region_sefcri_carbonate_bars <- make_carbonate_barplot(
+  data = regional_data %>% filter(REGION_PLOT == "SEFCRI"),
+  plot_title = "SEFCRI - Carbonate Production",
+  output_stub = "regional_SEFCRI_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_region_flk_carbonate_bars <- make_carbonate_barplot(
+  data = regional_data %>% filter(REGION_PLOT == "FLK"),
+  plot_title = "FLK - Carbonate Production",
+  output_stub = "regional_FLK_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_region_drto_carbonate_bars <- make_carbonate_barplot(
+  data = regional_data %>% filter(REGION_PLOT == "DRTO"),
+  plot_title = "DRTO - Carbonate Production",
+  output_stub = "regional_DRTO_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+print(p_region_sefcri_carbonate_bars)
+print(p_region_flk_carbonate_bars)
+print(p_region_drto_carbonate_bars)
+```
+
+## Budget State
+```{r reef-state-regional, echo = FALSE, fig.width = 8, fig.height = 5}
+p_reef_state_region_sefcri <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(REGION_PLOT == "SEFCRI"),
+  plot_title = "SEFCRI - Proportional Reef State",
+  output_stub = "reef_state_region_SEFCRI",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_region_flk <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(REGION_PLOT == "FLK"),
+  plot_title = "FLK - Proportional Reef State",
+  output_stub = "reef_state_region_FLK",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_region_drto <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(REGION_PLOT == "DRTO"),
+  plot_title = "DRTO - Proportional Reef State",
+  output_stub = "reef_state_region_DRTO",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_region_sefcri
+p_reef_state_region_flk
+p_reef_state_region_drto
+```
+
+## Regressions
+### Coral Cover
+```{r regional-coralCover-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_coral_cover_faceted_regression <- make_faceted_regression_plot(
+  data = regional_data,
+  x_var = "hardCoral_PrctCvr",
+  x_label = "Coral Cover (%)",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "REGION_PLOT",
+  color_values = region_colors,
+  legend_title = "Region",
+  output_stub = "regional_faceted_regression_netG_vs_coral_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_coral_cover_faceted_regression
+```
+
+### Parrotfish Biomass
+```{r regional-parrotBio-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_biomass_faceted_regression <- make_faceted_regression_plot(
+  data = regional_data,
+  x_var = "parrotfish_Biomass",
+  x_label = "Parrotfish Biomass",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "REGION_PLOT",
+  color_values = region_colors,
+  legend_title = "Region",
+  output_stub = "regional_faceted_regression_netG_vs_parrotfish_biomass",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_parrotfish_biomass_faceted_regression
+```
+
+### Parrotfish Density
+```{r regional-parrotDen-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_density_faceted_regression <- make_faceted_regression_plot(
+  data = regional_data,
+  x_var = "parrotfish_Density",
+  x_label = "Parrotfish Density",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "REGION_PLOT",
+  color_values = region_colors,
+  legend_title = "Region",
+  output_stub = "regional_faceted_regression_netG_vs_parrotfish_density",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_parrotfish_density_faceted_regression
+```
+
+## Temporal Trends
+### Net Carbonate Production
+```{r regional-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_net_production <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  output_stub = "regional_net_carbonate_production",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_net_production
+```
+
+### Coral Cover
+```{r regional-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_coral_cover <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Coral Cover (%)",
+  output_stub = "regional_coral_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_coral_cover
+```
+
+### Coral Production
+```{r regional-coral-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_coral_production <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "hardCoral_G",
+  y_label = "Coral Carbonate Production",
+  output_stub = "regional_coral_carbonate_production",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_coral_production
+```
+
+### CCA Cover
+```{r regional-cca-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_cca_cover <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "cca_PrctCvr",
+  y_label = "CCA Cover",
+  output_stub = "regional_cca_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_cca_cover
+```
+
+### CCA Production
+```{r regional-cca-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_cca_production <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "cca_G",
+  y_label = "CCA Carbonate Production",
+  output_stub = "regional_cca_carbonate_production",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_cca_production
+```
+
+### Parrotfish Erosion
+```{r regional-parrotfish-erosion, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_erosion <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "parrotfish_G",
+  y_label = "Parrotfish Erosion",
+  output_stub = "regional_parrotfish_erosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_regional_parrotfish_erosion
+```
+
+### Parrotfish Biomass
+```{r regional-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_biomass <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  output_stub = "regional_parrotfish_biomass",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_parrotfish_biomass
+```
+
+### Parrotfish Density
+```{r regional-parrotfish-density, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_parrotfish_density <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "parrotfish_Density",
+  y_label = "Parrotfish Density",
+  output_stub = "regional_parrotfish_density",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_parrotfish_density
+```
+
+### Microbioerosion
+```{r regional-microbioerosion, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_microbioerosion <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "microbioerosion_G",
+  y_label = "Microbioerosion",
+  output_stub = "regional_microbioerosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_microbioerosion
+```
+
+### Macrobioerosion
+```{r regional-macrobioerosion, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_macrobioerosion <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "macrobioerosion_G",
+  y_label = "Macrobioerosion",
+  output_stub = "regional_macrobioerosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_macrobioerosion
+```
+
+### Urchins
+```{r regional-urchins, echo = FALSE, fig.width = 8, fig.height = 5}
+p_regional_urchins <- make_regional_lineplot(
+  data = regional_data,
+  y_var = "urchin_G",
+  y_label = "Urchin Erosion",
+  output_stub = "regional_urchin_erosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_regional_urchins
+```
+
+
+
+
+# Sub-Regional
+## Carbonate Budget
+```{r subregional-carbonate-production-bars, echo = FALSE, fig.width = 11, fig.height = 4.8}
+p_subregion_sefcri_carbonate_bars <- make_carbonate_barplot(
+  data = subregional_data %>% filter(SUB_REGION_PLOT == "SEFCRI"),
+  plot_title = "SEFCRI - Carbonate Production",
+  output_stub = "subregional_SEFCRI_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_subregion_bisc_carbonate_bars <- make_carbonate_barplot(
+  data = subregional_data %>% filter(SUB_REGION_PLOT == "BISC"),
+  plot_title = "BISC - Carbonate Production",
+  output_stub = "subregional_BISC_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_subregion_uk_carbonate_bars <- make_carbonate_barplot(
+  data = subregional_data %>% filter(SUB_REGION_PLOT == "UK"),
+  plot_title = "UK - Carbonate Production",
+  output_stub = "subregional_UK_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_subregion_mk_carbonate_bars <- make_carbonate_barplot(
+  data = subregional_data %>% filter(SUB_REGION_PLOT == "MK"),
+  plot_title = "MK - Carbonate Production",
+  output_stub = "subregional_MK_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_subregion_lk_carbonate_bars <- make_carbonate_barplot(
+  data = subregional_data %>% filter(SUB_REGION_PLOT == "LK"),
+  plot_title = "LK - Carbonate Production",
+  output_stub = "subregional_LK_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_subregion_drto_carbonate_bars <- make_carbonate_barplot(
+  data = subregional_data %>% filter(SUB_REGION_PLOT == "DRTO"),
+  plot_title = "DRTO - Carbonate Production",
+  output_stub = "subregional_DRTO_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+print(p_subregion_sefcri_carbonate_bars)
+print(p_subregion_bisc_carbonate_bars)
+print(p_subregion_uk_carbonate_bars)
+print(p_subregion_mk_carbonate_bars)
+print(p_subregion_lk_carbonate_bars)
+print(p_subregion_drto_carbonate_bars)
+```
+
+## Budget State
+```{r reef-state-subregional, echo = FALSE, fig.width = 8, fig.height = 5}
+p_reef_state_subregion_sefcri <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(SUB_REGION_PLOT == "SEFCRI"),
+  plot_title = "SEFCRI - Proportional Reef State",
+  output_stub = "reef_state_subregion_SEFCRI",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_subregion_bisc <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(SUB_REGION_PLOT == "BISC"),
+  plot_title = "BISC - Proportional Reef State",
+  output_stub = "reef_state_subregion_BISC",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_subregion_uk <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(SUB_REGION_PLOT == "UK"),
+  plot_title = "UK - Proportional Reef State",
+  output_stub = "reef_state_subregion_UK",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_subregion_mk <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(SUB_REGION_PLOT == "MK"),
+  plot_title = "MK - Proportional Reef State",
+  output_stub = "reef_state_subregion_MK",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_subregion_lk <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(SUB_REGION_PLOT == "LK"),
+  plot_title = "LK - Proportional Reef State",
+  output_stub = "reef_state_subregion_LK",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_subregion_drto <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(SUB_REGION_PLOT == "DRTO"),
+  plot_title = "DRTO - Proportional Reef State",
+  output_stub = "reef_state_subregion_DRTO",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_subregion_sefcri
+p_reef_state_subregion_bisc
+p_reef_state_subregion_uk
+p_reef_state_subregion_mk
+p_reef_state_subregion_lk
+p_reef_state_subregion_drto
+```
+
+## Regressions
+### Coral Cover
+```{r subregional-coralCover-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_coral_cover_regression <- make_regression_plot(
+  data = subregional_data,
+  x_var = "hardCoral_PrctCvr",
+  x_label = "Coral Cover (%)",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "SUB_REGION_PLOT",
+  color_values = subregion_colors,
+  legend_title = "Sub-region",
+  output_stub = "subregional_regression_netG_vs_coral_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_coral_cover_regression
+
+p_subregional_coral_cover_faceted_regression <- make_faceted_regression_plot(
+  data = subregional_data,
+  x_var = "hardCoral_PrctCvr",
+  x_label = "Coral Cover (%)",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "SUB_REGION_PLOT",
+  color_values = subregion_colors,
+  legend_title = "Sub-region",
+  output_stub = "subregional_faceted_regression_netG_vs_coral_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_coral_cover_faceted_regression
+```
+
+### Parrotfish Biomass
+```{r subregional-parrotBio-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_parrotfish_biomass_regression <- make_regression_plot(
+  data = subregional_data,
+  x_var = "parrotfish_Biomass",
+  x_label = "Parrotfish Biomass",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "SUB_REGION_PLOT",
+  color_values = subregion_colors,
+  legend_title = "Sub-region",
+  output_stub = "subregional_regression_netG_vs_parrotfish_biomass",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_biomass_regression
+
+p_subregional_parrotfish_biomass_faceted_regression <- make_faceted_regression_plot(
+  data = subregional_data,
+  x_var = "parrotfish_Biomass",
+  x_label = "Parrotfish Biomass",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "SUB_REGION_PLOT",
+  color_values = subregion_colors,
+  legend_title = "Sub-region",
+  output_stub = "subregional_faceted_regression_netG_vs_parrotfish_biomass",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_biomass_faceted_regression
+```
+
+```{r subregional-parrotDen-reg, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_parrotfish_density_regression <- make_regression_plot(
+  data = subregional_data,
+  x_var = "parrotfish_Density",
+  x_label = "Parrotfish Density",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "SUB_REGION_PLOT",
+  color_values = subregion_colors,
+  legend_title = "Sub-region",
+  output_stub = "subregional_regression_netG_vs_parrotfish_density",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_density_regression
+
+p_subregional_parrotfish_density_faceted_regression <- make_faceted_regression_plot(
+  data = subregional_data,
+  x_var = "parrotfish_Density",
+  x_label = "Parrotfish Density",
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  group_var = "SUB_REGION_PLOT",
+  color_values = subregion_colors,
+  legend_title = "Sub-region",
+  output_stub = "subregional_faceted_regression_netG_vs_parrotfish_density",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_density_faceted_regression
+```
+
+## Temporal Trends
+### Net Carbonate Production
+```{r subregional-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_net_production <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  output_stub = "subregional_net_carbonate_production",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_net_production
+```
+
+### Coral Cover
+```{r subregional-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_coral_cover <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Coral Cover (%)",
+  output_stub = "subregional_coral_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_coral_cover
+```
+
+### Coral Production
+```{r subregional-coral-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_coral_production <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "hardCoral_G",
+  y_label = "Coral Carbonate Production",
+  output_stub = "subregional_coral_carbonate_production",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_coral_production
+```
+
+### CCA Cover
+```{r subregional-cca-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_cca_cover <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "cca_PrctCvr",
+  y_label = "CCA Cover",
+  output_stub = "subregional_cca_cover",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_cca_cover
+```
+
+### CCA Production
+```{r subregional-cca-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_cca_production <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "cca_G",
+  y_label = "CCA Carbonate Production",
+  output_stub = "subregional_cca_carbonate_production",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_cca_production
+```
+
+### Parrotfish Erosion
+```{r subregional-parrotfish, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_parrotfish_erosion <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "parrotfish_G",
+  y_label = "Parrotfish Erosion",
+  output_stub = "subregional_parrotfish_erosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_erosion
+```
+
+### Parrotfish Biomass
+```{r subregional-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_parrotfish_biomass <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  output_stub = "subregional_parrotfish_biomass",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_biomass
+```
+
+### Parrotfish Density
+```{r subregional-parrotfish-density, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_parrotfish_density <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "parrotfish_Density",
+  y_label = "Parrotfish Density",
+  output_stub = "subregional_parrotfish_density",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_parrotfish_density
+```
+
+### Microbioerosion
+```{r subregional-microbioerosion, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_microbioerosion <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "microbioerosion_G",
+  y_label = "Microbioerosion",
+  output_stub = "subregional_microbioerosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_microbioerosion
+```
+
+### Macrobioerosion
+```{r subregional-macrobioerosion, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_macrobioerosion <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "macrobioerosion_G",
+  y_label = "Macrobioerosion",
+  output_stub = "subregional_macrobioerosion",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_macrobioerosion
+```
+
+### Urchins
+```{r subregional-urchin erosion, echo = FALSE, fig.width = 8, fig.height = 5}
+p_subregional_urchins <- make_subregional_lineplot(
+  data = subregional_data,
+  y_var = "urchin_G",
+  y_label = "Urchin Erosion",
+  output_stub = "subregional_urchin",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_subregional_urchins
+```
+
+
+
+
+# Habitat Type
+## Carbonate Budget
+```{r habitat-carbonate-production-bars, echo = FALSE, fig.width = 11, fig.height = 4.8}
+p_habitat_inshore_carbonate_bars <- make_carbonate_barplot(
+  data = habitat_data %>% filter(HABITAT_PLOT == "Inshore"),
+  plot_title = "Inshore - Carbonate Production",
+  output_stub = "habitat_Inshore_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_habitat_midchannel_carbonate_bars <- make_carbonate_barplot(
+  data = habitat_data %>% filter(HABITAT_PLOT == "MidChannel"),
+  plot_title = "MidChannel - Carbonate Production",
+  output_stub = "habitat_MidChannel_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_habitat_offshore_carbonate_bars <- make_carbonate_barplot(
+  data = habitat_data %>% filter(HABITAT_PLOT == "Offshore"),
+  plot_title = "Offshore - Carbonate Production",
+  output_stub = "habitat_Offshore_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_habitat_forereef_carbonate_bars <- make_carbonate_barplot(
+  data = habitat_data %>% filter(HABITAT_PLOT == "Forereef"),
+  plot_title = "Forereef - Carbonate Production",
+  output_stub = "habitat_Forereef_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_habitat_lagoon_carbonate_bars <- make_carbonate_barplot(
+  data = habitat_data %>% filter(HABITAT_PLOT == "Lagoon"),
+  plot_title = "Lagoon - Carbonate Production",
+  output_stub = "habitat_Lagoon_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_habitat_bank_carbonate_bars <- make_carbonate_barplot(
+  data = habitat_data %>% filter(HABITAT_PLOT == "Bank"),
+  plot_title = "Bank - Carbonate Production",
+  output_stub = "habitat_Bank_carbonate_production_bars",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+print(p_habitat_inshore_carbonate_bars)
+print(p_habitat_midchannel_carbonate_bars)
+print(p_habitat_offshore_carbonate_bars)
+print(p_habitat_forereef_carbonate_bars)
+print(p_habitat_lagoon_carbonate_bars)
+print(p_habitat_bank_carbonate_bars)
+```
+
+## Budget State
+```{r reef-state-habitat-type, echo = FALSE, fig.width = 8, fig.height = 5}
+p_reef_state_habitat_inshore <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(HABITAT_PLOT == "Inshore"),
+  plot_title = "Inshore - Proportional Reef State",
+  output_stub = "reef_state_habitat_Inshore",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_habitat_midchannel <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(HABITAT_PLOT == "MidChannel"),
+  plot_title = "MidChannel - Proportional Reef State",
+  output_stub = "reef_state_habitat_MidChannel",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_habitat_offshore <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(HABITAT_PLOT == "Offshore"),
+  plot_title = "Offshore - Proportional Reef State",
+  output_stub = "reef_state_habitat_Offshore",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_habitat_lagoon <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(HABITAT_PLOT == "Lagoon"),
+  plot_title = "Lagoon - Proportional Reef State",
+  output_stub = "reef_state_habitat_Lagoon",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_habitat_forereef <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(HABITAT_PLOT == "Forereef"),
+  plot_title = "Forereef - Proportional Reef State",
+  output_stub = "reef_state_habitat_Forereef",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_habitat_bank <- make_reef_state_barplot(
+  data = reef_state_data %>% filter(HABITAT_PLOT == "Bank"),
+  plot_title = "Bank - Proportional Reef State",
+  output_stub = "reef_state_habitat_Bank",
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+
+p_reef_state_habitat_inshore
+p_reef_state_habitat_midchannel
+p_reef_state_habitat_offshore
+p_reef_state_habitat_lagoon
+p_reef_state_habitat_forereef
+p_reef_state_habitat_bank
+```
+
+## All Sites
+### Net Carbonate Production
+```{r habitat-type-pooled-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_pooled_net_production <- make_habitat_lineplot(
+  data = habitat_data,
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  plot_title = "Pooled Habitat Types - Net Carbonate Production",
+  output_stub = "habitat_type_pooled_net_carbonate_production",
+  color_values = habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_pooled_net_production
+```
+
+### Coral Cover
+```{r habitat-type-pooled-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_pooled_coral_cover <- make_habitat_lineplot(
+  data = habitat_data,
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Percent Coral Cover",
+  plot_title = "Pooled Habitat Types - Percent Coral Cover",
+  output_stub = "habitat_type_pooled_percent_coral_cover",
+  color_values = habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_pooled_coral_cover
+```
+
+### Parrotfish Biomass
+```{r habitat-type-pooled-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_pooled_parrotfish_biomass <- make_habitat_lineplot(
+  data = habitat_data,
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  plot_title = "Pooled Habitat Types - Parrotfish Biomass",
+  output_stub = "habitat_type_pooled_parrotfish_biomass",
+  color_values = habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_pooled_parrotfish_biomass
+```
+
+
+## Biscayne
+### Net Carbonate Production
+```{r habitat-type-bisc-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_bisc_net_production <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "BISC",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  plot_title = "BISC Habitat Types - Net Carbonate Production",
+  output_stub = "habitat_type_BISC_net_carbonate_production",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_bisc_net_production
+```
+
+### Coral Cover
+```{r habitat-type-bisc-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_bisc_coral_cover <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "BISC",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Percent Coral Cover",
+  plot_title = "BISC Habitat Types - Percent Coral Cover",
+  output_stub = "habitat_type_BISC_percent_coral_cover",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_bisc_coral_cover
+```
+
+### Parrotfish Biomass
+```{r habitat-type-bisc-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_bisc_parrotfish_biomass <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "BISC",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  plot_title = "BISC Habitat Types - Parrotfish Biomass",
+  output_stub = "habitat_type_BISC_parrotfish_biomass",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_bisc_parrotfish_biomass
+```
+
+
+## Upper Keys
+### Net Carbonate Production
+```{r habitat-type-uk-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_uk_net_production <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "UK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  plot_title = "UK Habitat Types - Net Carbonate Production",
+  output_stub = "habitat_type_UK_net_carbonate_production",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_uk_net_production
+```
+
+### Coral Cover
+```{r habitat-type-uk-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_uk_coral_cover <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "UK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Percent Coral Cover",
+  plot_title = "UK Habitat Types - Percent Coral Cover",
+  output_stub = "habitat_type_UK_percent_coral_cover",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_uk_coral_cover
+```
+
+### Parrotfish Biomass
+```{r habitat-type-uk-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_uk_parrotfish_biomass <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "UK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  plot_title = "UK Habitat Types - Parrotfish Biomass",
+  output_stub = "habitat_type_UK_parrotfish_biomass",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_uk_parrotfish_biomass
+```
+
+
+## Middle Keys
+### Net Carbonate Production
+```{r habitat-type-mk-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_mk_net_production <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "MK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  plot_title = "MK Habitat Types - Net Carbonate Production",
+  output_stub = "habitat_type_MK_net_carbonate_production",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_mk_net_production
+```
+
+### Coral Cover
+```{r habitat-type-mk-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_mk_coral_cover <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "MK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Percent Coral Cover",
+  plot_title = "MK Habitat Types - Percent Coral Cover",
+  output_stub = "habitat_type_MK_percent_coral_cover",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_mk_coral_cover
+```
+
+### Parrotfish Biomass
+```{r habitat-type-mk-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_mk_parrotfish_biomass <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "MK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  plot_title = "MK Habitat Types - Parrotfish Biomass",
+  output_stub = "habitat_type_MK_parrotfish_biomass",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_mk_parrotfish_biomass
+```
+
+
+## Lower Keys
+### Net Carbonate Production
+```{r habitat-type-lk-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_lk_net_production <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "LK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  plot_title = "LK Habitat Types - Net Carbonate Production",
+  output_stub = "habitat_type_LK_net_carbonate_production",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_lk_net_production
+```
+
+### Coral Cover
+```{r habitat-type-lk-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_lk_coral_cover <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "LK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Percent Coral Cover",
+  plot_title = "LK Habitat Types - Percent Coral Cover",
+  output_stub = "habitat_type_LK_percent_coral_cover",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_lk_coral_cover
+```
+
+### Parrotfish Biomass
+```{r habitat-type-lk-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_lk_parrotfish_biomass <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "LK",
+      HABITAT_PLOT %in% c("Inshore", "MidChannel", "Offshore")
+    ),
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  plot_title = "LK Habitat Types - Parrotfish Biomass",
+  output_stub = "habitat_type_LK_parrotfish_biomass",
+  color_values = flk_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_lk_parrotfish_biomass
+```
+
+
+## Dry Tortugas
+### Net Carbonate Production
+```{r habitat-type-drto-net-carbonate-production, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_drto_net_production <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "DRTO",
+      HABITAT_PLOT %in% c("Lagoon", "Forereef", "Bank")
+    ),
+  y_var = "net_G",
+  y_label = "Net Carbonate Production",
+  plot_title = "DRTO Habitat Types - Net Carbonate Production",
+  output_stub = "habitat_type_DRTO_net_carbonate_production",
+  color_values = drto_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_drto_net_production
+```
+
+### Coral Cover
+```{r habitat-type-drto-coral-cover, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_drto_coral_cover <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "DRTO",
+      HABITAT_PLOT %in% c("Lagoon", "Forereef", "Bank")
+    ),
+  y_var = "hardCoral_PrctCvr",
+  y_label = "Percent Coral Cover",
+  plot_title = "DRTO Habitat Types - Percent Coral Cover",
+  output_stub = "habitat_type_DRTO_percent_coral_cover",
+  color_values = drto_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_drto_coral_cover
+```
+
+### Parrotfish Biomass
+```{r habitat-type-drto-parrotfish-biomass, echo = FALSE, fig.width = 8, fig.height = 5}
+p_habitat_drto_parrotfish_biomass <- make_habitat_lineplot(
+  data = habitat_data %>%
+    filter(
+      SUB_REGION_PLOT == "DRTO",
+      HABITAT_PLOT %in% c("Lagoon", "Forereef", "Bank")
+    ),
+  y_var = "parrotfish_Biomass",
+  y_label = "Parrotfish Biomass",
+  plot_title = "DRTO Habitat Types - Parrotfish Biomass",
+  output_stub = "habitat_type_DRTO_parrotfish_biomass",
+  color_values = drto_habitat_colors,
+  export_figures = export_figures,
+  png_dir = png_dir,
+  svg_dir = svg_dir
+)
+p_habitat_drto_parrotfish_biomass
+```
