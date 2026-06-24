@@ -6,6 +6,9 @@
 setwd("Data")
 Baseline_budgets<-read.csv("NCRMP_CarbonateBudgets_2014_to_2024.csv", header=T)
 
+#add Reef-accretion potential to spreadsheet
+Baseline_budgets$RAP<-Baseline_budgets$net_G/2.9/(1-0.6265)
+
 setwd("..")
 
 #Points on map should be colored based on "ReefAccretionPotential" (RAP), which has units of mm y-1
