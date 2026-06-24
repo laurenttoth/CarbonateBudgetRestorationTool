@@ -36,10 +36,13 @@ output$restoration_sliders <- renderUI({
 #Baseline from DataInputScripts.R
 #Restored_Cover from slider inputs
 
+#For all calcifier cover based calculations need to remove unconsolidated substrate
+
 #Calcuate total calcifier cover after restoration
 Year0_taxa$Percent_Cover<-Baseline$Percent_Cover+Year0_taxa$Restored_Cover
 
 #Calcuate gross production by taxon
+
 Year0_taxa$GP<-Year0_taxa$Percent_Cover*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
@@ -64,6 +67,7 @@ Year0_site$NP<-Year0_site$GP-(Site_bioerosion+Micro_Year0)
 
 #Calculate site-level reef-accretion potential
 #use porosity dataset lookup: if restoration mix >75% Acropora spp., use Acropora porosity; if restoration mix >75% massives/other use Massive porosity
+#could weight based on relative contribution
 #else use mixed
 Year0_site$RAP<-Year0_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 
@@ -153,7 +157,7 @@ Year1_site$NP<-Year1_site$GP-(Site_bioerosion+Micro_Year1)
 #Calculate site-level reef-accretion potential
 #use porosity dataset lookup: if restoration mix >75% Acropora spp., use Acropora porosity; if restoration mix >75% massives/other use Massive porosity
 #else use mixed
-Year1_site$RAP<-Year1_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
+Year1_site$RAP<-Year1_site$NP/2.9/(1-porosity) #2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 
 ##########Year 5##########
 #note that as currently conceptualized this will only model 1-4 years not the full 5 year period for the year 10 output
@@ -274,7 +278,7 @@ Year10_site$RAP<-Year10_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kins
 
 #Need matrix of estimated outplant height by species or at least morphology
 #??? Sara Williams can probably provide this ???#
-Initial_outplant_height<-0
+Initial_outplant_height<-2 #cm
 
 #For time 0
 #species-specific cover should be multiplied by species-specific average outplant height

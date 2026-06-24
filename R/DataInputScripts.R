@@ -14,8 +14,7 @@
 
 Baseline <- coral_data %>% #baseline cover input from dropdown or data uploaded using template
   left_join(TravisRates, by = "Taxon") %>% #add species-specific calcification rates
-  left_join(Bioerosion, by = c("Habitat", "Subregion") %>% #add bioerosion; not actually needed until next step
-  #### ??? John we're currently only selecting by Habitat but may also want to select by Subregion? ??? ####
+  left_join(Bioerosion, by = c("Habitat", "Subregion") %>% #in Bioerosion.csv #add bioerosion; not actually needed until next step
   #Also need to add mid-shore and DRTO habitats to Bioerosion spreadsheet
   mutate(Contribution = Percent_Cover * rate / 100) #result gives gross carbonate production by taxon
 
