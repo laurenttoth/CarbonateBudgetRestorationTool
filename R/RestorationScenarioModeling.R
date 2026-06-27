@@ -84,23 +84,35 @@ branching_mortality<-0.0414
 other_mortality<-0.0296
 
 #Calculate mortality of baseline colonies
-Year1_taxa$Baseline_Cover<-Baseline$Percent_Cover*(1-x_mortality)
+Year1_taxa$Baseline_Cover_Start<-Baseline$Percent_Cover*(1-x_mortality)
 
 #Calculate growth of colonies
 #There may be some math simplification that can happen here but this works I think
 #Site_Area from user input
-#calculate total area occupied by each individual coral within the plot
-#coral_growth.csv for this
+#calculate total area occupied by each coraltaxa within the plot
 Year1_taxa$Baseline_Coral_Area<-Site_Area*(Baseline$Percent_Cover/100)
-#calculate the diameter of the species specific coral area assuming it is combined into one mega-colony circle
-#confirmed that we ultimately arrive at the same answer if individual colonies modeled and then combined
-Year1_taxa$Baseline_Coral_Dia<-sqrt(Baseline_Coral_Area/pi)*2
-#coral_growth has species-specific coral growth rates in cm
-Year1_taxa$Year1_Coral_Dia<-Baseline_Coral_Dia+Baseline_Coral_Dia*((coral_growth$planar/100)*2)
-#calculate new species-specific area
-Year1_taxa$Year1_Coral_Area<-((Year1_Coral_Dia/2)^2)*pi
+
+#Join NCRMP_colony_dia_Florida.csv
+Florida_colony_dia<-read.csv("NCRMP_colony_dia_Florida.csv", header=T)
+#Use regional median taxon specific colony diameters (length_mean) to estimate number of colonies for each species
+#round to a whole number so individuals can be modeled
+Year1_taxa$Baseline_NColonies<-round(Year1_taxa$Baseline_Coral_Area/Florida_colony_dia)
+
+#Calculate individual colony diameters for each taxon based on the rounded estimate of colony number
+Year1_taxa$Baseline_Coral_Dia<-Year1_taxa$Baseline_Coral_Area/Year1_taxa$Baseline_NColonies
+
+#growth_rates_ReefBudget_NCRMP.csv has species-specific coral growth rates in cm
+#apply planar growth to each coral
+#I calculated the ratio of coral diameters to heights across all the Atlantic NCRMP Demographic data
+#I then multiplied that ratio by the ReefBudget mean_ext rate to estimate colony diameter growth
+coral_growth<-read.csv("growth_rates_ReefBudget_NCRMP.csv", header=T)
+Year1_taxa$Year1_Coral_Dia<-Baseline_Coral_Dia+((coral_growth$planar_mean/100))
+
+#calculate new species-specific area assuming each colony is a circle
+Year1_taxa$Year1_Coral_Area<-(((Year1_Coral_Dia/2)^2)*pi)*NColonies
+
 #calculate new species-specific coral cover
-Year1_taxa$Baseline_Cover<-(Year1_Coral_Area/Site_Area)*100
+Year1_taxa$Baseline_Cover_End<-(Year1_Coral_Area/Site_Area)*100
 
 #New outplants have high mortality rates so this extra step is applied for the first year post outplanting
 #mortality will also be scaled by outplant_size input, but haven't totally figured out how yet
@@ -110,23 +122,31 @@ Year1_taxa$Baseline_Cover<-(Year1_Coral_Area/Site_Area)*100
 #mortality of restored colonies
 #will be look-up with species-specific rates
 #use Mote_mortality=0.3 for now
-Year1_taxa$Restored_Cover<-Year0_taxa$Restored_Cover*(1-Mote_mortality)
+Year1_taxa$Restored_Cover_Start<-Year0_taxa$Restored_Cover*(1-Mote_mortality)
 
 #Calculate growth of colonies
-#There may be some math simplification that can happen here but this works I think
 #Site_Area from user input
 #calculate total area occupied by each individual coral within the plot
-#coral_growth.csv for this
 Year1_taxa$Restored_Area_Start<-Site_Area*(Year1_taxa$Restored_Cover/100)
-#calculate the diameter of the species specific coral area assuming it is combined into one mega-colony circle
-#confirmed that we ultimately arrive at the same answer if individual colonies modeled and then combined
-Year1_taxa$Restored_Coral_Dia_Start<-sqrt(Restored_Area_Start/pi)*2
-#coral_growth has species-specific coral growth rates in cm
-Year1_taxa$Restored_Coral_Dia_End<-Restored_Coral_Dia_Start+Restored_Coral_Dia_Start*((coral_growth$planar/100)*2)
+
+#use user-input outplant size (in area) to calculate the estimated number of outplants
+#round to a whole number so individuals can be modeled
+#this step and the next may not be necessary because we have input size and could get dia from that
+#but should test
+Year1_taxa$Restored_NColonies<-round(Year1_taxa$Restored_Area_Start/Outplant_size)
+
+#Calculate individual colony diameters for each taxon based on the rounded estimate of colony number
+Year1_taxa$Restored_Coral_Dia_Start<-Year1_taxa$Restored_Area_Start/Year1_taxa$Restored_NColonies
+
+#Grow the diameter of the colonies
+#coral_growth is taxon specific
+Year1_taxa$Year1_Coral_Dia_End<-Year1_taxa$Restored_Coral_Dia_Start+((coral_growth$planar_mean/100))
+
 #calculate new species-specific area
-Year1_taxa$Restored_Area_End<-((Restored_Coral_Dia_End/2)^2)*pi
+Year1_taxa$Restored_Area_End<-(((Year1_taxa$Restored_Coral_Dia_End/2)^2)*pi)*Year1_taxa$Restored_NColonies
+
 #calculate new species-specific coral cover
-Year1_taxa$Restored_Cover<-(Restored_Area_End/Site_Area)*100
+Year1_taxa$Restored_Cover_End<-(Year1_taxa$Restored_Area_End/Site_Area)*100
 
 #Total Year 1 coral cover
 Year1_taxa$Total_cover<-Year1_taxa$Baseline_Cover + Year1_taxa$Restored_Cover
@@ -172,23 +192,92 @@ bleaching_frequency<-0 #can equal 1, 2, or annual (=4 or 5)
 #see source(DHW.R)
 #bleaching_frequency determines the number of years DHW_mortality_rates are applied
 #middle year for frequency=1, every other year for frequency=2, and every year for annual
-Year5_taxa$Total_cover_decline<-Year1_taxa$Total_cover*(x_mortality+DHW_mortality_rates)
+
+#For now I'm assuming 25% of colonies die outright
+#Remaining 75% decline is partial mortality that reduces effective colony mortality
+Year5_taxa$Post_bleaching_restored_cover_1<-Year1_taxa$Restored_Cover_End+(DHW_mortality*0.25)
+Year5_taxa$Post_bleaching_restored_area_1<-Site_Area*(Year5_taxa$Post_bleaching_restored_cover_1/100)
+Year5_taxa$Post_bleaching_restored_NColonies<-Year5_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
+
+#NColonies needs to be an integer for calculations below
+Year5_taxa$Post_bleaching_restored_NColonies_integer<-as.integer(Year5_taxa$Post_bleaching_restored_NColonies)
+
+#Calculate new cover based on colonies that were lost
+Year5_taxa$Coral_Area_post_colony_mortality<-(Year5_taxa$Post_bleaching_restored_NColonies_integer)*(((Year1_taxa$Restored_Coral_Dia_End/2)^2)*pi)
+Year5_taxa$Coral_Cover_post_colony_mortality<-Site_Area*(Year5_taxa$Coral_Area_post_colony_mortality/100)
+
+#Residual (decimal) from above, back into partial mortality calculation
+Year5_taxa$Total_DHW_residual<-Year5_taxa$Post_bleaching_restored_NColonies-Year5_taxa$Post_bleaching_restored_NColonies_integer
+Year5_taxa$Total_DHW_residual_area<-Year5_taxa$Total_DHW_residual*(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
+Year5_taxa$Total_DHW_residual_cover_decline<-Year5_taxa$Total_DHW_residual_area/Site_Area
+
+#Add residual cover decline to 75% of total scenario mortality
+#baseline partial mortality also gets added in here
+Year5_taxa$Restored_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year5_taxa$Total_DHW_residual_cover_decline+x_mortality))
 
 #calculate growth of corals that didn't die
-#There may be some math simplification that can happen here but this works I think
 #Site_Area from user input
 #calculate total area occupied by each individual coral within the plot
-Year5_taxa$Start_Coral_Area<-Site_Area*(Year5_taxa$Total_cover_decline/100)
-#calculate the diameter of the species specific coral area assuming it is combined into one mega-colony circle
-#confirmed that we ultimately arrive at the same answer if individual colonies modeled and then combined
-Year5_taxa$Start_Coral_Dia<-sqrt(Start_Coral_Area/pi)*2
-#coral_growth has species-specific coral growth rates in cm
-Year5_taxa$End_Coral_Dia<-Start_Coral_Dia+Start_Coral_Dia*((coral_growth$planar/100)*2)
-#calculate new species-specific area
-Year5_taxa$End_Coral_Area<-((End_Coral_Dia/2)^2)*pi
-#calculate new species-specific coral cover
-Year5_taxa$Coral_Cover<-(End_Coral_Area/Site_Area)*100
+Year5_taxa$Restored_Area_Start<-Site_Area*(Year5_taxa$Restored_cover_post_mortality/100)
 
+Year5_taxa$Restored_Coral_Dia_Start<-Year5_taxa$Restored_Area_Start/Year5_taxa$Post_bleaching_restored_NColonies_integer
+
+#Grow the diameter of the colonies
+#coral_growth is taxon specific
+Year5_taxa$Year5_Coral_Dia_End<-Restored_Coral_Dia_Start+((coral_growth$planar_mean/100))
+
+#calculate new species-specific area
+Year5_taxa$Restored_Area_End<-(((Restored_Coral_Dia_End/2)^2)*pi)*Post_bleaching_restored_NColonies_integer
+
+#calculate new species-specific coral cover
+Year5_taxa$Restored_Cover_End<-(Restored_Area_End/Site_Area)*100
+
+#Repeat L196-232 for Baseline coral assemblage
+#because dia of colonies is different so they need to be kept separate throughout
+
+#For now I'm assuming 25% of colonies die outright
+#Remaining 75% decline is partial mortality that reduces effective colony mortality
+Year5_taxa$Post_bleaching_Baseline_cover_1<-Year1_taxa$Baseline_Cover_End+(DHW_mortality*0.25)
+Year5_taxa$Post_bleaching_Baseline_area_1<-Site_Area*(Year5_taxa$Post_bleaching_Baseline_cover_1/100)
+Year5_taxa$Post_bleaching_Baseline_NColonies<-Year5_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
+
+#NColonies needs to be an integer for calculations below
+Year5_taxa$Post_bleaching_Baseline_NColonies_integer<-as.integer(Year5_taxa$Post_bleaching_Baseline_NColonies)
+
+#Calculate new cover based on colonies that were lost
+Year5_taxa$Coral_Area_post_colony_mortality<-(Year5_taxa$Post_bleaching_Baseline_NColonies_integer)*(((Year1_taxa$Baseline_Coral_Dia_End/2)^2)*pi)
+Year5_taxa$Coral_Cover_post_colony_mortality<-Site_Area*(Year5_taxa$Coral_Area_post_colony_mortality/100)
+
+#Residual (decimal) from above, back into partial mortality calculation
+Year5_taxa$Total_DHW_residual<-Year5_taxa$Post_bleaching_Baseline_NColonies-Year5_taxa$Post_bleaching_Baseline_NColonies_integer
+Year5_taxa$Total_DHW_residual_area<-Year5_taxa$Total_DHW_residual*(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
+Year5_taxa$Total_DHW_residual_cover_decline<-Year5_taxa$Total_DHW_residual_area/Site_Area
+
+#Add residual cover decline to 75% of total scenario mortality
+#baseline partial mortality also gets added in here
+Year5_taxa$Baseline_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year5_taxa$Total_DHW_residual_cover_decline+x_mortality))
+
+#calculate growth of corals that didn't die
+#Site_Area from user input
+#calculate total area occupied by each individual coral within the plot
+Year5_taxa$Baseline_Area_Start<-Site_Area*(Year5_taxa$Baseline_cover_post_mortality/100)
+
+Year5_taxa$Baseline_Coral_Dia_Start<-Year5_taxa$Baseline_Area_Start/Year5_taxa$Post_bleaching_Baseline_NColonies_integer
+
+#Grow the diameter of the colonies
+#coral_growth is taxon specific
+Year5_taxa$Year5_Coral_Dia_End<-Baseline_Coral_Dia_Start+((coral_growth$planar_mean/100))
+
+#calculate new species-specific area
+Year5_taxa$Baseline_Area_End<-(((Baseline_Coral_Dia_End/2)^2)*pi)*Post_bleaching_Baseline_NColonies_integer
+
+#calculate new species-specific coral cover
+Year5_taxa$Baseline_Cover_End<-(Baseline_Area_End/Site_Area)*100
+
+#Total Year_X coral cover
+Year5_taxa$Total_cover<-Year5_taxa$Baseline_Cover_End + Year1_taxa$Restored_Cover_End
+
+#Calculate gross production
 Year5_taxa$GP<-Year5_taxa$Coral_Cover*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
@@ -225,27 +314,92 @@ Year5_site$RAP<-Year5_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey
 #see source(DHW.R)
 #bleaching_frequency determines the number of years DHW_mortality_rates are applied
 #could be random or for simplified version (L126) either middle year for 1, every other year for 2, and every year for annual
-Year10_taxa$Total_cover_decline<-Year5_taxa$Total_cover*(x_mortality+DHW_mortality_rates)
+#For now I'm assuming 25% of colonies die outright
+#Remaining 75% decline is partial mortality that reduces effective colony mortality
+Year10_taxa$Post_bleaching_restored_cover_1<-Year1_taxa$Restored_Cover_End+(DHW_mortality*0.25)
+Year10_taxa$Post_bleaching_restored_area_1<-Site_Area*(Year10_taxa$Post_bleaching_restored_cover_1/100)
+Year10_taxa$Post_bleaching_restored_NColonies<-Year10_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
+
+#NColonies needs to be an integer for calculations below
+Year10_taxa$Post_bleaching_restored_NColonies_integer<-as.integer(Year10_taxa$Post_bleaching_restored_NColonies)
+
+#Calculate new cover based on colonies that were lost
+Year10_taxa$Coral_Area_post_colony_mortality<-(Year10_taxa$Post_bleaching_restored_NColonies_integer)*(((Year5_taxa$Restored_Coral_Dia_End/2)^2)*pi)
+Year10_taxa$Coral_Cover_post_colony_mortality<-Site_Area*(Year10_taxa$Coral_Area_post_colony_mortality/100)
+
+#Residual (decimal) from above, back into partial mortality calculation
+Year10_taxa$Total_DHW_residual<-Year10_taxa$Post_bleaching_restored_NColonies-Year10_taxa$Post_bleaching_restored_NColonies_integer
+Year10_taxa$Total_DHW_residual_area<-Year10_taxa$Total_DHW_residual*(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
+Year10_taxa$Total_DHW_residual_cover_decline<-Year10_taxa$Total_DHW_residual_area/Site_Area
+
+#Add residual cover decline to 75% of total scenario mortality
+#baseline partial mortality also gets added in here
+Year10_taxa$Restored_cover_post_mortality<-Year10_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year10_taxa$Total_DHW_residual_cover_decline+x_mortality))
 
 #calculate growth of corals that didn't die
-#There may be some math simplification that can happen here but this works I think
 #Site_Area from user input
 #calculate total area occupied by each individual coral within the plot
-Year10_taxa$Start_Coral_Area<-Site_Area*(Year10_taxa$Total_cover_decline/100)
-#calculate the diameter of the species specific coral area assuming it is combined into one mega-colony circle
-#confirmed that we ultimately arrive at the same answer if individual colonies modeled and then combined
-Year10_taxa$Start_Coral_Dia<-sqrt(Start_Coral_Area/pi)*2
-#coral_growth has species-specific coral growth rates in cm
-Year10_taxa$End_Coral_Dia<-Start_Coral_Dia+Start_Coral_Dia*((coral_growth$planar/100)*2)
+Year10_taxa$Restored_Area_Start<-Site_Area*(Year10_taxa$Restored_cover_post_mortality/100)
+
+Year10_taxa$Restored_Coral_Dia_Start<-Year10_taxa$Restored_Area_Start/Year10_taxa$Post_bleaching_restored_NColonies_integer
+
+#Grow the diameter of the colonies
+#coral_growth is taxon specific
+Year10_taxa$Year10_Coral_Dia_End<-Restored_Coral_Dia_Start+((coral_growth$planar_mean/100))
+
 #calculate new species-specific area
-Year10_taxa$End_Coral_Area<-((End_Coral_Dia/2)^2)*pi
+Year10_taxa$Restored_Area_End<-(((Restored_Coral_Dia_End/2)^2)*pi)*Post_bleaching_restored_NColonies_integer
+
 #calculate new species-specific coral cover
-Year10_taxa$Coral_Cover<-(End_Coral_Area/Site_Area*)100
+Year10_taxa$Restored_Cover_End<-(Restored_Area_End/Site_Area)*100
 
-#Calculate taxon-level gross carbonate production
-Year10_taxa$GP<-Year10_taxa$Coral_Cover*TravisRates
+#Repeat L196-232 for Baseline coral assemblage
+#because dia of colonies is different so they need to be kept separate throughout
 
-Year10_taxa$GP<-Year10_taxa$Total_cover*TravisRates #taxon-specific calcification rates
+#For now I'm assuming 25% of colonies die outright
+#Remaining 75% decline is partial mortality that reduces effective colony mortality
+Year10_taxa$Post_bleaching_Baseline_cover_1<-Year1$Baseline_Cover_End+(DHW_mortality*0.25)
+Year10_taxa$Post_bleaching_Baseline_area_1<-Site_Area*(Year10_taxa$Post_bleaching_Baseline_cover_1/100)
+Year10_taxa$Post_bleaching_Baseline_NColonies<-Year10_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
+
+#NColonies needs to be an integer for calculations below
+Year10_taxa$Post_bleaching_Baseline_NColonies_integer<-as.integer(Year10_taxa$Post_bleaching_Baseline_NColonies)
+
+#Calculate new cover based on colonies that were lost
+Year10_taxa$Coral_Area_post_colony_mortality<-(Year10_taxa$Post_bleaching_Baseline_NColonies_integer)*(((Year5_taxa$Baseline_Coral_Dia_End/2)^2)*pi)
+Year10_taxa$Coral_Cover_post_colony_mortality<-Site_Area*(Year10_taxa$Coral_Area_post_colony_mortality/100)
+
+#Residual (decimal) from above, back into partial mortality calculation
+Year10_taxa$Total_DHW_residual<-Year10_taxa$Post_bleaching_Baseline_NColonies-Year10_taxa$Post_bleaching_Baseline_NColonies_integer
+Year10_taxa$Total_DHW_residual_area<-Year10_taxa$Total_DHW_residual*(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
+Year10_taxa$Total_DHW_residual_cover_decline<-Year10_taxa$Total_DHW_residual_area/Site_Area
+
+#Add residual cover decline to 75% of total scenario mortality
+#baseline partial mortality also gets added in here
+Year10_taxa$Baseline_cover_post_mortality<-Year10_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year10_taxa$Total_DHW_residual_cover_decline+x_mortality))
+
+#calculate growth of corals that didn't die
+#Site_Area from user input
+#calculate total area occupied by each individual coral within the plot
+Year10_taxa$Baseline_Area_Start<-Site_Area*(Year10_taxa$Baseline_cover_post_mortality/100)
+
+Year10_taxa$Baseline_Coral_Dia_Start<-Year10_taxa$Baseline_Area_Start/Year10_taxa$Post_bleaching_Baseline_NColonies_integer
+
+#Grow the diameter of the colonies
+#coral_growth is taxon specific
+Year10_taxa$Year10_Coral_Dia_End<-Baseline_Coral_Dia_Start+((coral_growth$planar_mean/100))
+
+#calculate new species-specific area
+Year10_taxa$Baseline_Area_End<-(((Baseline_Coral_Dia_End/2)^2)*pi)*Post_bleaching_Baseline_NColonies_integer
+
+#calculate new species-specific coral cover
+Year10_taxa$Baseline_Cover_End<-(Baseline_Area_End/Site_Area)*100
+
+#Total Year_X coral cover
+Year10_taxa$Total_cover<-Year10_taxa$Baseline_Cover_End + Year5_taxa$Restored_Cover_End
+
+#Calculate gross production
+Year10_taxa$GP<-Year10_taxa$Coral_Cover*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
 Year10_site$GP<-sum(Year10_taxa$GP)
