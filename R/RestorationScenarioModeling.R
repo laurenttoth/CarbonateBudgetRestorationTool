@@ -36,22 +36,28 @@ output$restoration_sliders <- renderUI({
 #Baseline from DataInputScripts.R
 #Restored_Cover from slider inputs
 
-#For all calcifier cover based calculations need to remove unconsolidated substrate
+#Potential way to code for math below:
+Year0_taxa=
+  merge(Baseline,Input_Cover, TravisRates) %>%
+  arrange(Taxon) %>%
+  mutate(Total_Cover=Percent_Cover+Restored_Cover) %>%
+  filter(Taxon!=REQUIRED_Unconsolidated_substrate) %>%
+  mutate(GP=Total_Cover*rate)
 
 #Calcuate total calcifier cover after restoration
-Year0_taxa$Percent_Cover<-Baseline$Percent_Cover+Year0_taxa$Restored_Cover
+#For all calcifier cover based calculations need to remove unconsolidated substrate
+Year0_taxa$Total_Cover<-Baseline$Percent_Cover+Year0_taxa$Restored_Cover
 
 #Calcuate gross production by taxon
-
-Year0_taxa$GP<-Year0_taxa$Percent_Cover*TravisRates #taxon-specific calcification rates
+Year0_taxa$GP<-Year0_taxa$Total_Cover*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
 Year0_site$GP<-sum(Year0_taxa$GP)
 
 #Calculate microbioerosion based on available substrate
-#Note that Percent_Cover here should include total calcifier cover + unconsolidated substrate
+#Note that Total_Cover here should include total calcifier cover + unconsolidated substrate
 #both of which are substracted from 100 to get available, consolidated substrate for microbioerosion
-Year0_substrate<-100-sum(Year0_taxa$Percent_Cover)
+Year0_substrate<-100-sum(Year0_taxa$Total_Cover)
 
 #Proportion of available substrate * generalized Caribbean microbioerosion rate of 0.24 kg m-2 y-1 (Perry and Lange, 2019)
 Micro_Year0<-(Year0_substrate/100)*0.24
@@ -83,11 +89,10 @@ Year0_site$RAP<-Year0_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey
 branching_mortality<-0.0414
 other_mortality<-0.0296
 
-#Calculate mortality of baseline colonies
+#Calculate mortality of baseline colonies by taxa
 Year1_taxa$Baseline_Cover_Start<-Baseline$Percent_Cover*(1-x_mortality)
 
 #Calculate growth of colonies
-#There may be some math simplification that can happen here but this works I think
 #Site_Area from user input
 #calculate total area occupied by each coraltaxa within the plot
 Year1_taxa$Baseline_Coral_Area<-Site_Area*(Baseline$Percent_Cover/100)
@@ -106,6 +111,7 @@ Year1_taxa$Baseline_Coral_Dia<-Year1_taxa$Baseline_Coral_Area/Year1_taxa$Baselin
 #I calculated the ratio of coral diameters to heights across all the Atlantic NCRMP Demographic data
 #I then multiplied that ratio by the ReefBudget mean_ext rate to estimate colony diameter growth
 coral_growth<-read.csv("growth_rates_ReefBudget_NCRMP.csv", header=T)
+#dividing by 100 converts cm rates to m2 which is units for coral area
 Year1_taxa$Year1_Coral_Dia<-Baseline_Coral_Dia+((coral_growth$planar_mean/100))
 
 #calculate new species-specific area assuming each colony is a circle
@@ -193,7 +199,7 @@ bleaching_frequency<-0 #can equal 1, 2, or annual (=4 or 5)
 #bleaching_frequency determines the number of years DHW_mortality_rates are applied
 #middle year for frequency=1, every other year for frequency=2, and every year for annual
 
-#For now I'm assuming 25% of colonies die outright
+#For now I'm assuming 25% of colonies die outright, but we should revisit this
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
 Year5_taxa$Post_bleaching_restored_cover_1<-Year1_taxa$Restored_Cover_End+(DHW_mortality*0.25)
 Year5_taxa$Post_bleaching_restored_area_1<-Site_Area*(Year5_taxa$Post_bleaching_restored_cover_1/100)

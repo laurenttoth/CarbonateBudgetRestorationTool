@@ -4,7 +4,7 @@
 library(tidyr)
 library(dplyr)
 
-Monitoring_data<-load.csv("Restoration_Monitoring_TEMPLATE.csv", header=T)
+Monitoring_data<-load.csv("Restoration_Monitoring_Cover_TEMPLATE.csv", header=T)
 
 #Calculate taxon-level carbonate budgets
 Monitoring_data$GP<-Year0_taxa$Percent_Cover*TravisRates
@@ -68,6 +68,7 @@ UrchinBioerosion<-merge(Urchins, UrchinRates, by = c("Taxon","Test.size"), all.x
 
 #Calcualte individual bioerosion of all urchins
 #Survey_Area_m2 from input data
+#urchin test sizes are in mm
 UrchinBioerosion$Bioerosion<-((Urchins$Count/Urchins$Survey_Area_m2)*UrchinBioerosion$Bioerosion.rate*365)/1000
 
 #Sum for site and/or timepoint
