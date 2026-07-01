@@ -7,7 +7,7 @@ library(dplyr)
 Monitoring_data<-load.csv("Restoration_Monitoring_Cover_TEMPLATE.csv", header=T)
 
 #Calculate taxon-level carbonate budgets
-Monitoring_data$GP<-Year0_taxa$Percent_Cover*TravisRates
+Monitoring_data$GP<-(Year0_taxa$Percent_Cover/100)*TravisRates
 
 #for each unique value in Years_Post_Restoration (including fractional years) and each unique site if there are multiple
 Monitoring_data_site<-Monitoring_data %>%
@@ -48,7 +48,6 @@ ParrotfishRates<-na.omit(ParrotfishRates)
 
 #merge rates and parrtofish data
 Parrotfish_rates<-merge(Parrotfish, ParrotfishRates, by = c("Taxon","PhaseSize"), all.x = T)
-Parrotfish_rates<-Parrotfish_rates[1:588,]
 
 #Calculate bioerosion from each individual parrotfish observed
 Parrotfish_rates$Bioerosion<-(Parrotfish_rates$Count*Parrotfish_rates$Rate)/Parrotfish_rates$Survey_Area_m2

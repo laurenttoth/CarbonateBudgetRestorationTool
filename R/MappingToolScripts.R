@@ -15,6 +15,9 @@ setwd("..")
 #Existing color scale for carbonate production should work
 #But it might good to have hard breaks between negative (< -0.5 mm y-1), neutral (0 +/- 0.5 mm -y), positive (> 0.5 mm y-1)
 #Aligns with Perry et al. 2014 (https://doi.org/10.1098/rspb.2014.2018)
+Baseline_Budgets$RAP_Status <- ifelse(Baseline_Budgets$RAP < -0.5, "Eroding",
+                                      ifelse(Baseline_Budgets$RAP > 0.5, "Growing",
+                                             "Stasis"))
 
 #Allow filter by year, subregion, habitat
 #Toggle to show just coral cover, just bioerosion, net/RAP

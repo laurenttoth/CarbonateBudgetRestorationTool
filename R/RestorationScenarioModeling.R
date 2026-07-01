@@ -38,23 +38,25 @@ output$restoration_sliders <- renderUI({
 
 #Potential way to code for math below:
 Year0_taxa=
-  merge(Baseline,Input_Cover, TravisRates) %>%
+  merge(Baseline, Input_Cover, TravisRates) %>%
   arrange(Taxon) %>%
-  mutate(Total_Cover=Percent_Cover+Restored_Cover) %>%
-  filter(Taxon!=REQUIRED_Unconsolidated_substrate) %>%
-  mutate(GP=Total_Cover*rate)
+  mutate(Total_Cover=Percent_Cover+Restored_Cover) %>% #unconsolidated substrate included here
+  filter(Taxon!=REQUIRED_Unconsolidated_substrate) %>% #removed for below
+  mutate(Coral_Cover=Percent_Cover+Restored_Cover)
+  mutate(GP=(Coral_Cover/100)*rate))
 
 #Calcuate total calcifier cover after restoration
-#For all calcifier cover based calculations need to remove unconsolidated substrate
+#For all calcifier cover based calculations need to remove unconsolidated substrate see Coral_Cover above
 Year0_taxa$Total_Cover<-Baseline$Percent_Cover+Year0_taxa$Restored_Cover
 
-#Calcuate gross production by taxon
-Year0_taxa$GP<-Year0_taxa$Total_Cover*TravisRates #taxon-specific calcification rates
+#Calcuate gross production by taxon in kg/m2/y
+#Cover always needs to be proportional for GP calculations
+Year0_taxa$GP<-(Year0_taxa$Total_Cover/100)*TravisRates #taxon-specific calcification rates
 
-#sum to get site-level gross production
+#sum calcification rates of all calcifying taxa to get site-level gross production
 Year0_site$GP<-sum(Year0_taxa$GP)
 
-#Calculate microbioerosion based on available substrate
+#Calculate microbioerosion based on available substrate in kg/m2/y
 #Note that Total_Cover here should include total calcifier cover + unconsolidated substrate
 #both of which are substracted from 100 to get available, consolidated substrate for microbioerosion
 Year0_substrate<-100-sum(Year0_taxa$Total_Cover)
@@ -63,28 +65,30 @@ Year0_substrate<-100-sum(Year0_taxa$Total_Cover)
 Micro_Year0<-(Year0_substrate/100)*0.24
 
 #Other Bioerosion data from Bioerosion.csv dataset
-#Bioerosion is specific to Habitat and Region (which are included in Baseline_cover_TEMPLATE.csv)
-#NOTE that these values will not change from year to year in the model but Micro will
+#Bioerosion is specific to Habitat and Subregion (which are included in Baseline_cover_TEMPLATE.csv)
+#NOTE that these values will not change from year to year in the model but Microbioerosion will be recalculated at each time step
 #This variabile should actually be calculated in the DataInput module
-Site_bioerosion<-sum(Bioerosion$Parrotfish, Bioerosion$Urchins, Bioerosion$BioSponges)
+Site_bioerosion<-sum(Bioerosion$AVE_PARROTFISH, Bioerosion$AVE_URCHINS, Bioerosion$AVE_MACROBIOEROSION)
 
-#Calculate site-level net production
+#Calculate site-level net production in kg/m2/y
 Year0_site$NP<-Year0_site$GP-(Site_bioerosion+Micro_Year0)
 
-#Calculate site-level reef-accretion potential
+#Calculate site-level reef-accretion potential in mm/y
 #use porosity dataset lookup: if restoration mix >75% Acropora spp., use Acropora porosity; if restoration mix >75% massives/other use Massive porosity
-#could weight based on relative contribution
+#or could weight based on relative contribution
 #else use mixed
 Year0_site$RAP<-Year0_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 
 ##########Year 1##########
 #Calculate change in percent cover after one year based on species-specific growth and mortality rates
 
-#Partial mortality rates for branching and "other" corals from Browne et al. in press applied to Baseline_Cover
+#Partial mortality rates for branching and "other" corals from Browne et al. 2026 applied to Baseline_Cover
+#https://doi.org/10.1016/j.ecolmodel.2026.111672
 #Assuming that whole colony mortailty rates for established colonies in the absence of bleaching is negligible
 #Browne et al. estimates whole-colony mortality at 0.002-0.00076 for branching and 0.002-0.0002 for foliose and other morphologies
 #foliose same as other in Browne et al. so lumped
 #these are rates for the 50 cm (middle) size class
+#these are percentage of surface area (4.14 and 2.96%) should be matemetically equivalent to cover
 #LT created Morphology_for_mortality_LOOKUP (currently .xlsx): note that foliose retained as category but foliose and other should be treated as other
 branching_mortality<-0.0414
 other_mortality<-0.0296
@@ -94,27 +98,33 @@ Year1_taxa$Baseline_Cover_Start<-Baseline$Percent_Cover*(1-x_mortality)
 
 #Calculate growth of colonies
 #Site_Area from user input
-#calculate total area occupied by each coraltaxa within the plot
+#calculate total area occupied by each coraltaxa within the plot in m2
 Year1_taxa$Baseline_Coral_Area<-Site_Area*(Baseline$Percent_Cover/100)
 
 #Join NCRMP_colony_dia_Florida.csv
+#these colony diameters are in cm
 Florida_colony_dia<-read.csv("NCRMP_colony_dia_Florida.csv", header=T)
 #Use regional median taxon specific colony diameters (length_mean) to estimate number of colonies for each species
 #round to a whole number so individuals can be modeled
-Year1_taxa$Baseline_NColonies<-round(Year1_taxa$Baseline_Coral_Area/Florida_colony_dia)
+#diameters are in cm so need to be divided by 10000
+#use equation for area of a circle to convert diameters in m2 to area
+Year1_taxa$Baseline_NColonies<-round(Year1_taxa$Baseline_Coral_Area/((((Florida_colony_dia/10000)/2)^2)*pi))
 
 #Calculate individual colony diameters for each taxon based on the rounded estimate of colony number
-Year1_taxa$Baseline_Coral_Dia<-Year1_taxa$Baseline_Coral_Area/Year1_taxa$Baseline_NColonies
+#this step is necessary because the outcome of the previous calculation is rounded to a whole number
+#Convert area to diameter in m
+Year1_taxa$Baseline_Coral_Dia<-sqrt((Year1_taxa$Baseline_Coral_Area/Year1_taxa$Baseline_NColonies)/pi)*2
 
-#growth_rates_ReefBudget_NCRMP.csv has species-specific coral growth rates in cm
+#growth_rates_ReefBudget_NCRMP.csv has species-specific coral growth rates (vertical extension and planar) in cm
 #apply planar growth to each coral
 #I calculated the ratio of coral diameters to heights across all the Atlantic NCRMP Demographic data
-#I then multiplied that ratio by the ReefBudget mean_ext rate to estimate colony diameter growth
+#I then multiplied that ratio by the ReefBudget mean_ext rate to estimate colony diameter (planar) growth rate in cm
 coral_growth<-read.csv("growth_rates_ReefBudget_NCRMP.csv", header=T)
-#dividing by 100 converts cm rates to m2 which is units for coral area
+#dividing by 100 converts cm rates to m which is units for coral area
 Year1_taxa$Year1_Coral_Dia<-Baseline_Coral_Dia+((coral_growth$planar_mean/100))
 
 #calculate new species-specific area assuming each colony is a circle
+#area in m2
 Year1_taxa$Year1_Coral_Area<-(((Year1_Coral_Dia/2)^2)*pi)*NColonies
 
 #calculate new species-specific coral cover
@@ -135,14 +145,15 @@ Year1_taxa$Restored_Cover_Start<-Year0_taxa$Restored_Cover*(1-Mote_mortality)
 #calculate total area occupied by each individual coral within the plot
 Year1_taxa$Restored_Area_Start<-Site_Area*(Year1_taxa$Restored_Cover/100)
 
-#use user-input outplant size (in area) to calculate the estimated number of outplants
+#use user-input outplant size (in cm2) to calculate the estimated number of outplants
+###Is this the best input unit###
 #round to a whole number so individuals can be modeled
 #this step and the next may not be necessary because we have input size and could get dia from that
 #but should test
-Year1_taxa$Restored_NColonies<-round(Year1_taxa$Restored_Area_Start/Outplant_size)
+Year1_taxa$Restored_NColonies<-round(Year1_taxa$Restored_Area_Start/(Outplant_size/10000))
 
-#Calculate individual colony diameters for each taxon based on the rounded estimate of colony number
-Year1_taxa$Restored_Coral_Dia_Start<-Year1_taxa$Restored_Area_Start/Year1_taxa$Restored_NColonies
+#Calculate individual colony diameters in m for each taxon based on the rounded estimate of colony number
+Year1_taxa$Restored_Coral_Dia_Start<-sqrt((Year1_taxa$Restored_Area_Start/Year1_taxa$Restored_NColonies)/pi)*2
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
@@ -158,7 +169,7 @@ Year1_taxa$Restored_Cover_End<-(Year1_taxa$Restored_Area_End/Site_Area)*100
 Year1_taxa$Total_cover<-Year1_taxa$Baseline_Cover + Year1_taxa$Restored_Cover
 
 #Calcuate gross production by taxon
-Year1_taxa$GP<-Year1_taxa$Total_cover*TravisRates #taxon-specific calcification rates
+Year1_taxa$GP<-(Year1_taxa$Total_cover/100)*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
 Year1_site$GP<-sum(Year1_taxa$GP)
@@ -175,7 +186,7 @@ Micro_Year1<-(Year1_substrate/100)*0.24
 #Bioerosion is specific to Habitat and Region (which are included in Baseline_cover_TEMPLATE.csv)
 #NOTE that these values will not change from year to year in the model but Micro will
 #This variabile should actually be calculated in the DataInput module
-Site_bioerosion<-sum(Bioerosion$Parrotfish, Bioerosion$Urchins, Bioerosion$BioSponges)
+Site_bioerosion<-sum(Bioerosion$AVE_PARROTFISH, Bioerosion$AVE_URCHINS, Bioerosion$AVE_MACROBIOEROSION)
 
 #Calculate site-level net production
 Year1_site$NP<-Year1_site$GP-(Site_bioerosion+Micro_Year1)
@@ -194,6 +205,7 @@ bleaching_frequency<-0 #can equal 1, 2, or annual (=4 or 5)
 ###Loop this for Year 1-2, 2-3, 3-4, and 4-5###
 #Calculate decrease in coral cover with natural and bleaching-related mortality
 #DHW_mortailty_rates from Webb et al. 2025
+#https://doi.org/10.1038/s41598-025-28828-3
 #these values are DHW and taxon specific
 #see source(DHW.R)
 #bleaching_frequency determines the number of years DHW_mortality_rates are applied
@@ -219,14 +231,14 @@ Year5_taxa$Total_DHW_residual_cover_decline<-Year5_taxa$Total_DHW_residual_area/
 
 #Add residual cover decline to 75% of total scenario mortality
 #baseline partial mortality also gets added in here
-Year5_taxa$Restored_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year5_taxa$Total_DHW_residual_cover_decline+x_mortality))
+Year5_taxa$Restored_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57-Year5_taxa$Total_DHW_residual_cover_decline)*(1-x_mortality))
 
 #calculate growth of corals that didn't die
 #Site_Area from user input
 #calculate total area occupied by each individual coral within the plot
 Year5_taxa$Restored_Area_Start<-Site_Area*(Year5_taxa$Restored_cover_post_mortality/100)
 
-Year5_taxa$Restored_Coral_Dia_Start<-Year5_taxa$Restored_Area_Start/Year5_taxa$Post_bleaching_restored_NColonies_integer
+Year5_taxa$Restored_Coral_Dia_Start<-sqrt((Year5_taxa$Restored_Area_Start/Year5_taxa$Post_bleaching_restored_NColonies_integer)/pi)*2
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
@@ -257,18 +269,20 @@ Year5_taxa$Coral_Cover_post_colony_mortality<-Site_Area*(Year5_taxa$Coral_Area_p
 #Residual (decimal) from above, back into partial mortality calculation
 Year5_taxa$Total_DHW_residual<-Year5_taxa$Post_bleaching_Baseline_NColonies-Year5_taxa$Post_bleaching_Baseline_NColonies_integer
 Year5_taxa$Total_DHW_residual_area<-Year5_taxa$Total_DHW_residual*(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
-Year5_taxa$Total_DHW_residual_cover_decline<-Year5_taxa$Total_DHW_residual_area/Site_Area
+Year5_taxa$Total_DHW_residual_cover_decline<-(Year5_taxa$Total_DHW_residual_area/Site_Area)*100
 
 #Add residual cover decline to 75% of total scenario mortality
-#baseline partial mortality also gets added in here
-Year5_taxa$Baseline_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year5_taxa$Total_DHW_residual_cover_decline+x_mortality))
+#baseline partial mortality also gets included in here
+#DHW mortality and the residual coral cover decline are both in % cover
+#residual decline subtracted because it is positive but DHW is negative
+Year5_taxa$Baseline_cover_post_mortality<-(Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-Year5_taxa$Total_DHW_residual_cover_decline))*(1-x_mortality)
 
 #calculate growth of corals that didn't die
-#Site_Area from user input
+#Site_Area in m2 from user input
 #calculate total area occupied by each individual coral within the plot
 Year5_taxa$Baseline_Area_Start<-Site_Area*(Year5_taxa$Baseline_cover_post_mortality/100)
 
-Year5_taxa$Baseline_Coral_Dia_Start<-Year5_taxa$Baseline_Area_Start/Year5_taxa$Post_bleaching_Baseline_NColonies_integer
+Year5_taxa$Baseline_Coral_Dia_Start<-sqrt((Year5_taxa$Baseline_Area_Start/Year5_taxa$Post_bleaching_Baseline_NColonies_integer)/pi)*2
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
@@ -284,7 +298,7 @@ Year5_taxa$Baseline_Cover_End<-(Baseline_Area_End/Site_Area)*100
 Year5_taxa$Total_cover<-Year5_taxa$Baseline_Cover_End + Year1_taxa$Restored_Cover_End
 
 #Calculate gross production
-Year5_taxa$GP<-Year5_taxa$Coral_Cover*TravisRates #taxon-specific calcification rates
+Year5_taxa$GP<-(Year5_taxa$Coral_Cover/100)*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
 Year5_site$GP<-sum(Year5_taxa$GP)
@@ -301,7 +315,7 @@ Micro_Year5<-(Year5_substrate/100)*0.24
 #Bioerosion is specific to Habitat and Region (which are included in Baseline_cover_TEMPLATE.csv)
 #NOTE that these values will not change from year to year in the model but Micro will
 #This variabile should actually be calculated in the DataInput module
-Site_bioerosion<-sum(Bioerosion$Parrotfish, Bioerosion$Urchins, Bioerosion$BioSponges)
+Site_bioerosion<-sum(Bioerosion$AVE_PARROTFISH, Bioerosion$AVE_URCHINS, Bioerosion$AVE_MACROBIOEROSION)
 
 #Calculate site-level net production
 Year5_site$NP<-Year5_site$GP-(Site_bioerosion+Micro_Year5)
@@ -320,9 +334,9 @@ Year5_site$RAP<-Year5_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey
 #see source(DHW.R)
 #bleaching_frequency determines the number of years DHW_mortality_rates are applied
 #could be random or for simplified version (L126) either middle year for 1, every other year for 2, and every year for annual
-#For now I'm assuming 25% of colonies die outright
+#For now I'm assuming 25% of colonies die outright, but we should revisit this
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
-Year10_taxa$Post_bleaching_restored_cover_1<-Year1_taxa$Restored_Cover_End+(DHW_mortality*0.25)
+Year10_taxa$Post_bleaching_restored_cover_1<-Year5_taxa$Restored_Cover_End+(DHW_mortality*0.25)
 Year10_taxa$Post_bleaching_restored_area_1<-Site_Area*(Year10_taxa$Post_bleaching_restored_cover_1/100)
 Year10_taxa$Post_bleaching_restored_NColonies<-Year10_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
 
@@ -340,14 +354,14 @@ Year10_taxa$Total_DHW_residual_cover_decline<-Year10_taxa$Total_DHW_residual_are
 
 #Add residual cover decline to 75% of total scenario mortality
 #baseline partial mortality also gets added in here
-Year10_taxa$Restored_cover_post_mortality<-Year10_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year10_taxa$Total_DHW_residual_cover_decline+x_mortality))
+Year10_taxa$Restored_cover_post_mortality<-Year10_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57-Year10_taxa$Total_DHW_residual_cover_decline)*(1-x_mortality))
 
 #calculate growth of corals that didn't die
 #Site_Area from user input
 #calculate total area occupied by each individual coral within the plot
 Year10_taxa$Restored_Area_Start<-Site_Area*(Year10_taxa$Restored_cover_post_mortality/100)
 
-Year10_taxa$Restored_Coral_Dia_Start<-Year10_taxa$Restored_Area_Start/Year10_taxa$Post_bleaching_restored_NColonies_integer
+Year10_taxa$Restored_Coral_Dia_Start<-sqrt((Year10_taxa$Restored_Area_Start/Year10_taxa$Post_bleaching_restored_NColonies_integer)/pi)*2
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
@@ -364,7 +378,7 @@ Year10_taxa$Restored_Cover_End<-(Restored_Area_End/Site_Area)*100
 
 #For now I'm assuming 25% of colonies die outright
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
-Year10_taxa$Post_bleaching_Baseline_cover_1<-Year1$Baseline_Cover_End+(DHW_mortality*0.25)
+Year10_taxa$Post_bleaching_Baseline_cover_1<-Year5_taxa$Baseline_Cover_End+(DHW_mortality*0.25)
 Year10_taxa$Post_bleaching_Baseline_area_1<-Site_Area*(Year10_taxa$Post_bleaching_Baseline_cover_1/100)
 Year10_taxa$Post_bleaching_Baseline_NColonies<-Year10_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
 
@@ -378,18 +392,20 @@ Year10_taxa$Coral_Cover_post_colony_mortality<-Site_Area*(Year10_taxa$Coral_Area
 #Residual (decimal) from above, back into partial mortality calculation
 Year10_taxa$Total_DHW_residual<-Year10_taxa$Post_bleaching_Baseline_NColonies-Year10_taxa$Post_bleaching_Baseline_NColonies_integer
 Year10_taxa$Total_DHW_residual_area<-Year10_taxa$Total_DHW_residual*(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
-Year10_taxa$Total_DHW_residual_cover_decline<-Year10_taxa$Total_DHW_residual_area/Site_Area
+Year10_taxa$Total_DHW_residual_cover_decline<-(Year10_taxa$Total_DHW_residual_area/Site_Area)*100
 
 #Add residual cover decline to 75% of total scenario mortality
-#baseline partial mortality also gets added in here
-Year10_taxa$Baseline_cover_post_mortality<-Year10_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-sum(Year10_taxa$Total_DHW_residual_cover_decline+x_mortality))
+#baseline partial mortality also gets included in here
+#DHW mortality and the residual coral cover decline are both in % cover
+#residual decline subtracted because it is positive but DHW is negative
+Year10_taxa$Baseline_cover_post_mortality<-(Year10_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57)-Year10_taxa$Total_DHW_residual_cover_decline))*(1-x_mortality)
 
 #calculate growth of corals that didn't die
-#Site_Area from user input
+#Site_Area in m2 from user input
 #calculate total area occupied by each individual coral within the plot
 Year10_taxa$Baseline_Area_Start<-Site_Area*(Year10_taxa$Baseline_cover_post_mortality/100)
 
-Year10_taxa$Baseline_Coral_Dia_Start<-Year10_taxa$Baseline_Area_Start/Year10_taxa$Post_bleaching_Baseline_NColonies_integer
+Year10_taxa$Baseline_Coral_Dia_Start<-sqrt((Year10_taxa$Baseline_Area_Start/Year10_taxa$Post_bleaching_Baseline_NColonies_integer)/pi)*2
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
@@ -405,7 +421,7 @@ Year10_taxa$Baseline_Cover_End<-(Baseline_Area_End/Site_Area)*100
 Year10_taxa$Total_cover<-Year10_taxa$Baseline_Cover_End + Year5_taxa$Restored_Cover_End
 
 #Calculate gross production
-Year10_taxa$GP<-Year10_taxa$Coral_Cover*TravisRates #taxon-specific calcification rates
+Year10_taxa$GP<-(Year10_taxa$Coral_Cover/100)*TravisRates #taxon-specific calcification rates
 
 #sum to get site-level gross production
 Year10_site$GP<-sum(Year10_taxa$GP)
@@ -416,16 +432,16 @@ Year10_site$GP<-sum(Year10_taxa$GP)
 Year10_substrate<-100-sum(Year10_taxa$Total_Cover)
 
 #Proportion of available substrate * generalized Caribbean microbioerosion rate of 0.24 kg m-2 y-1 (Perry and Lange, 2019)
-Micro_Year10<-(Year10_substrate/100)*0.24
+Micro_Year5<-(Year10_substrate/100)*0.24
 
 #Other Bioerosion data from Bioerosion.csv dataset
 #Bioerosion is specific to Habitat and Region (which are included in Baseline_cover_TEMPLATE.csv)
 #NOTE that these values will not change from year to year in the model but Micro will
 #This variabile should actually be calculated in the DataInput module
-Site_bioerosion<-sum(Bioerosion$Parrotfish, Bioerosion$Urchins, Bioerosion$BioSponges)
+Site_bioerosion<-sum(Bioerosion$AVE_PARROTFISH, Bioerosion$AVE_URCHINS, Bioerosion$AVE_MACROBIOEROSION)
 
 #Calculate site-level net production
-Year10_site$NP<-Year10_site$GP-(Site_bioerosion+Micro_Year10)
+Year10_site$NP<-Year10_site$GP-(Site_bioerosion+Micro_Year5)
 
 #Calculate site-level reef-accretion potential
 #use porosity dataset lookup: if restoration mix >75% Acropora spp., use Acropora porosity; if restoration mix >75% massives/other use Massive porosity

@@ -1,7 +1,11 @@
 ####Data input calculations####
 
 #Data input template
-#Baseline_cover_TEMPLATE.csv
+#Baseline_cover_TEMPLATE.xlxs
+
+library(readxl)
+
+Baseline<-read_excel("Baseline_cover_TEMPLATE.xlxs", sheet = "Coral cover input")
 
 #Need to run data checks:
 #1. All required fields included? print "Required data missing: VARIABLE NAME"
@@ -11,6 +15,7 @@
 # Other?
 
 #Carbonate budget calculation modified from Alice's code
+#Math for this tab starts on L29
 
 Baseline <- coral_data %>% #baseline cover input from dropdown or data uploaded using template
   left_join(TravisRates, by = "Taxon") %>% #add species-specific calcification rates
@@ -21,8 +26,8 @@ Baseline <- coral_data %>% #baseline cover input from dropdown or data uploaded 
 gross_budget <- sum(Baseline$Contribution, na.rm = TRUE) #this is actually gross budget
 #This calculation has been modified see RestorationScenarioModeling.R
 erosion_total <- Baseline %>%
-  dplyr::distinct(c(Habitat,Subregion), PF, BioSponges, Urchins) %>% # microbioerosion removed from Alice's script because it should be calculated separately
-  dplyr::summarise(total = PF + BioSponges + Urchins) %>%
+  dplyr::distinct(c(Habitat,Subregion), AVE_PARROTFISH + AVE_URCHIN + AVE_MACROBIOEROSION) %>% # microbioerosion removed from Alice's script because it should be calculated separately
+  dplyr::summarise(total = AVE_PARROTFISH + AVE_URCHIN + AVE_MACROBIOEROSION) %>%
   dplyr::pull(total)
 
 #Calculate microbioerosion based on available substrate
@@ -31,9 +36,11 @@ erosion_total <- Baseline %>%
 Baseline_substrate<-100-sum(Baseline$Percent_Cover)
 
 #Proportion of available substrate * generalized Caribbean microbioerosion rate of 0.24 kg m-2 y-1 (Perry and Lange, 2019)
+#substrate divided by 100 to convert % cover to proportional cover
 Micro_Baseline<-(Baseline_substrate/100)*0.24
 
 #Add microbioerosion to total bioerosion
+#Total=AVE_PARROTFISH + AVE_URCHIN + AVE_MACROBIOEROSION for the same subregion and habitat as the input data
 erosion_total<-erosion_total + Micro_Baseline
 
 net_budget <- gross_budget - erosion_total
