@@ -42,3 +42,11 @@ bleach_loss_lookup <- tibble::tribble(
 
 bleach_loss_default_ASB <- 0.05
 bleach_loss_default_MB  <- 0.03
+
+
+#####################################################################
+# Severe bleaching production reductions
+bleach_severe_reduction_year0 <- 0.60
+bleach_severe_reduction_year1 <- 0.35
+bleach_severe_reduction_year2 <- 0.15
+bleach_severe_reduction_year3 <- 0.05
