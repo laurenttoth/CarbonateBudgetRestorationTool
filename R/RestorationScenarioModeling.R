@@ -88,7 +88,7 @@ Year0_site$RAP<-Year0_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey
 #Browne et al. estimates whole-colony mortality at 0.002-0.00076 for branching and 0.002-0.0002 for foliose and other morphologies
 #foliose same as other in Browne et al. so lumped
 #these are rates for the 50 cm (middle) size class
-#these are percentage of surface area (4.14 and 2.96%) should be matemetically equivalent to cover
+#these are percentage of surface area (4.14 and 2.96%) should be mathemetically equivalent to cover
 #LT created Morphology_for_mortality_LOOKUP (currently .xlsx): note that foliose retained as category but foliose and other should be treated as other
 branching_mortality<-0.0414
 other_mortality<-0.0296
@@ -98,7 +98,7 @@ Year1_taxa$Baseline_Cover_Start<-Baseline$Percent_Cover*(1-x_mortality)
 
 #Calculate growth of colonies
 #Site_Area from user input
-#calculate total area occupied by each coraltaxa within the plot in m2
+#calculate total area occupied by each coral taxa within the plot in m2
 Year1_taxa$Baseline_Coral_Area<-Site_Area*(Baseline$Percent_Cover/100)
 
 #Join NCRMP_colony_dia_Florida.csv
@@ -125,7 +125,7 @@ Year1_taxa$Year1_Coral_Dia<-Baseline_Coral_Dia+((coral_growth$planar_mean/100))
 
 #calculate new species-specific area assuming each colony is a circle
 #area in m2
-Year1_taxa$Year1_Coral_Area<-(((Year1_Coral_Dia/2)^2)*pi)*NColonies
+Year1_taxa$Year1_Coral_Area<-(((Year1_Coral_Dia/2)^2)*pi)*Year1_taxa$Baseline_NColonies
 
 #calculate new species-specific coral cover
 Year1_taxa$Baseline_Cover_End<-(Year1_Coral_Area/Site_Area)*100
@@ -200,6 +200,7 @@ Year1_site$RAP<-Year1_site$NP/2.9/(1-porosity) #2.9 = CaCO3 density from Kinsey 
 #note that as currently conceptualized this will only model 1-4 years not the full 5 year period for the year 10 output
 
 bleaching_severity<-0 #can equal 8,12,16,20,24 based on user input
+#do we need a 4 DHW scenario
 bleaching_frequency<-0 #can equal 1, 2, or annual (=4 or 5)
 
 ###Loop this for Year 1-2, 2-3, 3-4, and 4-5###
@@ -213,9 +214,10 @@ bleaching_frequency<-0 #can equal 1, 2, or annual (=4 or 5)
 
 #For now I'm assuming 25% of colonies die outright, but we should revisit this
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
+#maybe create lookup table for DHW based proportions of total colony versus partial mortality
 Year5_taxa$Post_bleaching_restored_cover_1<-Year1_taxa$Restored_Cover_End+(DHW_mortality*0.25)
 Year5_taxa$Post_bleaching_restored_area_1<-Site_Area*(Year5_taxa$Post_bleaching_restored_cover_1/100)
-Year5_taxa$Post_bleaching_restored_NColonies<-Year5_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
+Year5_taxa$Post_bleaching_restored_NColonies<-Year1_taxa$Restored_NColonies-Year5_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
 
 #NColonies needs to be an integer for calculations below
 Year5_taxa$Post_bleaching_restored_NColonies_integer<-as.integer(Year5_taxa$Post_bleaching_restored_NColonies)
@@ -231,7 +233,7 @@ Year5_taxa$Total_DHW_residual_cover_decline<-Year5_taxa$Total_DHW_residual_area/
 
 #Add residual cover decline to 75% of total scenario mortality
 #baseline partial mortality also gets added in here
-Year5_taxa$Restored_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.57-Year5_taxa$Total_DHW_residual_cover_decline)*(1-x_mortality))
+Year5_taxa$Restored_cover_post_mortality<-Year5_taxa$Coral_Cover_post_colony_mortality+((DHW_mortality*0.75-Year5_taxa$Total_DHW_residual_cover_decline)*(1-x_mortality))
 
 #calculate growth of corals that didn't die
 #Site_Area from user input
@@ -242,7 +244,8 @@ Year5_taxa$Restored_Coral_Dia_Start<-sqrt((Year5_taxa$Restored_Area_Start/Year5_
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
-Year5_taxa$Year5_Coral_Dia_End<-Restored_Coral_Dia_Start+((coral_growth$planar_mean/100))
+#see bottom of DHW.R there are penalties for coral growth after bleaching
+Year5_taxa$Year5_Coral_Dia_End<-Restored_Coral_Dia_Start+((coral_growth$planar_mean/100*bleach_severe_reduction_yearX))
 
 #calculate new species-specific area
 Year5_taxa$Restored_Area_End<-(((Restored_Coral_Dia_End/2)^2)*pi)*Post_bleaching_restored_NColonies_integer
@@ -257,7 +260,7 @@ Year5_taxa$Restored_Cover_End<-(Restored_Area_End/Site_Area)*100
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
 Year5_taxa$Post_bleaching_Baseline_cover_1<-Year1_taxa$Baseline_Cover_End+(DHW_mortality*0.25)
 Year5_taxa$Post_bleaching_Baseline_area_1<-Site_Area*(Year5_taxa$Post_bleaching_Baseline_cover_1/100)
-Year5_taxa$Post_bleaching_Baseline_NColonies<-Year5_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
+Year5_taxa$Post_bleaching_Baseline_NColonies<-ear1_taxa$Baseline_NColonies-Year5_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
 
 #NColonies needs to be an integer for calculations below
 Year5_taxa$Post_bleaching_Baseline_NColonies_integer<-as.integer(Year5_taxa$Post_bleaching_Baseline_NColonies)
@@ -286,7 +289,8 @@ Year5_taxa$Baseline_Coral_Dia_Start<-sqrt((Year5_taxa$Baseline_Area_Start/Year5_
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
-Year5_taxa$Year5_Coral_Dia_End<-Baseline_Coral_Dia_Start+((coral_growth$planar_mean/100))
+#see bottom of DHW.R there are penalties for coral growth after bleaching
+Year5_taxa$Year5_Coral_Dia_End<-Baseline_Coral_Dia_Start+((coral_growth$planar_mean/100*bleach_severe_reduction_yearX))
 
 #calculate new species-specific area
 Year5_taxa$Baseline_Area_End<-(((Baseline_Coral_Dia_End/2)^2)*pi)*Post_bleaching_Baseline_NColonies_integer
@@ -295,7 +299,7 @@ Year5_taxa$Baseline_Area_End<-(((Baseline_Coral_Dia_End/2)^2)*pi)*Post_bleaching
 Year5_taxa$Baseline_Cover_End<-(Baseline_Area_End/Site_Area)*100
 
 #Total Year_X coral cover
-Year5_taxa$Total_cover<-Year5_taxa$Baseline_Cover_End + Year1_taxa$Restored_Cover_End
+Year5_taxa$Total_cover<-Year5_taxa$Baseline_Cover_End + Year5_taxa$Restored_Cover_End
 
 #Calculate gross production
 Year5_taxa$GP<-(Year5_taxa$Coral_Cover/100)*TravisRates #taxon-specific calcification rates
@@ -338,7 +342,7 @@ Year5_site$RAP<-Year5_site$NP/2.9/(1- porosity) #2.9 = CaCO3 density from Kinsey
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
 Year10_taxa$Post_bleaching_restored_cover_1<-Year5_taxa$Restored_Cover_End+(DHW_mortality*0.25)
 Year10_taxa$Post_bleaching_restored_area_1<-Site_Area*(Year10_taxa$Post_bleaching_restored_cover_1/100)
-Year10_taxa$Post_bleaching_restored_NColonies<-Year10_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
+Year10_taxa$Post_bleaching_restored_NColonies<-Year5_taxa$Restored_NColonies-Year10_taxa$Post_bleaching_restored_area_1/(((Year1$Restored_Coral_Dia_End/2)^2)*pi)
 
 #NColonies needs to be an integer for calculations below
 Year10_taxa$Post_bleaching_restored_NColonies_integer<-as.integer(Year10_taxa$Post_bleaching_restored_NColonies)
@@ -365,7 +369,8 @@ Year10_taxa$Restored_Coral_Dia_Start<-sqrt((Year10_taxa$Restored_Area_Start/Year
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
-Year10_taxa$Year10_Coral_Dia_End<-Restored_Coral_Dia_Start+((coral_growth$planar_mean/100))
+#see bottom of DHW.R there are penalties for coral growth after bleaching
+Year10_taxa$Year10_Coral_Dia_End<-Restored_Coral_Dia_Start+((coral_growth$planar_mean/100*bleach_severe_reduction_yearX))
 
 #calculate new species-specific area
 Year10_taxa$Restored_Area_End<-(((Restored_Coral_Dia_End/2)^2)*pi)*Post_bleaching_restored_NColonies_integer
@@ -380,7 +385,7 @@ Year10_taxa$Restored_Cover_End<-(Restored_Area_End/Site_Area)*100
 #Remaining 75% decline is partial mortality that reduces effective colony mortality
 Year10_taxa$Post_bleaching_Baseline_cover_1<-Year5_taxa$Baseline_Cover_End+(DHW_mortality*0.25)
 Year10_taxa$Post_bleaching_Baseline_area_1<-Site_Area*(Year10_taxa$Post_bleaching_Baseline_cover_1/100)
-Year10_taxa$Post_bleaching_Baseline_NColonies<-Year10_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
+Year10_taxa$Post_bleaching_Baseline_NColonies<-Year5_taxa$Restored_NColonies-Year10_taxa$Post_bleaching_Baseline_area_1/(((Year1$Baseline_Coral_Dia_End/2)^2)*pi)
 
 #NColonies needs to be an integer for calculations below
 Year10_taxa$Post_bleaching_Baseline_NColonies_integer<-as.integer(Year10_taxa$Post_bleaching_Baseline_NColonies)
@@ -409,7 +414,8 @@ Year10_taxa$Baseline_Coral_Dia_Start<-sqrt((Year10_taxa$Baseline_Area_Start/Year
 
 #Grow the diameter of the colonies
 #coral_growth is taxon specific
-Year10_taxa$Year10_Coral_Dia_End<-Baseline_Coral_Dia_Start+((coral_growth$planar_mean/100))
+#see bottom of DHW.R there are penalties for coral growth after bleaching
+Year10_taxa$Year10_Coral_Dia_End<-Baseline_Coral_Dia_Start+((coral_growth$planar_mean/100*bleach_severe_reduction_year0))
 
 #calculate new species-specific area
 Year10_taxa$Baseline_Area_End<-(((Baseline_Coral_Dia_End/2)^2)*pi)*Post_bleaching_Baseline_NColonies_integer
