@@ -138,6 +138,8 @@ Year1_taxa$Baseline_Cover_End<-(Year1_Coral_Area/Site_Area)*100
 #mortality of restored colonies
 #will be look-up with species-specific rates
 #use Mote_mortality=0.3 for now
+#another option is to pull data from here
+#https://public.tableau.com/views/CoralRestorationDatabase-Visualisation/Coralrestorationmethods?%3Aembed=y&%3Adisplay_count=yes&publish=yes&%3AshowVizHome=no#1
 Year1_taxa$Restored_Cover_Start<-Year0_taxa$Restored_Cover*(1-Mote_mortality)
 
 #Calculate growth of colonies
