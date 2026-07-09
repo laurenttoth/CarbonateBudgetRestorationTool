@@ -1,4 +1,4 @@
-#### Data input calculations ####
+# Data Input Calculations ----
 
 # Data input template
 # Baseline_cover_TEMPLATE.xlxs
@@ -14,25 +14,25 @@ baseline <- read_excel("Baseline_cover_TEMPLATE.xlxs", sheet = "Coral cover inpu
 # 4. Check Lat/Long within Florida bounding box
 # Other?
 
-# Carbonate budget calculation modified from Alice's code
+# Carbonate Budget Calculation (modified from Alice's code) ----
 # Math for this tab starts on L29
 
-baseline <- coral_data %>%  # baseline cover input from dropdown or data uploaded using template
-  left_join(travis_rates, by = "Taxon") %>%  # add species-specific calcification rates
+baseline <- coral_data |>  # baseline cover input from dropdown or data uploaded using template
+  left_join(travis_rates, by = "Taxon") |>  # add species-specific calcification rates
   left_join(bioerosion, by = c("Habitat", "Subregion")  # invalid: missing closing paren
-  ) %>%  # in Bioerosion.csv #add bioerosion; not actually needed until next step
+  ) |>  # in Bioerosion.csv #add bioerosion; not actually needed until next step
   # Also need to add mid-shore and DRTO habitats to Bioerosion spreadsheet
   mutate(contribution = percent_cover * rate / 100)  # result gives gross carbonate production by taxon
 
 gross_budget <- sum(baseline$contribution, na.rm = TRUE)  # this is actually gross budget
 # This calculation has been modified see RestorationScenarioModeling.R
-erosion_total <- baseline %>%
+erosion_total <- baseline |>
   # microbioerosion removed from Alice's script because it should be calculated separately
-  dplyr::distinct(c(habitat, subregion), ave_parrotfish + ave_urchin + ave_macrobioerosion) %>%
-  dplyr::summarise(total = ave_parrotfish + ave_urchin + ave_macrobioerosion) %>%
+  dplyr::distinct(c(habitat, subregion), ave_parrotfish + ave_urchin + ave_macrobioerosion) |>
+  dplyr::summarise(total = ave_parrotfish + ave_urchin + ave_macrobioerosion) |>
   dplyr::pull(total)
 
-# Calculate microbioerosion based on available substrate
+# Microbioerosion Calculation ----
 # Note that Percent_Cover here should include total calcifier cover + unconsolidated substrate
 # both of which are substracted from 100 to get available, consolidated substrate for microbioerosion
 baseline_substrate <- 100 - sum(baseline$percent_cover)

@@ -1,7 +1,6 @@
-## ------------------------------
-## DHW-proportional cover-loss mortality (Webb et al. 2023 derived)
-##   Calculated as: (ASB Loss % / 8 DHW) = % cover change per 1 DHW
-## ------------------------------
+# DHW-Proportional Cover-Loss Mortality (Webb et al. 2023 derived) ----
+#   Calculated as: (ASB Loss % / 8 DHW) = % cover change per 1 DHW
+
 use_dhw_cover_mortality <- TRUE  # Switch to TRUE for smooth responses
 
 dhw_slope_lookup_fk <- tibble::tribble(
@@ -24,9 +23,7 @@ dhw_slope_default_pct_per_dhw <- -0.80
 dhw_mortality_cap <- 0.95
 
 
-## ------------------------------
-## Bleaching mortality settings (Webb et al. 2023)
-## ------------------------------
+# Bleaching Mortality Settings (Webb et al. 2023) ----
 use_bleaching_mortality <- FALSE
 bleach_threshold_mb <- 4
 bleach_threshold_asb <- 8
@@ -44,8 +41,7 @@ bleach_loss_default_asb <- 0.05
 bleach_loss_default_mb <- 0.03
 
 
-#####################################################################
-# Severe bleaching production reductions
+# Severe Bleaching Production Reductions ----
 bleach_severe_reduction_year0 <- 0.60
 bleach_severe_reduction_year1 <- 0.35
 bleach_severe_reduction_year2 <- 0.15

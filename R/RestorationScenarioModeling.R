@@ -1,8 +1,6 @@
-###############################
-# Restoration scenario modeling
-###############################
+# Restoration Scenario Modeling ----
 
-############ Notes about modifications to Alice's version of the app ##############
+## Notes About Modifications to Alice's Version of the App ----
 # Data input moves to new page
 
 # add two additional restoration species Pseudodiploria strigosa and Pseudodiploria clivosa
@@ -29,20 +27,18 @@ output$restoration_sliders <- renderUI({
   )
 })
 
-####################
-## MATH NOT SCRIPTS ##
-####################
+# Math Not Scripts ----
 
-########## Year 0 ##########
+## Year 0 ----
 # Baseline from DataInputScripts.R
 # Restored_Cover from slider inputs
 
 # Potential way to code for math below:
 year0_taxa <-
-  merge(baseline, input_cover, travis_rates) %>%
-  arrange(taxon) %>%
-  mutate(total_cover = percent_cover + restored_cover) %>%  # unconsolidated substrate included here
-  filter(taxon != required_unconsolidated_substrate) %>%  # removed for below
+  merge(baseline, input_cover, travis_rates) |>
+  arrange(taxon) |>
+  mutate(total_cover = percent_cover + restored_cover) |>  # unconsolidated substrate included here
+  filter(taxon != required_unconsolidated_substrate) |>  # removed for below
   mutate(coral_cover = percent_cover + restored_cover)
 mutate(gp = (coral_cover / 100) * rate))  # invalid: stray closing paren, missing pipe
 
@@ -84,7 +80,7 @@ year0_site$np <- year0_site$gp - (site_bioerosion + micro_year0)
 # 2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 year0_site$rap <- year0_site$np / 2.9 / (1 - porosity)
 
-########## Year 1 ##########
+## Year 1 ----
 # Calculate change in percent cover after one year based on species-specific growth and mortality rates
 
 # Partial mortality rates for branching and "other" corals from Browne et al. 2026 applied to Baseline_Cover
@@ -217,7 +213,7 @@ year1_site$np <- year1_site$gp - (site_bioerosion + micro_year1)
 # 2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 year1_site$rap <- year1_site$np / 2.9 / (1 - porosity)
 
-########## Year 5 ##########
+## Year 5 ----
 # note that as currently conceptualized this will only model 1-4 years not the full 5 year period
 # for the year 10 output
 
@@ -378,7 +374,7 @@ year5_site$np <- year5_site$gp - (site_bioerosion + micro_year5)
 # 2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 year5_site$rap <- year5_site$np / 2.9 / (1 - porosity)
 
-########## Year 10 ##########
+## Year 10 ----
 
 ### Loop this for Year 5-6, 6-7, 7-8, 8-9, and 9-10 ###
 # Calculate decrease in coral cover with natural and bleaching-related mortality
@@ -531,7 +527,7 @@ year10_site$np <- year10_site$gp - (site_bioerosion + micro_year5)
 # 2.9 = CaCO3 density from Kinsey 1985, 0.6265 = regional average framework porosity from Toth et al. 2018
 year10_site$rap <- year10_site$np / 2.9 / (1 - porosity)
 
-########## Restoration Impacts and Return-on-Investment ##########
+## Restoration Impacts and Return-on-Investment ----
 
 ### Change in Average Reef Elevation ###
 
@@ -561,11 +557,11 @@ year_x_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < year_x_s
 library(tidyr)
 library(dplyr)
 # Determine relationship between RAP increase and Ranking increase
-ranking_summary <- tibble(rap = baseline_budgets$rap) %>%
-  crossing(threshold = seq(-1, 1, 0.05)) %>%
-  group_by(threshold) %>%
-  summarise(pct_below = mean(rap < threshold, na.rm = TRUE) * 100) %>%
+ranking_summary <- tibble(rap = baseline_budgets$rap) |>
+  crossing(threshold = seq(-1, 1, 0.05)) |>
+  group_by(threshold) |>
+  summarise(pct_below = mean(rap < threshold, na.rm = TRUE) * 100) |>
   as.data.frame()
 
-#### Calculate ROI ####
+## Calculate ROI ----
 # ????John????

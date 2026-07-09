@@ -1,6 +1,4 @@
-########################
-# Restoration Monitoring
-########################
+# Restoration Monitoring ----
 library(tidyr)
 library(dplyr)
 
@@ -10,16 +8,16 @@ monitoring_data <- load.csv("Restoration_Monitoring_Cover_TEMPLATE.csv", header 
 monitoring_data$gp <- (year0_taxa$percent_cover / 100) * travis_rates
 
 # for each unique value in Years_Post_Restoration (including fractional years) and each unique site if there are multiple
-monitoring_data_site <- monitoring_data %>%
-  group_by(unique_site_id, years_post_restoration) %>%
+monitoring_data_site <- monitoring_data |>
+  group_by(unique_site_id, years_post_restoration) |>
   # Unconsolidated substrate needs to be removed for coral cover calculation
   # Should CCA also be removed for this???
-  filter(percent_cover != "REQUIRED_Unconsolidated_substrate") %>%
+  filter(percent_cover != "REQUIRED_Unconsolidated_substrate") |>
   summarize(gp_site = sum(gp), coral_cover = sum(percent_cover))
 
 # Calculate substrate for microbioerosion
-substrate <- monitoring_data %>%
-  group_by(unique_site_id, years_post_restoration) %>%
+substrate <- monitoring_data |>
+  group_by(unique_site_id, years_post_restoration) |>
   summarize(substrate = 100 - sum(percent_cover))
 
 # Calculate microbioerosion
@@ -27,15 +25,15 @@ substrate$microbioerosion <- (substrate$substrate / 100) * 0.24
 
 # If no data provided or if incomplete data provided (e.g. parrotfish but no sponges)
 # Add bioerosion for each site
-monitoring_data_site <- monitoring_data_site %>%
-  left_join(bioerosion, by = c("Habitat", "Subegion")) %>%  # invalid: "Subegion" misspelled
+monitoring_data_site <- monitoring_data_site |>
+  left_join(bioerosion, by = c("Habitat", "Subegion")) |>  # invalid: "Subegion" misspelled
   left_join(substrate, by = c("Habitat", "Subegion"))  # invalid: "Subegion" misspelled
 
 # If bioerosion input data provided apply the following calculations, as relevant
 # If data available for every timepoint in the Monitoring_data apply timepoint specific rates
 # Else apply single value or average value from whatever is provided
 
-# Parrotfish Bioerosion
+# Parrotfish Bioerosion ----
 # ParrotfishBioerosionRates.csv has species, size class, and life-phase-specific bioerosion rates
 # Parrotfish from user input
 # remove juveniles, which are assumed to contribute minimally to bioerosion
@@ -54,11 +52,11 @@ parrotfish_rates$bioerosion <- (parrotfish_rates$count * parrotfish_rates$rate) 
   parrotfish_rates$survey_area_m2
 
 # Sum for site and/or timepoint
-parrotfish_rates_site <- parrotfish_rates %>%
-  group_by(unique_site_id, years_post_restoration) %>%
+parrotfish_rates_site <- parrotfish_rates |>
+  group_by(unique_site_id, years_post_restoration) |>
   summarize(sum_bioerosion = sum(bioerosion, na.rm = TRUE), sum_counts = sum(count))
 
-# Urchin Bioerosion
+# Urchin Bioerosion ----
 # UrchinBioerosionRates.csv has species an test-size specific bioerosion rates
 # test sizes are median of range in input
 # If test size not incuded use 30 cm as most urching on FCR are relatively small
@@ -70,14 +68,14 @@ urchin_bioerosion <- merge(urchins, urchin_rates, by = c("Taxon", "Test.size"), 
 # Survey_Area_m2 from input data
 # urchin test sizes are in mm
 urchin_bioerosion$bioerosion <- ((urchins$count / urchins$survey_area_m2) *
-                                   urchin_bioerosion$bioerosion.rate * 365) / 1000
+  urchin_bioerosion$bioerosion.rate * 365) / 1000
 
 # Sum for site and/or timepoint
-urchin_rates_site <- urchin_bioerosion %>%
-  group_by(unique_site_id, years_post_restoration) %>%
+urchin_rates_site <- urchin_bioerosion |>
+  group_by(unique_site_id, years_post_restoration) |>
   summarize(sum_bioerosion = sum(bioerosion, na.rm = TRUE))
 
-# Sponge Bioerosion
+# Sponge Bioerosion ----
 # Sponge from user input
 # SpongeBioerosionRates.csv has species-specific sponge bioerosion rates
 sponge_rates <- read.csv("SpongeBioerosionRates.csv", header = TRUE)
@@ -92,8 +90,8 @@ sponge_rates$bioerosion <- (sponge_rates$area * sponge_rates$bioerosion.rate) /
   sponge_rates$survey_area_m2
 
 # Sum for site and/or timepoint
-sponge_rates_site <- sponge_rates %>%
-  group_by(unique_site_id, years_post_restoration) %>%
+sponge_rates_site <- sponge_rates |>
+  group_by(unique_site_id, years_post_restoration) |>
   summarize(sum_bioerosion = sum(bioerosion, na.rm = TRUE))
 
 # Calculate net budget
@@ -120,7 +118,7 @@ monitoring_data_site$rap <- monitoring_data_site$np / 2.9 / (1 - porosity)
 # text display for scenario = paste(Year, Scenario)
 # data from: https://sealevel.nasa.gov/ipcc-ar6-sea-level-projection-tool
 
-### Ranking of Reef-Accretion Potential ###
+# Ranking of Reef-Accretion Potential ----
 # Needs to be reported in the context of what this actually means for whether the reef is growing and how fast
 percentile <- length(baseline_budgets$rap[baseline_budgets$rap < monitoring_data_site$rap]) /
   length(baseline_budgets$rap) * 100

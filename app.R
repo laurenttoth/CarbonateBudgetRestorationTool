@@ -1,7 +1,7 @@
-## Alice Webb ##
-## REEF PERSISTENCE TOOL CODE ##
+# Reef Persistence Tool Code ----
+# Alice Webb
 
-# call packages
+# Call Packages ----
 library(rsconnect)
 library(shiny)
 library(shinydashboard)
@@ -100,9 +100,7 @@ df <- data.frame(
   site, lat, long, slr, accslr, ah10, coral, macro, micro, cca
 )
 
-############################
-### SHINY USER INTERFACE ###
-############################
+# Shiny User Interface ----
 
 ui <- bootstrapPage(
   title = "Reef Persistence Tool",
@@ -147,7 +145,7 @@ ui <- bootstrapPage(
       id = "nav",
     ),
 
-    # -----------------------------HOME--------------------------------------------------------------------------------------------
+    # Home ----
     tabPanel(
       "Home",
       div(
@@ -216,7 +214,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
       )
     ),
 
-    # ------------------------REEF CHARACTERISTICS-----------------------------------------------------
+    # Reef Characteristics ----
 
     tabPanel(
       "Reef Characteristics",
@@ -281,7 +279,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
           column(
             3,
             valueBoxOutput("stateBox", width = NULL),
-            textOutput("SLRmetrics") %>%
+            textOutput("SLRmetrics") |>
               tagAppendAttributes(style = "text-align:center;font-weight:bold"),
             imageOutput("myImageSLR"),
           ),
@@ -312,7 +310,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         )
       )
     ),
-    # ------------------------RESTORATION & ADAPTATION-------------------------------------------------------
+    # Restoration & Adaptation ----
 
     tabPanel(
       "Restoration & Adaptation",
@@ -548,7 +546,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         )
       )
     ),
-    # ---------------------PLANNING RESTORATION----------------------------------------------------------
+    # Planning Restoration ----
     tabPanel(
       "Mote Sites Restoration",
       value = "Planning Restoration",
@@ -662,7 +660,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         )
       )
     ),
-    # ----------------------------------Planning Restoration 2-------------------------------------------
+    # Planning Restoration 2 ----
     # --- UI ---
     tabPanel(
       "Planning Restoration",
@@ -719,7 +717,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
       )
     ),
 
-    # ----------------------------------DATA-------------------------------------------------------------
+    # Data ----
     tabPanel(
       "Data",
       tags$h4("Data not availabe at this time"),
@@ -731,7 +729,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         "here."
       )
     ),
-    # ----------------------------------ABOUT THIS SITE---------------------------------------------------
+    # About This Site ----
     tabPanel(
       "About this site",
       tags$div(
@@ -771,9 +769,7 @@ under diferent emission scenarios.",
 
 
 
-####################
-### SHINY SERVER ###
-####################
+# Shiny Server ----
 # colour for the circles on home page
 at <- c(-4.7, -2.5, -2, 0.5, 2, 6.5, 8.5)
 num_pal <- colorNumeric(c("darkred", "red", "#FFFF99", "#CCFF99", "#33CCCC", "#0099FF", "#0033FF", "#000066"), domain = at)
@@ -794,8 +790,8 @@ server <- function(input, output, session) {
   slider_ids <- reactive({
     req(input$selected_site)
 
-    site_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    site_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       pull(Species)
 
     # Make save IDs using make.names
@@ -857,9 +853,9 @@ server <- function(input, output, session) {
 
 
   filtered_df <- reactive({
-    df %>%
-      filter(num %in% reef_year()) %>%
-      filter(scenario %in% reef_scenario()) %>%
+    df |>
+      filter(num %in% reef_year()) |>
+      filter(scenario %in% reef_scenario()) |>
       filter(adaptation %in% reef_adaptation())
   })
 
@@ -870,11 +866,11 @@ server <- function(input, output, session) {
   df$rheight <- df$ah10 / 100
 
   output$mymap <- renderLeaflet({
-    leaflet() %>%
+    leaflet() |>
       addProviderTiles(providers$Esri.WorldImagery,
         options = providerTileOptions(attribution = 'Map data &copy; <a href="https://www.esri.com/">Esri</a>')
-      ) %>%
-      setView(lng = -80.6097, lat = 21.9023, zoom = 5.45) %>%
+      ) |>
+      setView(lng = -80.6097, lat = 21.9023, zoom = 5.45) |>
       # Completely static legend for Carbonate budget
       addLegendNumeric(
         pal = num_pal <- colorNumeric(c(
@@ -891,7 +887,7 @@ server <- function(input, output, session) {
         fillOpacity = 10,
         decreasing = TRUE,
         position = "bottomleft"
-      ) %>%
+      ) |>
 
       # Static elements like the title and reef status legend
       addLegend("bottomleft",
@@ -899,14 +895,14 @@ server <- function(input, output, session) {
         labels = c("Growing", "Stasis", "Eroding"),
         title = HTML("<span style='font-size: 20px;'>Reef Status</span>"),
         opacity = 1
-      ) %>%
+      ) |>
 
       # Static control: White text title
       addControl(
         html = "<div style='font-size: 42px; font-weight: bold;color:white;'>REEF<br> PERSISTENCE<br> TOOL</div>",
         position = "topleft",
         className = "map-title"
-      ) %>%
+      ) |>
 
       # Static control: Red text instruction
       addControl(
@@ -918,8 +914,8 @@ server <- function(input, output, session) {
 
   # Dynamic map update without touching the legend or static controls
   observe({
-    leafletProxy("mymap", data = filtered_df()) %>%
-      clearShapes() %>% # Clear previous circles
+    leafletProxy("mymap", data = filtered_df()) |>
+      clearShapes() |> # Clear previous circles
       addCircles(
         lng = ~long, lat = ~lat, weight = 40,
         popup = ~ paste(
@@ -938,7 +934,7 @@ server <- function(input, output, session) {
 
   ## add the Mote sites to the existing map
   observe({
-    leafletProxy("mymap", data = triangle_sites) %>%
+    leafletProxy("mymap", data = triangle_sites) |>
       addCircleMarkers(
         lng = ~long, lat = ~lat,
         radius = 9,
@@ -965,9 +961,9 @@ server <- function(input, output, session) {
     click <- input$mymap_shape_click
 
     # find the matching reef name by the clicked coordinates
-    reef_name(df %>%
-      filter(lat == click$lat & long == click$lng) %>%
-      pull(site) %>%
+    reef_name(df |>
+      filter(lat == click$lat & long == click$lng) |>
+      pull(site) |>
       unique())
 
 
@@ -985,9 +981,9 @@ server <- function(input, output, session) {
     click <- input$mymap_shape_click
 
     # find the matching reef name by the clicked coordinates
-    reef_name(df %>%
-      filter(lat == click$lat & long == click$lng) %>%
-      pull(site) %>%
+    reef_name(df |>
+      filter(lat == click$lat & long == click$lng) |>
+      pull(site) |>
       unique())
 
 
@@ -1015,13 +1011,13 @@ server <- function(input, output, session) {
   observeEvent(input$linkClickPlanning, {
     updateTabsetPanel(session, inputId = "nav", selected = "Planning Restoration")
   })
-  ### SLIDERS
+  ## Sliders ----
 
   output$coral_slider_ui <- renderUI({
     req(input$selected_site)
 
-    site_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    site_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species, Cover = months12)
 
     restoration_species <- c(
@@ -1110,27 +1106,27 @@ server <- function(input, output, session) {
     }
   })
 
-  #### PLANNING RESTORATION
+  ## Planning Restoration ----
   observeEvent(input$Restoration_info, {
     toggle("Restoration_info_text")
   })
-  ## BASELINE CARBONATE BUDGET VALUE BOX
+  ## Baseline Carbonate Budget Value Box ----
   output$baseline_budget_box <- renderValueBox({
     req(input$selected_site)
 
-    coral_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    coral_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species, Cover = months12, Location)
 
-    result <- coral_data %>%
-      left_join(travis_rates, by = "Species") %>%
-      left_join(bioerosion, by = "Location") %>%
+    result <- coral_data |>
+      left_join(travis_rates, by = "Species") |>
+      left_join(bioerosion, by = "Location") |>
       mutate(Contribution = Cover * rate / 100)
 
     net_budget <- sum(result$Contribution, na.rm = TRUE)
-    erosion_total <- result %>%
-      dplyr::distinct(Location, PF, BioSponges, Micro, Urchins) %>%
-      dplyr::summarise(total = PF + BioSponges + Micro + Urchins) %>%
+    erosion_total <- result |>
+      dplyr::distinct(Location, PF, BioSponges, Micro, Urchins) |>
+      dplyr::summarise(total = PF + BioSponges + Micro + Urchins) |>
       dplyr::pull(total)
 
     total_budget <- net_budget - erosion_total
@@ -1155,26 +1151,26 @@ server <- function(input, output, session) {
     baseline = NULL,
     restored = NULL
   )
-  ## baseline_RAP_box
+  ## baseline_RAP_box ----
   output$baseline_RAP_box <- renderValueBox({
     req(input$selected_site)
 
-    coral_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    coral_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species, Cover = months12, Location) # keep Location for the join
 
-    result <- coral_data %>%
-      left_join(travis_rates, by = "Species") %>%
-      left_join(bioerosion, by = "Location") %>% # adds PF, Urchins, BioSponges, Micro
+    result <- coral_data |>
+      left_join(travis_rates, by = "Species") |>
+      left_join(bioerosion, by = "Location") |> # adds PF, Urchins, BioSponges, Micro
       mutate(Contribution = Cover * rate / 100)
 
     # Total production across species
     net_budget <- sum(result$Contribution, na.rm = TRUE)
 
     # Pull the single row of erosion values for this site/location
-    bio_vals <- result %>%
-      dplyr::distinct(Location, PF, Urchins, BioSponges, Micro) %>%
-      dplyr::slice(1) %>%
+    bio_vals <- result |>
+      dplyr::distinct(Location, PF, Urchins, BioSponges, Micro) |>
+      dplyr::slice(1) |>
       tidyr::replace_na(list(PF = 0, Urchins = 0, BioSponges = 0, Micro = 0))
 
     pf <- bio_vals$PF
@@ -1200,12 +1196,12 @@ server <- function(input, output, session) {
 
 
 
-  ## RESTORED CARBONATE BUDGET VALUE BOX
+  ## Restored Carbonate Budget Value Box ----
   output$restored_budget_box <- renderValueBox({
     req(input$selected_site)
 
-    site_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    site_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species)
 
     restoration_species <- c(
@@ -1248,17 +1244,17 @@ server <- function(input, output, session) {
       Cover = covers
     )
 
-    result <- coral_data %>%
-      left_join(travis_rates, by = "Species") %>%
+    result <- coral_data |>
+      left_join(travis_rates, by = "Species") |>
       mutate(Contribution = Cover * rate / 100)
 
     net_budget <- sum(result$Contribution, na.rm = TRUE)
 
     ## --- minimal additions start ---
     # Get the site's Location once
-    site_loc <- mote_cover %>%
-      filter(Site == input$selected_site) %>%
-      distinct(Location) %>%
+    site_loc <- mote_cover |>
+      filter(Site == input$selected_site) |>
+      distinct(Location) |>
       slice(1)
 
     # Look up erosion components and sum them (defaults to 0 if missing)
@@ -1288,12 +1284,12 @@ server <- function(input, output, session) {
 
 
 
-  ## RESTORED RAP BOX
+  ## Restored RAP Box ----
   output$restored_RAP_box <- renderValueBox({
     req(input$selected_site)
 
-    site_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    site_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species)
 
     restoration_species <- c(
@@ -1330,9 +1326,9 @@ server <- function(input, output, session) {
         width = 12
       ))
     }
-    site_loc <- mote_cover %>%
-      filter(Site == input$selected_site) %>%
-      distinct(Location) %>%
+    site_loc <- mote_cover |>
+      filter(Site == input$selected_site) |>
+      distinct(Location) |>
       slice(1)
 
     coral_data <- data.frame(
@@ -1341,16 +1337,16 @@ server <- function(input, output, session) {
       Location = site_loc$Location[1] # ADDED
     )
 
-    result <- coral_data %>%
-      left_join(travis_rates, by = "Species") %>%
-      left_join(bioerosion, by = "Location") %>%
+    result <- coral_data |>
+      left_join(travis_rates, by = "Species") |>
+      left_join(bioerosion, by = "Location") |>
       mutate(Contribution = as.numeric(Cover) * as.numeric(rate) / 100) # tiny numeric guard
 
     net_budget <- sum(result$Contribution, na.rm = TRUE)
 
     # ADDED: pull PF/Urchins/BioSponges once from the joined result (coerce numeric)
-    bio_vals <- result %>%
-      dplyr::distinct(Location, PF, Urchins, BioSponges, Micro) %>%
+    bio_vals <- result |>
+      dplyr::distinct(Location, PF, Urchins, BioSponges, Micro) |>
       dplyr::slice(1)
 
     pf <- as.numeric(bio_vals$PF)
@@ -1371,17 +1367,17 @@ server <- function(input, output, session) {
     )
   })
 
-  ## BASELINE CORAL COVER
+  ## Baseline Coral Cover ----
   output$baseline_coral_cover <- renderValueBox({
     req(input$selected_site)
 
-    total_cover <- mote_cover %>%
+    total_cover <- mote_cover |>
       dplyr::filter(
         Site == input$selected_site,
         Class == "HC",
         !is.na(months12)
-      ) %>%
-      dplyr::summarise(total = sum(months12, na.rm = TRUE)) %>%
+      ) |>
+      dplyr::summarise(total = sum(months12, na.rm = TRUE)) |>
       dplyr::pull(total)
 
     if (length(total_cover) == 0 || is.na(total_cover)) {
@@ -1401,12 +1397,12 @@ server <- function(input, output, session) {
     )
   })
 
-  ## RESTORED CORAL COVER
+  ## Restored Coral Cover ----
   output$total_coral_added <- renderValueBox({
     req(input$selected_site)
 
-    site_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    site_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species)
 
     restoration_species <- c(
@@ -1459,27 +1455,27 @@ server <- function(input, output, session) {
   })
 
 
-  ## BASELINE PIE####################
+  ## Baseline Pie ----
   output$baseline_pie <- renderPlot({
     req(input$selected_site)
 
     # Net calcification calculation
-    coral_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
-      select(Species, Cover = months12) %>%
-      left_join(travis_rates, by = "Species") %>%
+    coral_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
+      select(Species, Cover = months12) |>
+      left_join(travis_rates, by = "Species") |>
       mutate(Contribution = Cover * rate / 100)
 
     net_calcification <- sum(coral_data$Contribution, na.rm = TRUE)
 
     # Get site location
-    site_location <- mote_cover %>%
-      filter(Site == input$selected_site) %>%
-      pull(Location) %>%
+    site_location <- mote_cover |>
+      filter(Site == input$selected_site) |>
+      pull(Location) |>
       unique()
 
     # Bioerosion data
-    bio_data <- bioerosion %>%
+    bio_data <- bioerosion |>
       filter(Location == site_location)
 
     pf <- bio_data$PF[1]
@@ -1515,11 +1511,11 @@ server <- function(input, output, session) {
       ) +
       guides(fill = guide_legend(title.position = "none", title.hjust = 0, nrow = 2))
   })
-  ### RESTORED PIE
+  ## Restored Pie ----
   output$restored_pie <- renderPlot({
     req(input$selected_site)
 
-    ### SLR CIRCLE
+    ## SLR Circle ----
     # in server.R / server function
     # SERVER
     output$slr_circle <- renderPlot({
@@ -1640,8 +1636,8 @@ server <- function(input, output, session) {
 
 
     # Get species list from site and restoration group
-    site_data <- mote_cover %>%
-      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) %>%
+    site_data <- mote_cover |>
+      filter(Site == input$selected_site, Class == "HC", !is.na(months12)) |>
       select(Species)
 
     restoration_species <- c(
@@ -1666,20 +1662,20 @@ server <- function(input, output, session) {
     cover_df <- data.frame(Species = ordered_species, Cover = values)
 
     # Calculate net calcification
-    calc_df <- cover_df %>%
-      left_join(travis_rates, by = "Species") %>%
+    calc_df <- cover_df |>
+      left_join(travis_rates, by = "Species") |>
       mutate(Contribution = Cover * rate / 100)
 
     net_calcification <- sum(calc_df$Contribution, na.rm = TRUE)
 
     # Get site location
-    site_location <- mote_cover %>%
-      filter(Site == input$selected_site) %>%
-      pull(Location) %>%
+    site_location <- mote_cover |>
+      filter(Site == input$selected_site) |>
+      pull(Location) |>
       unique()
 
     # Bioerosion data (same for restored)
-    bio_data <- bioerosion %>%
+    bio_data <- bioerosion |>
       filter(Location == site_location)
 
     pf <- bio_data$PF[1]
@@ -1717,7 +1713,7 @@ server <- function(input, output, session) {
   })
 
 
-  ## BOX1
+  ## Box1 ----
 
   # Render the valueBox with dynamic color
   output$stateBox <- renderValueBox({
@@ -1732,7 +1728,7 @@ server <- function(input, output, session) {
     }
 
     # Filter the data for the selected reef
-    dat <- filtered_df() %>% filter(site == reef_to_use)
+    dat <- filtered_df() |> filter(site == reef_to_use)
 
     # Determine reef state
     reef_state <- if (dat$ncc > 0.9) {
@@ -1762,7 +1758,7 @@ server <- function(input, output, session) {
     )
   })
 
-  ### ALIIIIIIIIIIIIIIIIIIIIIIIIIIIIIICE
+  ## Aliiiiiiiiiiiiiiiiiiiiiiiiiiiiiice ----
   observeEvent(input$bt2, {
     updateBox("box2", action = "toggle")
   })
@@ -1771,7 +1767,7 @@ server <- function(input, output, session) {
 
 
   output$coverBox <- renderValueBox({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
     valueBox(
       value = tags$p(paste0(round(dat$coralcover), "%"), style = "font-size: 2vw;"),
       "Coral cover",
@@ -1782,7 +1778,7 @@ server <- function(input, output, session) {
 
 
   output$carbonateBox <- renderValueBox({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
     valueBox(
       value = tags$p(HTML(paste0(round(dat$ncc, 1), "kg/m", tags$sup("2"), "/year")), style = "font-size: 2vw;"),
       "Carbonate budget",
@@ -1792,7 +1788,7 @@ server <- function(input, output, session) {
   })
 
   output$rapBox <- renderValueBox({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
     valueBox(
       value = tags$p(paste0(round(dat$RAP, 1), "mm/year"), style = "font-size: 2vw;"),
       "Vertical reef growth",
@@ -1802,7 +1798,7 @@ server <- function(input, output, session) {
   })
 
   output$slrBox <- renderValueBox({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
     valueBox(
       value = tags$p(paste0(round(dat$SLR, 1), "mm/year"), style = "font-size: 2vw;"),
       "Sea level rise",
@@ -1816,7 +1812,7 @@ server <- function(input, output, session) {
 
   # update the reef panel
   output$State <- renderText({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
 
     if ((dat$ncc) > 0.9) {
       paste("The reef is", "growing.")
@@ -1828,7 +1824,7 @@ server <- function(input, output, session) {
   })
 
   output$Carbonate <- renderText({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
 
     paste(
       "The net carbonate budget equals",
@@ -1837,7 +1833,7 @@ server <- function(input, output, session) {
   })
 
   output$Cover <- renderText({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
 
     paste(
       "Coral cover is ",
@@ -1845,7 +1841,7 @@ server <- function(input, output, session) {
     )
   })
   output$seaL <- renderText({
-    dat <- filtered_df() %>% filter(site == reef_name())
+    dat <- filtered_df() |> filter(site == reef_name())
 
     paste(
       "Sea level is increasing by",
@@ -1855,7 +1851,7 @@ server <- function(input, output, session) {
 
 
   filtered_slr <- reactive({
-    reef_data %>% filter(Site == input$selectReef)
+    reef_data |> filter(Site == input$selectReef)
   })
   output$slr_curve <- renderPlot({
     ggplot(filtered_slr(), aes(x = Time, y = cumsum(HR / 10))) + # put a cumsum wrapper around y
@@ -1881,11 +1877,11 @@ server <- function(input, output, session) {
 
   # ggplot(filtered_slr(), aes(x = Time, y = cumsum(HR/10)))
 
-  ## schematic to illustrate accretion vs slr BOX2
+  ## Schematic to Illustrate Accretion vs. SLR (Box2) ----
 
   output$SLRmetrics <- renderText({
-    reef_depth <- filtered_df() %>%
-      filter(site == reef_name()) %>%
+    reef_depth <- filtered_df() |>
+      filter(site == reef_name()) |>
       pull(reef_depth)
 
     if (reef_depth < 0) {
@@ -1911,7 +1907,7 @@ server <- function(input, output, session) {
       img <- readPNG(path, native = TRUE)
 
       # generate plot
-      dat <- filtered_df() %>% filter(site == reef_name())
+      dat <- filtered_df() |> filter(site == reef_name())
 
       if (dat$reef_depth < 0) {
         reef <- tibble(
@@ -1919,7 +1915,7 @@ server <- function(input, output, session) {
           r = 3,
           x = r * cos((deg * pi) / 180),
           y = r * sin((deg * pi) / 180)
-        ) %>%
+        ) |>
           filter(y <= dat$rd_scaled)
 
         reef1 <- tibble(
@@ -1927,7 +1923,7 @@ server <- function(input, output, session) {
           r = 3,
           x1 = r * cos((deg * pi) / 180),
           y1 = r * sin((deg * pi) / 180)
-        ) %>%
+        ) |>
           filter(y1 >= (((dat$SLR - 0.4576675) / (3.284522 - 0.4576675)) + 1.5))
 
 
@@ -2000,7 +1996,7 @@ server <- function(input, output, session) {
           r = 3,
           x = r * cos((deg * pi) / 180),
           y = r * sin((deg * pi) / 180)
-        ) %>%
+        ) |>
           filter(y >= dat$rd_scaled)
 
         reef1 <- tibble(
@@ -2008,7 +2004,7 @@ server <- function(input, output, session) {
           r = 3,
           x1 = r * cos((deg * pi) / 180),
           y1 = r * sin((deg * pi) / 180)
-        ) %>%
+        ) |>
           filter(y1 >= (((dat$SLR - 0.4576675) / (3.284522 - 0.4576675)) + 1.5))
 
         p2 <- ggplot() +
@@ -2076,12 +2072,12 @@ server <- function(input, output, session) {
     deleteFile = TRUE
   )
 
-  # BOX3
-  # Plot the data ####
+  ## Box3 ----
+  # Plot the data ----
   output$myImage <- renderImage(
     {
       # generate plot
-      dat <- filtered_df() %>% filter(site == reef_name())
+      dat <- filtered_df() |> filter(site == reef_name())
       piedat <- dat[c("Coral", "Macro", "Micro", "CCA")]
       mpiedat <- melt(piedat, id.vars = NULL)
 
@@ -2130,7 +2126,7 @@ server <- function(input, output, session) {
 
 
 
-  ## upload photos depending on site
+  ## Upload Photos Depending on Site ----
   output$photo <- renderImage(
     {
       if (input$selectReef == "Cheeca Rocks") {
@@ -2190,7 +2186,7 @@ server <- function(input, output, session) {
   )
 
   filtered_data <- reactive({
-    data %>%
+    data |>
       filter(
         Site == input$selectReef2,
         Scenario == input$reef_scenario2,
@@ -2199,7 +2195,7 @@ server <- function(input, output, session) {
   })
 
   filtered_slr2 <- reactive({
-    reef_data %>% filter(Site == input$selectReef2)
+    reef_data |> filter(Site == input$selectReef2)
   })
 
 
@@ -2391,7 +2387,7 @@ server <- function(input, output, session) {
     print(head(data, input$maxrows), row.names = FALSE)
     options(orig)
   })
-  # ----------------------------RESTORATION PLANNING 2----------------------------------------
+  ## Restoration Planning 2 ----
   output$baseline_cover_inputs <- renderUI({
     req(input$baseline_species)
     sp <- input$baseline_species
@@ -2571,11 +2567,5 @@ server <- function(input, output, session) {
   # subtitle = tags$p("Total Target Cover",
   #                   style = "font-size:1.1vw;"
   # ),
-
-
-  # ------------------------------------------------------------------------------------------
 }
 shinyApp(ui, server)
-
-##################### LA FIN #################################
-##############################################################
