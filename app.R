@@ -34,6 +34,19 @@ library(shinyBS)
 # library(bs4Dash)
 library(here)
 
+# Silence file warnings
+withCallingHandlers(
+  {
+    info <- file.info(paths)
+    # ... proceed with your logic ...
+  },
+  warning = function(w) {
+    if (grepl("cannot resolve owner of file", conditionMessage(w), fixed = TRUE) ||
+        grepl("No mapping between account names and security IDs", conditionMessage(w), fixed = TRUE)) {
+      invokeRestart("muffleWarning")
+    }
+  }
+)
 
 # year vector
 cv_dates <- as.data.frame(c(2019:2100))
