@@ -1,0 +1,201 @@
+Species,Class,count,baseline,count2,months12,Site,area,Location
+Acropora spp.,HC,,,,,EDR9,500,Inshore
+Acropora cervicornis,HC,,,,,EDR9,500,Inshore
+Acropora palmata,HC,,0,5,0.306372549,EDR9,500,Inshore
+Porites spp.,HC,,,,,EDR9,500,Inshore
+Porites porites,HC,,,,,EDR9,500,Inshore
+Porites furcata,HC,,,,,EDR9,500,Inshore
+Porites divaricata,HC,,,,,EDR9,500,Inshore
+Porites astreoides,HC,35,2.255154639,47,2.879901961,EDR9,500,Inshore
+Oculina spp.,HC,,,,,EDR9,500,Inshore
+Oculina robusta,HC,,,,,EDR9,500,Inshore
+Oculina varicosa,HC,,,,,EDR9,500,Inshore
+Oculina diffusa,HC,,,,,EDR9,500,Inshore
+Madracis spp.,HC,,,,,EDR9,500,Inshore
+Madracis auretenra,HC,,,,,EDR9,500,Inshore
+Madracis formosa,HC,,,,,EDR9,500,Inshore
+Madracis decactis,HC,,,1,0.06127451,EDR9,500,Inshore
+Dendrogyra cylindrus,HC,,,,,EDR9,500,Inshore
+Siderastrea spp.,HC,,,,,EDR9,500,Inshore
+Siderastrea siderea,HC,3,0.193298969,4,                                                                       ,EDR9,500,Inshore
+Siderastrea radians,HC,,,,,EDR9,500,Inshore
+Stephanocoenia intersepta,HC,2,0.128865979,,,EDR9,500,Inshore
+Montastraea cavernosa,HC,,,,,EDR9,500,Inshore
+Orbicella spp.,HC,,,,,EDR9,500,Inshore
+Orbicella annularis,HC,,,,,EDR9,500,Inshore
+Orbicella faveolata,HC,23,1.481958763,22,1.348039216,EDR9,500,Inshore
+Orbicella franksi,HC,,,,,EDR9,500,Inshore
+Favia fragum,HC,,,,,EDR9,500,Inshore
+Dichocoenia stokesii,HC,,,,,EDR9,500,Inshore
+Solenastraea bournoni,HC,,,,,EDR9,500,Inshore
+Solenastraea hyades,HC,,,,,EDR9,500,Inshore
+Colpophyllia natans,HC,,,,,EDR9,500,Inshore
+Pseudodiploria spp.,HC,,,,,EDR9,500,Inshore
+Pseudodiploria strigosa,HC,,,,,EDR9,500,Inshore
+Pseudodiploria clivosa,HC,,,,,EDR9,500,Inshore
+Diploria labyrinthiformis,HC,,,,,EDR9,500,Inshore
+Manicina areolata,HC,,,,,EDR9,500,Inshore
+Meandrina spp.,HC,,,,,EDR9,500,Inshore
+Meandrina meandrites,HC,,,,,EDR9,500,Inshore
+Meandrina danae,HC,,,,,EDR9,500,Inshore
+Meandrina jacksoni,HC,,,,,EDR9,500,Inshore
+Helioseris cucullata,HC,,,,,EDR9,500,Inshore
+Agaricia spp.,HC,,,,,EDR9,500,Inshore
+Agaricia fragilis,HC,,,,,EDR9,500,Inshore
+Agaricia lamarcki,HC,,,,,EDR9,500,Inshore
+Agaricia agaricites,HC,,,5,0.306372549,EDR9,500,Inshore
+Mycetophyllia spp.,HC,,,,,EDR9,500,Inshore
+Mycetophyllia lamarckiana,HC,,,,,EDR9,500,Inshore
+Mycetophyllia aliciae,HC,,,,,EDR9,500,Inshore
+Mycetophyllia ferox,HC,,,,,EDR9,500,Inshore
+Mycetophyllia reesi,HC,,,,,EDR9,500,Inshore
+Isophyllia spp.,HC,,,,,EDR9,500,Inshore
+Isophyllia sinuosa,HC,,,,,EDR9,500,Inshore
+Isophyllia rigida,HC,,,,,EDR9,500,Inshore
+Scolymia spp.,HC,,,,,EDR9,500,Inshore
+Scolymia cubensis,HC,,,,,EDR9,500,Inshore
+Scolymia wellsi,HC,,,,,EDR9,500,Inshore
+Mussa angulosa,HC,,,,,EDR9,500,Inshore
+Eusmilia fastigiata,HC,,,,,EDR9,500,Inshore
+Octocorallia,NC,168,10.82474227,151,9.25245098,EDR9,500,Inshore
+Gorgonia ventalina,NC,,,2,0.12254902,EDR9,500,Inshore
+Xestospongia muta,NC,,,,,EDR9,500,Inshore
+Thalassia testudinum,NC,,,,,EDR9,500,Inshore
+Halimeda,NC,,,,,EDR9,500,Inshore
+Dictyota spp.,NC,,,,,EDR9,500,Inshore
+Crustose coralline algae,NC,,,,,EDR9,500,Inshore
+Porifera,NC,43,2.770618557,77,4.718137255,EDR9,500,Inshore
+Cnidaria,NC,,,,,EDR9,500,Inshore
+Red algae,NC,,,,,EDR9,500,Inshore
+Green algae,NC,,,,,EDR9,500,Inshore
+Brown algae,NC,,,,,EDR9,500,Inshore
+Palythoa,NC,49,3.157216495,61,3.737745098,EDR9,500,Inshore
+Rubble,NC,739,47.61597938,903,55.33088235,EDR9,500,Inshore
+Turf algae,NC,475,30.6056701,333,20.40441176,EDR9,500,Inshore
+Other,NC,10,0.644329897,10,0.612745098,EDR9,500,Inshore
+Millepora spp.,HC,5,0.322164948,5,0.306372549,EDR9,500,Inshore
+Chordata,NC,,,6,0.367647059,EDR9,500,Inshore
+Acropora spp.,HC,,,,,EDR10,500,Offshore
+Acropora cervicornis,HC,,,,,EDR10,500,Offshore
+Acropora palmata,HC,,,11,1.297169811,EDR10,500,Offshore
+Porites spp.,HC,,,,,EDR10,500,Offshore
+Porites porites,HC,,,,,EDR10,500,Offshore
+Porites furcata,HC,,,,,EDR10,500,Offshore
+Porites divaricata,HC,,,,,EDR10,500,Offshore
+Porites astreoides,HC,69,7.718120805,86,10.14150943,EDR10,500,Offshore
+Oculina spp.,HC,,,,,EDR10,500,Offshore
+Oculina robusta,HC,,,,,EDR10,500,Offshore
+Oculina varicosa,HC,,,,,EDR10,500,Offshore
+Oculina diffusa,HC,,,,,EDR10,500,Offshore
+Madracis spp.,HC,,,,,EDR10,500,Offshore
+Madracis auretenra,HC,,,,,EDR10,500,Offshore
+Madracis formosa,HC,,,,,EDR10,500,Offshore
+Madracis decactis,HC,,,,,EDR10,500,Offshore
+Dendrogyra cylindrus,HC,,,,,EDR10,500,Offshore
+Siderastrea spp.,HC,,,,,EDR10,500,Offshore
+Siderastrea siderea,HC,,,,,EDR10,500,Offshore
+Siderastrea radians,HC,,,,,EDR10,500,Offshore
+Stephanocoenia intersepta,HC,,,,,EDR10,500,Offshore
+Montastraea cavernosa,HC,,,,,EDR10,500,Offshore
+Orbicella spp.,HC,,,,,EDR10,500,Offshore
+Orbicella annularis,HC,,,,,EDR10,500,Offshore
+Orbicella faveolata,HC,,,,,EDR10,500,Offshore
+Orbicella franksi,HC,,,,,EDR10,500,Offshore
+Favia fragum,HC,,,,,EDR10,500,Offshore
+Dichocoenia stokesii,HC,,,,,EDR10,500,Offshore
+Solenastraea bournoni,HC,,,,,EDR10,500,Offshore
+Solenastraea hyades,HC,,,,,EDR10,500,Offshore
+Colpophyllia natans,HC,,,,,EDR10,500,Offshore
+Pseudodiploria spp.,HC,,,,,EDR10,500,Offshore
+Pseudodiploria strigosa,HC,,,,,EDR10,500,Offshore
+Pseudodiploria clivosa,HC,,,,,EDR10,500,Offshore
+Diploria labyrinthiformis,HC,,,,,EDR10,500,Offshore
+Manicina areolata,HC,,,,,EDR10,500,Offshore
+Meandrina spp.,HC,,,,,EDR10,500,Offshore
+Meandrina meandrites,HC,,,,,EDR10,500,Offshore
+Meandrina danae,HC,,,,,EDR10,500,Offshore
+Meandrina jacksoni,HC,,,,,EDR10,500,Offshore
+Helioseris cucullata,HC,,,,,EDR10,500,Offshore
+Agaricia spp.,HC,,,,,EDR10,500,Offshore
+Agaricia fragilis,HC,,,,,EDR10,500,Offshore
+Agaricia lamarcki,HC,,,,,EDR10,500,Offshore
+Agaricia agaricites,HC,,,2,0.235849057,EDR10,500,Offshore
+Mycetophyllia spp.,HC,,,,,EDR10,500,Offshore
+Mycetophyllia lamarckiana,HC,,,,,EDR10,500,Offshore
+Mycetophyllia aliciae,HC,,,,,EDR10,500,Offshore
+Mycetophyllia ferox,HC,,,,,EDR10,500,Offshore
+Mycetophyllia reesi,HC,,,,,EDR10,500,Offshore
+Isophyllia spp.,HC,,,,,EDR10,500,Offshore
+Isophyllia sinuosa,HC,,,,,EDR10,500,Offshore
+Isophyllia rigida,HC,,,,,EDR10,500,Offshore
+Scolymia spp.,HC,,,,,EDR10,500,Offshore
+Scolymia cubensis,HC,,,,,EDR10,500,Offshore
+Scolymia wellsi,HC,,,,,EDR10,500,Offshore
+Mussa angulosa,HC,,,,,EDR10,500,Offshore
+Eusmilia fastigiata,HC,,,,,EDR10,500,Offshore
+Octocorallia,NC,66,7.382550336,72,8.490566038,EDR10,500,Offshore
+Gorgonia ventalina,NC,,,,,EDR10,500,Offshore
+Xestospongia muta,NC,,,,,EDR10,500,Offshore
+Thalassia testudinum,NC,,,,,EDR10,500,Offshore
+Halimeda,NC,,,,,EDR10,500,Offshore
+Dictyota spp.,NC,,,,,EDR10,500,Offshore
+Crustose coralline algae,NC,,,,,EDR10,500,Offshore
+Porifera,NC,27,3.020134228,19,2.240566038,EDR10,500,Offshore
+Cnidaria,NC,,,,,EDR10,500,Offshore
+Red algae,NC,,,,,EDR10,500,Offshore
+Green algae,NC,,,,,EDR10,500,Offshore
+Brown algae,NC,,,,,EDR10,500,Offshore
+Palythoa,NC,76,8.501118568,84,9.905660377,EDR10,500,Offshore
+Rubble,NC,309,34.56375839,363,42.80660377,EDR10,500,Offshore
+Turf algae,NC,340,38.03131991,199,23.46698113,EDR10,500,Offshore
+Other,NC,6,0.67114094,6,0.70754717,EDR10,500,Offshore
+Millepora spp.,HC,1,0.111856823,6,0.70754717,EDR10,500,Offshore
+Chordata,NC,,,,,EDR10,500,Offshore
+Agaricia agaricites,HC,,,,0.002707,IC-Z1,100,Inshore
+Dichocoenia stokesi,HC,,,,0.003929,IC-Z1,100,Inshore
+Diploria labyrinthiformis,HC,,,,0.003525,IC-Z1,100,Inshore
+Madracis decactis,HC,,,,0.018059,IC-Z1,100,Inshore
+Montastraea cavernosa,HC,,,,0.002474,IC-Z1,100,Inshore
+Orbicella faveolata,HC,,,,0.015767,IC-Z1,100,Inshore
+Porites astreoides,HC,,,,0.241828,IC-Z1,100,Inshore
+Pseudodiploria strigosa,HC,,,,0.0066,IC-Z1,100,Inshore
+Siderastrea siderea,HC,,,,0.11669,IC-Z1,100,Inshore
+Stephanocoenia intersepta,HC,,,,0.019565,IC-Z1,100,Inshore
+Orbicella faveolata,HC,,,,0.066509,IC-Z2,100,Inshore
+Porites astreoides,HC,,,,0.100777,IC-Z2,100,Inshore
+Pseudodiploria strigosa,HC,,,,0.000534,IC-Z2,100,Inshore
+Siderastrea siderea,HC,,,,0.154684,IC-Z2,100,Inshore
+Stephanocoenia intersepta,HC,,,,0.010544,IC-Z2,100,Inshore
+Dichocoenia stokesi,HC,,,,0.012579,IC-Z3,100,Inshore
+Montastraea cavernosa,HC,,,,0.010768,IC-Z3,100,Inshore
+Orbicella faveolata,HC,,,,0.019787,IC-Z3,100,Inshore
+Porites astreoides,HC,,,,0.121924,IC-Z3,100,Inshore
+Porites porites,HC,,,,0.00124,IC-Z3,100,Inshore
+Siderastrea siderea,HC,,,,0.063734,IC-Z3,100,Inshore
+Stephanocoenia intersepta,HC,,,,0.009166,IC-Z3,100,Inshore
+Agaricia agaricites,HC,,,,0.007663,IC-U1,100,Inshore
+Favia fragum,HC,,,,0.000591,IC-U1,100,Inshore
+Madracis decactis,HC,,,,0.024945,IC-U1,100,Inshore
+Montastraea cavernosa,HC,,,,0.004928,IC-U1,100,Inshore
+Porites astreoides,HC,,,,0.339529,IC-U1,100,Inshore
+Porites porites,HC,,,,0.012164,IC-U1,100,Inshore
+Siderastrea siderea,HC,,,,0.220457,IC-U1,100,Inshore
+Stephanocoenia intersepta,HC,,,,0.022162,IC-U1,100,Inshore
+Agaricia agaricites,HC,,,,0.005844,IC-U3,100,Inshore
+Dichocoenia stokesi,HC,,,,0.004651,IC-U3,100,Inshore
+Montastraea cavernosa,HC,,,,0.018874,IC-U3,100,Inshore
+Porites astreoides,HC,,,,0.123237,IC-U3,100,Inshore
+Pseudodiploria strigosa,HC,,,,0.098524,IC-U3,100,Inshore
+Siderastrea siderea,HC,,,,0.071476,IC-U3,100,Inshore
+Stephanocoenia intersepta,HC,,,,0.009012,IC-U3,100,Inshore
+Agaricia agaricites,HC,,,,0.026723,IC-C2,100,Inshore
+Madracis decactis,HC,,,,0.015545,IC-C2,100,Inshore
+Montastraea cavernosa,HC,,,,0.006418,IC-C2,100,Inshore
+Orbicella faveolata,HC,,,,0.317832,IC-C2,100,Inshore
+Porites astreoides,HC,,,,0.114952,IC-C2,100,Inshore
+Pseudodiploria strigosa,HC,,,,0.033722,IC-C2,100,Inshore
+Siderastrea siderea,HC,,,,0.54214,IC-C2,100,Inshore
+Stephanocoenia intersepta,HC,,,,0.112963,IC-C2,100,Inshore
+Montastraea cavernosa,HC,,,,0.023796,IC-C3,100,Inshore
+Orbicella faveolata,HC,,,,0.015668,IC-C3,100,Inshore
+Pseudodiploria clivosa,HC,,,,0.052473,IC-C3,100,Inshore
