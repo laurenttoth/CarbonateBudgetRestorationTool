@@ -1,7 +1,7 @@
 # Carbonate Budget Restoration Tool ----
 
 # Adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center
-# from Alice Webb's Reef Persistence Tool. Adaptation conceptualized by Lauren T. Toth (USGS) and John Morris (NOAA).
+# from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Lauren T. Toth (USGS) and John T. Morris (NOAA).
 
 # Call Packages ----
 library(rsconnect)
@@ -76,9 +76,9 @@ data <- merge(data, rel, by = c("Time", "variable", "Scenario"))
 scenario <- data$Scenario
 adaptation <- data$variable
 num <- data$Time
-ncc <- data$ncc
+ncc <- data$ncc # net calcium carbonate
 sdncc <- data$sdncc
-rap <- data$RAP
+rap <- data$RAP # reef accretion potential
 sdrap <- data$sdRAP
 ah <- data$AH
 sdah <- data$sdAH
@@ -277,14 +277,17 @@ ui <- bootstrapPage(
         }
 
       ")),
+
+      # Sidebar layout: Reef Selection ----
       sidebarLayout(
         sidebarPanel(
           width = 3,
-
-
           pickerInput("selectReef",
             "Select Your Reef",
-            label = tags$span(style = "font-size: 20px; color: #00CC99; font-weight: bold;", "Select Your Reef"),
+            label = tags$span(style = "font-size: 20px;
+                                       color: #00CC99;
+                                       font-weight: bold;",
+                                    "Select Your Reef"),
             choices = c(
               "Cheeca Rocks",
               "Dry Tortugas",
@@ -311,12 +314,15 @@ ui <- bootstrapPage(
           ),
           radioButtons("reef_scenario",
             label = h4("Let's go green"),
-            choices = list("Reduce gas emissions" = "SSP2_4.5", "Business as usual" = "SSP5_8.5"),
+            choices = list("Reduce gas emissions" = "SSP2_4.5",
+                           "Business as usual" = "SSP5_8.5"),
             selected = "SSP5_8.5",
             inline = FALSE,
             width = "100%"
           )
         ),
+
+        # Reef Characteristics: Output illustrations ----
         fluidRow(
           column(
             3,
@@ -329,8 +335,13 @@ ui <- bootstrapPage(
             3,
             box(
               width = NULL, align = "center", collapsible = FALSE, title = tagList(
-                div("Construction vs. Erosion", style = "font-size: 24px; font-weight: bold;margin-bottom: 10px;"),
-                div("Percentage contribution of constructional forces (coral and calcifying algae) and erosional processes (micro- and macro-erosion)", style = "font-size: 1vw; color: gray;")
+                div("Construction vs. Erosion",
+                    style = "font-size: 24px;
+                             font-weight: bold;
+                             margin-bottom: 10px;"),
+                div("Percentage contribution of constructional forces (coral and calcifying algae) and erosional processes (micro- and macro-erosion)",
+                    style = "font-size: 1vw;
+                             color: gray;")
               ), background = "navy", solidHeader = FALSE,
               collapsed = FALSE, imageOutput("myImage", width = "22vw", height = "auto")
             ),
@@ -2190,7 +2201,7 @@ server <- function(input, output, session) {
 
 
 
-  ## Upload Photos Depending on Site ----
+  # Load the appropriate photo for the selected site
   output$photo <- renderImage(
     {
       if (input$selectReef == "Cheeca Rocks") {

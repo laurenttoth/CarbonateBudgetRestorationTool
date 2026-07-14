@@ -2,6 +2,8 @@
 
 This repository contains a Shiny app and carbonate-budget data for sites in the Florida Reef Tract. It is designed to aid reef restoration practitioners in identifying ideal sites, species balances, and outplant strategies to achieve restoration goals.
 
+The Carbonate Budget Restoration Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Lauren T. Toth (USGS) and John T. Morris (NOAA).
+
 ## Installation
 
 To install the packages required to use the Carbonate Budget Restoration Tool, run the following line in an R console:
