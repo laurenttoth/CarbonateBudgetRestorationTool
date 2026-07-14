@@ -6,6 +6,7 @@
 # Call Packages ----
 library(rsconnect)
 library(shiny)
+library(bslib)
 library(shinydashboard)
 library(ggplot2)
 library(dplyr)
@@ -30,6 +31,9 @@ library(shinyWidgets)
 library(shinyjs)
 library(shinyBS)
 library(here)
+
+# Enable automatic reloading of the app when code changes are detected
+options(shiny.autoreload = TRUE)
 
 # year vector
 cv_dates <- as.data.frame(c(2019:2100))
@@ -99,21 +103,22 @@ df <- data.frame(
 # Shiny User Interface ----
 
 ui <- bootstrapPage(
-  title = "Reef Persistence Tool",
+  title = "Carbonate Budget Restoration Tool",
   useShinyjs(),
   # use this in non shinydashboard app
-  setBackgroundColor(color = "ghostwhite"),
+  setBackgroundColor(color = "#f8fffb"),
   useShinyjs(),
-  useShinydashboard(),
+  # Disable useShinyDashboard(); see if deprecation warning goes away
+  # useShinydashboard(),
 
-  # -----------------
+  # Tag Setup ----
   tags$head(includeHTML(here("gtag.html"))),
   tags$style(HTML("
       /* Style for the specific red demonstration text */
       .navbar-custom h3 {
         float: right;
         margin: 5px 10px; /* Adjust margins as needed */
-        color: red;
+        color: white;
         font-size: 1.5vw; /* Responsive text size */
         line-height: 45px; /* Aligns with the logo height */
       }
@@ -136,16 +141,49 @@ ui <- bootstrapPage(
 
     tags$div(
       class = "navbar-custom",
-      # HTML('<img src="noaaLogo.png" style="float:right;margin: 10px auto;height: 45px;" />'),
-      HTML('<h3 style="float: right;margin: 5px auto;height: 45px;position: absolute;right: 
-            70px;color:red;">Demo for Mote Sites</h3> <img src="noaaLogo.png" style="float: 
-            right;margin: 0px auto;height: 45px;position: absolute;right: 10px; top: 7px;"> 
-            <a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" 
-            href="#">Reef Persistence Tool</ ></a>'),
+      HTML('<h3 style="
+                float: right;
+                margin: 5px auto;
+                height: 45px;
+                position: absolute;
+                right: 200px;
+                top: 5px;
+                color: white;
+                text-shadow:
+                  -1px -1px 0 black,
+                  1px -1px 0 black,
+                  -1px 1px 0 black,
+                  1px 1px 0 black;">
+              Demo for Mote Sites</h3> 
+            <img src="noaaLogo.png" style="
+              float: right;
+              margin: 0px auto;
+              height: 45px;
+              position: absolute;
+              right: 10px;
+              top: 7px;"> 
+            <img src="usgsLogo.png" style="
+              float: right;
+              margin: 0px auto;
+              height: 45px;
+              position: absolute;
+              right: 70px;
+              top: 7px;"> 
+            <a style="
+              text-decoration: none;
+              cursor: default;
+              color: #FFFFFF;
+              text-shadow:
+                -1px -1px 0 black,
+                1px -1px 0 black,
+                -1px 1px 0 black,
+                1px 1px 0 black;"
+            class="active" 
+            href="#">Carbonate Budget Restoration Tool</ ></a>'),
       id = "nav",
     ),
 
-    # Home ----
+    # Home Tab ----
     tabPanel(
       "Home",
       div(
@@ -219,8 +257,7 @@ ui <- bootstrapPage(
       )
     ),
 
-    # Reef Characteristics ----
-
+    # Reef Characteristics Tab ----
     tabPanel(
       "Reef Characteristics",
       value = "reef",
@@ -315,8 +352,8 @@ ui <- bootstrapPage(
         )
       )
     ),
-    # Restoration & Adaptation ----
 
+    # Restoration & Adaptation Tab ----
     tabPanel(
       "Restoration & Adaptation",
       value = "reef2",
@@ -411,8 +448,9 @@ ui <- bootstrapPage(
                   actionButton("Branching_info", "More info", icon = icon("info"), style = " color: white; border: none;"),
                   hidden(div(
                     id = "Branching_info_text", class = "hidden-text", "Branching and plating corals grow rapidly, forming large,
-                            tree-like colonies that provide structural complexity, effectively shading out competitors for light. These corals are highly susceptible to breakage during storms and suffer high mortality rates
-                                       following temperature anomalies. This sensitivity means they can only be dominant in ideal environments.",
+                    tree-like colonies that provide structural complexity, effectively shading out competitors for light. These 
+                    corals are highly susceptible to breakage during storms and suffer high mortality rates following temperature
+                    anomalies. This sensitivity means they can only be dominant in ideal environments.",
                     style = "color:#045a8d"
                   ))
                 )
@@ -551,7 +589,7 @@ ui <- bootstrapPage(
         )
       )
     ),
-    # Planning Restoration ----
+    # Planning Restoration Tab ----
     tabPanel(
       "Mote Sites Restoration",
       value = "Planning Restoration",
@@ -605,7 +643,6 @@ ui <- bootstrapPage(
                 style = "text-align:center; font-size: 1.5vw;"
               ),
               plotOutput("baseline_pie", width = "100%", height = "350px")
-              # plotOutput("baseline_pie", height = "300px")
             ),
             column(
               width = 4,
@@ -617,7 +654,6 @@ ui <- bootstrapPage(
                 style = "text-align:center; font-size: 1.5vw;"
               ),
               plotOutput("restored_pie", width = "100%", height = "350px")
-              # plotOutput("restored_pie", height = "300px")
             ),
             column(
               width = 4,
@@ -665,7 +701,7 @@ ui <- bootstrapPage(
         )
       )
     ),
-    # Planning Restoration 2 ----
+    # Planning Restoration Tab 2 ----
     # --- UI ---
     tabPanel(
       "Planning Restoration",
@@ -722,7 +758,7 @@ ui <- bootstrapPage(
       )
     ),
 
-    # Data ----
+    # Data Tab ----
     tabPanel(
       "Data",
       tags$h4("Data not availabe at this time"),
@@ -734,25 +770,25 @@ ui <- bootstrapPage(
         "here."
       )
     ),
-    # About This Site ----
+    # "About This Site" Tab ----
     tabPanel(
-      "About this site",
+      "About this Site",
       tags$div(
         tags$h4("Aim"),
         "The aim of this site is to provide a predictive tool for decision makers to assess regional responses under future climate change
-                        and to evaluate the potential impact of local initiatives to mitigate effects of ocean acidification and warming.The modelling approach that is used to built projections in this interactive tool is described in ",
+          and to evaluate the potential impact of local initiatives to mitigate effects of ocean acidification and warming.The modelling 
+          approach that is used to built projections in this interactive tool is described in ",
         tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "an article,"), "published in Scientific reports.",
         tags$br(), tags$br(), tags$h4("Background"),
         "For reef framework to persist, constructional processes by corals and other calcifers need
-to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and
-dynamic and is currently threatened by the effects of ocean warming and acidifcation.
+         to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and
+         dynamic and is currently threatened by the effects of ocean warming and acidifcation.
 
-Although the
-protection and recovery of ecosystem functions are at the center of most restoration and conservation
-programs, decision makers are limited by the lack of predictive tools to forecast habitat persistence
-under diferent emission scenarios.",
+         Although the protection and recovery of ecosystem functions are at the center of most restoration 
+         and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
+         habitat persistence under diferent emission scenarios.",
         tags$br(), tags$br(),
-        "The Reef Persistence Tool will enable decision makers to evaluate impact of local restoraton initiatives on reef habitat persistence in the context of climate change.",
+        "The Carbonate Budget Restoration Tool will enable decision makers to evaluate impact of local restoraton initiatives on reef habitat persistence in the context of climate change.",
         tags$br(), tags$br(), tags$h4("Code"),
         "Code and input data used to generate this Shiny mapping tool are available on Github.",
         tags$br(), tags$br(), tags$h4("Sources"),
@@ -902,16 +938,36 @@ server <- function(input, output, session) {
         opacity = 1
       ) |>
 
-      # Static control: White text title
+      # Static control: White text title - "CARBONATE BUDGET RESTORATION TOOL"
       addControl(
-        html = "<div style='font-size: 42px; font-weight: bold;color:white;'>REEF<br> PERSISTENCE<br> TOOL</div>",
+        html = "<div 
+                  style='
+                    font-size: 42px;
+                    font-weight: bold;
+                    color:white;
+                    text-shadow:
+                      -1px -1px 0 black,
+                      1px -1px 0 black,
+                      -1px 1px 0 black,
+                      1px 1px 0 black;'>
+                  CARBONATE BUDGET <br>RESTORATION TOOL</div>",
         position = "topleft",
         className = "map-title"
       ) |>
 
-      # Static control: Red text instruction
+      # Static control: White text instruction
       addControl(
-        html = "<div style='font-size: 22px; font-weight: bold;color:red;'>Click on a site to<br> find out more</div>",
+        html = "<div
+                  style='
+                    font-size: 22px;
+                    font-weight: bold;
+                    color: white;
+                    text-shadow:
+                      -1px -1px 0 black,
+                      1px -1px 0 black,
+                      -1px 1px 0 black,
+                      1px 1px 0 black;'>
+                  Click on a site to<br> find out more</div>",
         position = "bottomright",
         className = "map-title"
       )
@@ -967,9 +1023,9 @@ server <- function(input, output, session) {
 
     # find the matching reef name by the clicked coordinates
     reef_name(df |>
-      filter(lat == click$lat & long == click$lng) |>
-      pull(site) |>
-      unique())
+                filter(lat == click$lat & long == click$lng) |>
+                pull(site) |>
+                unique())
 
 
     # update the input w/ the selected reef
@@ -987,9 +1043,9 @@ server <- function(input, output, session) {
 
     # find the matching reef name by the clicked coordinates
     reef_name(df |>
-      filter(lat == click$lat & long == click$lng) |>
-      pull(site) |>
-      unique())
+                filter(lat == click$lat & long == click$lng) |>
+                pull(site) |>
+                unique())
 
 
     # update the input w/ the selected reef
