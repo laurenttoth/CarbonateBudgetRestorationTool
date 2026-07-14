@@ -1,7 +1,7 @@
 # Carbonate Budget Restoration Tool ----
 
 # Adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center
-# from Alice Webb's Reef Persistence Tool. Adaptation conceptualized by Lauren T. Toth (USGS) and John Morris (NOAA)
+# from Alice Webb's Reef Persistence Tool. Adaptation conceptualized by Lauren T. Toth (USGS) and John Morris (NOAA).
 
 # Call Packages ----
 library(rsconnect)
@@ -770,7 +770,8 @@ ui <- bootstrapPage(
         "here."
       )
     ),
-    # "About This Site" Tab ----
+
+    # "About this Site" Tab ----
     tabPanel(
       "About this Site",
       tags$div(
@@ -932,9 +933,9 @@ server <- function(input, output, session) {
 
       # Static elements like the title and reef status legend
       addLegend("bottomleft",
-        colors = c("#0099FF", "#FFFF99", "#FF6600"),
-        labels = c("Growing", "Stasis", "Eroding"),
-        title = HTML("<span style='font-size: 20px;'>Reef Status</span>"),
+        colors  = c("#0099FF", "#FFFF99", "#FF6600"),
+        labels  = c("Growing", "Stasis", "Eroding"),
+        title   = HTML("<span style='font-size: 20px;'>Reef Status</span>"),
         opacity = 1
       ) |>
 
@@ -1212,7 +1213,8 @@ server <- function(input, output, session) {
     baseline = NULL,
     restored = NULL
   )
-  ## baseline_RAP_box ----
+
+  ## Baseline RAP Box ----
   output$baseline_RAP_box <- renderValueBox({
     req(input$selected_site)
 
@@ -1572,6 +1574,7 @@ server <- function(input, output, session) {
       ) +
       guides(fill = guide_legend(title.position = "none", title.hjust = 0, nrow = 2))
   })
+
   ## Restored Pie ----
   output$restored_pie <- renderPlot({
     req(input$selected_site)
@@ -1582,7 +1585,7 @@ server <- function(input, output, session) {
     output$slr_circle <- renderPlot({
       library(ggplot2)
 
-      # ---- params ----
+      # params
       present_mm <- 4
       future_mm <- 40
       scale_max <- 100 # mm/yr at circle edge
@@ -1596,14 +1599,14 @@ server <- function(input, output, session) {
       max_y_baseline <- r_circle - 0.05
       y_baseline_rap <- min(mm_to_y(rap_values$baseline), max_y_baseline)
 
-      # ---- circle path ----
+      # circle path 
       angle <- seq(0, 2 * pi, length.out = 720)
       circle_df <- data.frame(
         x = r_circle * cos(angle),
         y = r_circle * sin(angle)
       )
 
-      # ---- cutoff height ----
+      # cutoff height 
       y_cut <- mm_to_y(fill_cut_mm)
 
       # lower (blue) fill
@@ -1620,7 +1623,7 @@ server <- function(input, output, session) {
         data.frame(x = rev(upper_edge$x), y = rep(y_cut, nrow(upper_edge)))
       )
 
-      # ---- solid line positions and truncation ----
+      ## solid line positions and truncation 
       draw_horizontal <- function(y_val, col) {
         if (abs(y_val) <= r_circle) {
           x_half <- sqrt(r_circle^2 - y_val^2)
@@ -1938,7 +1941,7 @@ server <- function(input, output, session) {
 
   # ggplot(filtered_slr(), aes(x = Time, y = cumsum(HR/10)))
 
-  ## Schematic to Illustrate Accretion vs. SLR (Box2) ----
+  ## Schematic: Accretion vs. SLR (Box2) ----
 
   output$SLRmetrics <- renderText({
     reef_depth <- filtered_df() |>
@@ -2448,6 +2451,7 @@ server <- function(input, output, session) {
     print(head(data, input$maxrows), row.names = FALSE)
     options(orig)
   })
+
   ## Restoration Planning 2 ----
   output$baseline_cover_inputs <- renderUI({
     req(input$baseline_species)
@@ -2466,8 +2470,8 @@ server <- function(input, output, session) {
     "Diploria labyrinthiformis", "Solenastrea bournoni" # use exact name you prefer
   )
 
+  # Build list of sliderInput()s
   output$restoration_sliders <- renderUI({
-    # build your list of sliderInput()s
     sliders <- lapply(restoration_species, function(s) {
       id <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
       sliderInput(id, label = s, min = 0, max = 100, value = 0, step = 0.5, post = "%")
@@ -2480,9 +2484,10 @@ server <- function(input, output, session) {
       column(6, tagList(sliders[(half + 1):length(sliders)]))
     )
   })
+
   # Sum all numericInputs created for baseline cover and show in a valueBox
   output$baseline_cover_box <- shinydashboard::renderValueBox({
-    # ids were created as base_<sanitized species name>
+    # IDs were created as base_<sanitized species name>
     sp <- input$baseline_species %||% character(0)
     ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp))
 
@@ -2512,13 +2517,13 @@ server <- function(input, output, session) {
   }
 
   output$restored_cover_box <- shinydashboard::renderValueBox({
-    # --- baseline total (same IDs you used: base_<sanitized species>) ---
+    # baseline total (same IDs you used: base_<sanitized species>)
     sp_base <- if (is.null(input$baseline_species)) character(0) else input$baseline_species
     base_ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp_base))
     base_vals <- sapply(base_ids, function(id) .safe_num(input[[id]]))
     baseline_total <- sum(base_vals, na.rm = TRUE)
 
-    # --- restoration total (sliders: slider_<sanitized species>) ---
+    # restoration total (sliders: slider_<sanitized species>)
     restoration_species <- c(
       "Acropora palmata", "Acropora cervicornis", "Montastraea cavernosa",
       "Orbicella faveolata", "Colpophyllia natans", "Porites astreoides",
@@ -2529,7 +2534,7 @@ server <- function(input, output, session) {
     slider_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
     restoration_total <- sum(slider_vals, na.rm = TRUE)
 
-    # --- restored cover = baseline + restoration ---
+    # restored cover = baseline + restoration
     restored_total <- baseline_total + restoration_total
 
     shinydashboard::valueBox(
@@ -2578,7 +2583,7 @@ server <- function(input, output, session) {
 
 
   output$restored_budget <- shinydashboard::renderValueBox({
-    # ---- baseline part ----
+    # "baseline" part
     sp <- if (is.null(input$baseline_species)) character(0) else input$baseline_species
     ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp))
     base_vals <- sapply(ids, function(id) {
@@ -2588,7 +2593,7 @@ server <- function(input, output, session) {
     base_rates <- as.numeric(travis_rates$rate[match(sp, travis_rates$Species)])
     net_base <- sum(base_vals * base_rates / 100, na.rm = TRUE)
 
-    # ---- restoration part ----
+    # "restoration" part 
     restoration_species <- c(
       "Acropora palmata", "Acropora cervicornis", "Montastraea cavernosa",
       "Orbicella faveolata", "Colpophyllia natans", "Porites astreoides",
@@ -2603,11 +2608,11 @@ server <- function(input, output, session) {
     rest_rates <- as.numeric(travis_rates$rate[match(restoration_species, travis_rates$Species)])
     net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
 
-    # ---- erosion (by selected habitat) ----
+    # erosion (by selected habitat)
     row <- bioerosion[bioerosion$Location == input$habitat_choice, c("PF", "Urchins", "Micro", "BioSponges"), drop = FALSE]
     total_erosion <- if (nrow(row)) sum(as.numeric(row[1, ]), na.rm = TRUE) else 0
 
-    # ---- restored carbonate budget ----
+    # restored carbonate budget 
     restored_budget <- (net_base + net_rest) - total_erosion
 
     shinydashboard::valueBox(
