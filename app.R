@@ -86,7 +86,7 @@ lat <- data$lat
 long <- data$long
 coralcover <- data$CoralCover
 slr <- data$SLR_HR
-accslr <- data$HR_CESMmm
+accslr <- data$hr_cesmmm
 ah10 <- data$AH + 15
 coral <- data$perHC
 macro <- data$perBBS
