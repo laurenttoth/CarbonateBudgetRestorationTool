@@ -1,17 +1,17 @@
-# Reef Persistence Tool Code ----
-# Alice Webb
+# Carbonate Budget Restoration Tool ----
+
+# Adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center
+# from Alice Webb's Reef Persistence Tool. Adaptation conceptualized by Lauren T. Toth (USGS) and John Morris (NOAA)
 
 # Call Packages ----
 library(rsconnect)
 library(shiny)
 library(shinydashboard)
-# library(shinydashboardPlus)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(leaflet)
 library(shinythemes)
-# library(dashboardthemes)
 library(leaflegend)
 library(ggplot2)
 library(tidyverse)
@@ -29,9 +29,6 @@ library(geojsonio)
 library(shinyWidgets)
 library(shinyjs)
 library(shinyBS)
-# library(fresh)
-# library(bslib)
-# library(bs4Dash)
 library(here)
 
 # year vector
@@ -140,7 +137,11 @@ ui <- bootstrapPage(
     tags$div(
       class = "navbar-custom",
       # HTML('<img src="noaaLogo.png" style="float:right;margin: 10px auto;height: 45px;" />'),
-      HTML('<h3 style="float: right;margin: 5px auto;height: 45px;position: absolute;right: 70px;color:red;">Demo for Mote Sites</h3> <img src="noaaLogo.png" style="float: right;margin: 0px auto;height: 45px;position: absolute;right: 10px; top: 7px;"> <a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" href="#">Reef Persistence Tool</ ></a>'),
+      HTML('<h3 style="float: right;margin: 5px auto;height: 45px;position: absolute;right: 
+            70px;color:red;">Demo for Mote Sites</h3> <img src="noaaLogo.png" style="float: 
+            right;margin: 0px auto;height: 45px;position: absolute;right: 10px; top: 7px;"> 
+            <a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" 
+            href="#">Reef Persistence Tool</ ></a>'),
       id = "nav",
     ),
 
@@ -172,10 +173,11 @@ ui <- bootstrapPage(
           actionButton("more_info", "More info", icon = icon("info")),
           hidden(div(
             id = "more_info_text", class = "hidden-text", "Carbonate budget projections are used as a metric for reef persistence. A carbonate budget
-                                                     represents the summation of all processes contributing to calcification and bioerosion on a reef.
-                                                       When the budget is positive, building capacity outweighs loss due to biological, chemical and physical erosion,
-                                                      the reef is growing. If negative, the reef is in a state of net loss, the reef is flattening. We project these rates
-                                  into the future using site-specific climatic projections and species-specific relationships between rates of calcification and erosion and ocean acidification and temperature.",
+                                                           represents the summation of all processes contributing to calcification and bioerosion on a reef.
+                                                           When the budget is positive, building capacity outweighs loss due to biological, chemical and physical erosion,
+                                                           the reef is growing. If negative, the reef is in a state of net loss, the reef is flattening. We project these rates
+                                                           into the future using site-specific climatic projections and species-specific relationships between 
+                                                           rates of calcification and erosion and ocean acidification and temperature.",
             style = "color:#045a8d"
           ))
         ),
@@ -204,9 +206,13 @@ ui <- bootstrapPage(
           ),
           actionButton("more_info2", "More info", icon = icon("info")),
           hidden(div(
-            id = "more_info2_text", class = "hidden-text", "The two scenarios presented here refer to SSP5-8.5 (Buisness as usual) which is the pathway that represents current rates of emissions and emissions growth. It is considered a
-“worst case scenario” and it assumes there is no climate policy or that policy is not effective. SSP2-4.5 (reduced emissions) is a highly
-ambitious but still possible scenario. It is considered a “middle of the road” pathway whith intermediate CO2 emissions peaking in 2040 and gradually declining towards 2100.",
+            id = "more_info2_text", class = "hidden-text", "The two scenarios presented here refer to SSP5-8.5 
+                                                            (Buisness as usual) which is the pathway that represents current 
+                                                            rates of emissions and emissions growth. It is considered a
+                                                            “worst case scenario” and it assumes there is no climate policy or 
+                                                            that policy is not effective. SSP2-4.5 (reduced emissions) is a highly
+                                                            ambitious but still possible scenario. It is considered a “middle of the road” 
+                                                            pathway whith intermediate CO2 emissions peaking in 2040 and gradually declining towards 2100.",
             style = "color:#045a8d"
           ))
         )
