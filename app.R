@@ -1,17 +1,18 @@
-# Reef Persistence Tool Code ----
-# Alice Webb
+# Carbonate Budget Restoration Tool ----
+
+# Adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center
+# from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Lauren T. Toth (USGS) and John T. Morris (NOAA).
 
 # Call Packages ----
 library(rsconnect)
 library(shiny)
+library(bslib)
 library(shinydashboard)
-# library(shinydashboardPlus)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(leaflet)
 library(shinythemes)
-# library(dashboardthemes)
 library(leaflegend)
 library(ggplot2)
 library(tidyverse)
@@ -29,10 +30,10 @@ library(geojsonio)
 library(shinyWidgets)
 library(shinyjs)
 library(shinyBS)
-# library(fresh)
-# library(bslib)
-# library(bs4Dash)
 library(here)
+
+# Enable automatic reloading of the app when code changes are detected
+options(shiny.autoreload = TRUE)
 
 # year vector
 cv_dates <- as.data.frame(c(2019:2100))
@@ -75,9 +76,9 @@ data <- merge(data, rel, by = c("Time", "variable", "Scenario"))
 scenario <- data$Scenario
 adaptation <- data$variable
 num <- data$Time
-ncc <- data$ncc
+ncc <- data$ncc # net calcium carbonate
 sdncc <- data$sdncc
-rap <- data$RAP
+rap <- data$RAP # reef accretion potential
 sdrap <- data$sdRAP
 ah <- data$AH
 sdah <- data$sdAH
@@ -86,7 +87,7 @@ lat <- data$lat
 long <- data$long
 coralcover <- data$CoralCover
 slr <- data$SLR_HR
-accslr <- data$HR_CESMmm
+accslr <- data$hr_cesmmm
 ah10 <- data$AH + 15
 coral <- data$perHC
 macro <- data$perBBS
@@ -102,21 +103,22 @@ df <- data.frame(
 # Shiny User Interface ----
 
 ui <- bootstrapPage(
-  title = "Reef Persistence Tool",
+  title = "Carbonate Budget Restoration Tool",
   useShinyjs(),
   # use this in non shinydashboard app
-  setBackgroundColor(color = "ghostwhite"),
+  setBackgroundColor(color = "#f8fffb"),
   useShinyjs(),
-  useShinydashboard(),
+  # Disable useShinyDashboard(); see if deprecation warning goes away
+  # useShinydashboard(),
 
-  # -----------------
+  # Tag Setup ----
   tags$head(includeHTML(here("gtag.html"))),
   tags$style(HTML("
       /* Style for the specific red demonstration text */
       .navbar-custom h3 {
         float: right;
         margin: 5px 10px; /* Adjust margins as needed */
-        color: red;
+        color: white;
         font-size: 1.5vw; /* Responsive text size */
         line-height: 45px; /* Aligns with the logo height */
       }
@@ -139,12 +141,49 @@ ui <- bootstrapPage(
 
     tags$div(
       class = "navbar-custom",
-      # HTML('<img src="noaaLogo.png" style="float:right;margin: 10px auto;height: 45px;" />'),
-      HTML('<h3 style="float: right;margin: 5px auto;height: 45px;position: absolute;right: 70px;color:red;">Demo for Mote Sites</h3> <img src="noaaLogo.png" style="float: right;margin: 0px auto;height: 45px;position: absolute;right: 10px; top: 7px;"> <a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" href="#">Reef Persistence Tool</ ></a>'),
+      HTML('<h3 style="
+                float: right;
+                margin: 5px auto;
+                height: 45px;
+                position: absolute;
+                right: 200px;
+                top: 5px;
+                color: white;
+                text-shadow:
+                  -1px -1px 0 black,
+                  1px -1px 0 black,
+                  -1px 1px 0 black,
+                  1px 1px 0 black;">
+              Demo for Mote Sites</h3> 
+            <img src="noaaLogo.png" style="
+              float: right;
+              margin: 0px auto;
+              height: 45px;
+              position: absolute;
+              right: 10px;
+              top: 7px;"> 
+            <img src="usgsLogo.png" style="
+              float: right;
+              margin: 0px auto;
+              height: 45px;
+              position: absolute;
+              right: 70px;
+              top: 7px;"> 
+            <a style="
+              text-decoration: none;
+              cursor: default;
+              color: #FFFFFF;
+              text-shadow:
+                -1px -1px 0 black,
+                1px -1px 0 black,
+                -1px 1px 0 black,
+                1px 1px 0 black;"
+            class="active" 
+            href="#">Carbonate Budget Restoration Tool</ ></a>'),
       id = "nav",
     ),
 
-    # Home ----
+    # Home Tab ----
     tabPanel(
       "Home",
       div(
@@ -172,10 +211,11 @@ ui <- bootstrapPage(
           actionButton("more_info", "More info", icon = icon("info")),
           hidden(div(
             id = "more_info_text", class = "hidden-text", "Carbonate budget projections are used as a metric for reef persistence. A carbonate budget
-                                                     represents the summation of all processes contributing to calcification and bioerosion on a reef.
-                                                       When the budget is positive, building capacity outweighs loss due to biological, chemical and physical erosion,
-                                                      the reef is growing. If negative, the reef is in a state of net loss, the reef is flattening. We project these rates
-                                  into the future using site-specific climatic projections and species-specific relationships between rates of calcification and erosion and ocean acidification and temperature.",
+                                                           represents the summation of all processes contributing to calcification and bioerosion on a reef.
+                                                           When the budget is positive, building capacity outweighs loss due to biological, chemical and physical erosion,
+                                                           the reef is growing. If negative, the reef is in a state of net loss, the reef is flattening. We project these rates
+                                                           into the future using site-specific climatic projections and species-specific relationships between 
+                                                           rates of calcification and erosion and ocean acidification and temperature.",
             style = "color:#045a8d"
           ))
         ),
@@ -204,17 +244,20 @@ ui <- bootstrapPage(
           ),
           actionButton("more_info2", "More info", icon = icon("info")),
           hidden(div(
-            id = "more_info2_text", class = "hidden-text", "The two scenarios presented here refer to SSP5-8.5 (Buisness as usual) which is the pathway that represents current rates of emissions and emissions growth. It is considered a
-â€œworst case scenarioâ€ and it assumes there is no climate policy or that policy is not effective. SSP2-4.5 (reduced emissions) is a highly
-ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ€ pathway whith intermediate CO2 emissions peaking in 2040 and gradually declining towards 2100.",
+            id = "more_info2_text", class = "hidden-text", "The two scenarios presented here refer to SSP5-8.5 
+                                                            (Buisness as usual) which is the pathway that represents current 
+                                                            rates of emissions and emissions growth. It is considered a
+                                                            â€œworst case scenarioâ€ and it assumes there is no climate policy or 
+                                                            that policy is not effective. SSP2-4.5 (reduced emissions) is a highly
+                                                            ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ€ 
+                                                            pathway whith intermediate CO2 emissions peaking in 2040 and gradually declining towards 2100.",
             style = "color:#045a8d"
           ))
         )
       )
     ),
 
-    # Reef Characteristics ----
-
+    # Reef Characteristics Tab ----
     tabPanel(
       "Reef Characteristics",
       value = "reef",
@@ -234,14 +277,17 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         }
 
       ")),
+
+      # Sidebar layout: Reef Selection ----
       sidebarLayout(
         sidebarPanel(
           width = 3,
-
-
           pickerInput("selectReef",
             "Select Your Reef",
-            label = tags$span(style = "font-size: 20px; color: #00CC99; font-weight: bold;", "Select Your Reef"),
+            label = tags$span(style = "font-size: 20px;
+                                       color: #00CC99;
+                                       font-weight: bold;",
+                                    "Select Your Reef"),
             choices = c(
               "Cheeca Rocks",
               "Dry Tortugas",
@@ -268,12 +314,15 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
           ),
           radioButtons("reef_scenario",
             label = h4("Let's go green"),
-            choices = list("Reduce gas emissions" = "SSP2_4.5", "Business as usual" = "SSP5_8.5"),
+            choices = list("Reduce gas emissions" = "SSP2_4.5",
+                           "Business as usual" = "SSP5_8.5"),
             selected = "SSP5_8.5",
             inline = FALSE,
             width = "100%"
           )
         ),
+
+        # Reef Characteristics: Output illustrations ----
         fluidRow(
           column(
             3,
@@ -286,8 +335,13 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
             3,
             box(
               width = NULL, align = "center", collapsible = FALSE, title = tagList(
-                div("Construction vs. Erosion", style = "font-size: 24px; font-weight: bold;margin-bottom: 10px;"),
-                div("Percentage contribution of constructional forces (coral and calcifying algae) and erosional processes (micro- and macro-erosion)", style = "font-size: 1vw; color: gray;")
+                div("Construction vs. Erosion",
+                    style = "font-size: 24px;
+                             font-weight: bold;
+                             margin-bottom: 10px;"),
+                div("Percentage contribution of constructional forces (coral and calcifying algae) and erosional processes (micro- and macro-erosion)",
+                    style = "font-size: 1vw;
+                             color: gray;")
               ), background = "navy", solidHeader = FALSE,
               collapsed = FALSE, imageOutput("myImage", width = "22vw", height = "auto")
             ),
@@ -309,8 +363,8 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         )
       )
     ),
-    # Restoration & Adaptation ----
 
+    # Restoration & Adaptation Tab ----
     tabPanel(
       "Restoration & Adaptation",
       value = "reef2",
@@ -405,8 +459,9 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
                   actionButton("Branching_info", "More info", icon = icon("info"), style = " color: white; border: none;"),
                   hidden(div(
                     id = "Branching_info_text", class = "hidden-text", "Branching and plating corals grow rapidly, forming large,
-                            tree-like colonies that provide structural complexity, effectively shading out competitors for light. These corals are highly susceptible to breakage during storms and suffer high mortality rates
-                                       following temperature anomalies. This sensitivity means they can only be dominant in ideal environments.",
+                    tree-like colonies that provide structural complexity, effectively shading out competitors for light. These 
+                    corals are highly susceptible to breakage during storms and suffer high mortality rates following temperature
+                    anomalies. This sensitivity means they can only be dominant in ideal environments.",
                     style = "color:#045a8d"
                   ))
                 )
@@ -545,7 +600,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         )
       )
     ),
-    # Planning Restoration ----
+    # Planning Restoration Tab ----
     tabPanel(
       "Mote Sites Restoration",
       value = "Planning Restoration",
@@ -599,7 +654,6 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
                 style = "text-align:center; font-size: 1.5vw;"
               ),
               plotOutput("baseline_pie", width = "100%", height = "350px")
-              # plotOutput("baseline_pie", height = "300px")
             ),
             column(
               width = 4,
@@ -611,7 +665,6 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
                 style = "text-align:center; font-size: 1.5vw;"
               ),
               plotOutput("restored_pie", width = "100%", height = "350px")
-              # plotOutput("restored_pie", height = "300px")
             ),
             column(
               width = 4,
@@ -659,7 +712,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         )
       )
     ),
-    # Planning Restoration 2 ----
+    # Planning Restoration Tab 2 ----
     # --- UI ---
     tabPanel(
       "Planning Restoration",
@@ -716,7 +769,7 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
       )
     ),
 
-    # Data ----
+    # Data Tab ----
     tabPanel(
       "Data",
       tags$h4("Data not availabe at this time"),
@@ -728,25 +781,26 @@ ambitious but still possible scenario. It is considered a â€œmiddle of the roadâ
         "here."
       )
     ),
-    # About This Site ----
+
+    # "About this Site" Tab ----
     tabPanel(
-      "About this site",
+      "About this Site",
       tags$div(
         tags$h4("Aim"),
         "The aim of this site is to provide a predictive tool for decision makers to assess regional responses under future climate change
-                        and to evaluate the potential impact of local initiatives to mitigate effects of ocean acidification and warming.The modelling approach that is used to built projections in this interactive tool is described in ",
+          and to evaluate the potential impact of local initiatives to mitigate effects of ocean acidification and warming.The modelling 
+          approach that is used to built projections in this interactive tool is described in ",
         tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "an article,"), "published in Scientific reports.",
         tags$br(), tags$br(), tags$h4("Background"),
         "For reef framework to persist, constructional processes by corals and other calcifers need
-to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and
-dynamic and is currently threatened by the effects of ocean warming and acidifcation.
+         to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and
+         dynamic and is currently threatened by the effects of ocean warming and acidifcation.
 
-Although the
-protection and recovery of ecosystem functions are at the center of most restoration and conservation
-programs, decision makers are limited by the lack of predictive tools to forecast habitat persistence
-under diferent emission scenarios.",
+         Although the protection and recovery of ecosystem functions are at the center of most restoration 
+         and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
+         habitat persistence under diferent emission scenarios.",
         tags$br(), tags$br(),
-        "The Reef Persistence Tool will enable decision makers to evaluate impact of local restoraton initiatives on reef habitat persistence in the context of climate change.",
+        "The Carbonate Budget Restoration Tool will enable decision makers to evaluate impact of local restoraton initiatives on reef habitat persistence in the context of climate change.",
         tags$br(), tags$br(), tags$h4("Code"),
         "Code and input data used to generate this Shiny mapping tool are available on Github.",
         tags$br(), tags$br(), tags$h4("Sources"),
@@ -890,22 +944,42 @@ server <- function(input, output, session) {
 
       # Static elements like the title and reef status legend
       addLegend("bottomleft",
-        colors = c("#0099FF", "#FFFF99", "#FF6600"),
-        labels = c("Growing", "Stasis", "Eroding"),
-        title = HTML("<span style='font-size: 20px;'>Reef Status</span>"),
+        colors  = c("#0099FF", "#FFFF99", "#FF6600"),
+        labels  = c("Growing", "Stasis", "Eroding"),
+        title   = HTML("<span style='font-size: 20px;'>Reef Status</span>"),
         opacity = 1
       ) |>
 
-      # Static control: White text title
+      # Static control: White text title - "CARBONATE BUDGET RESTORATION TOOL"
       addControl(
-        html = "<div style='font-size: 42px; font-weight: bold;color:white;'>REEF<br> PERSISTENCE<br> TOOL</div>",
+        html = "<div 
+                  style='
+                    font-size: 42px;
+                    font-weight: bold;
+                    color:white;
+                    text-shadow:
+                      -1px -1px 0 black,
+                      1px -1px 0 black,
+                      -1px 1px 0 black,
+                      1px 1px 0 black;'>
+                  CARBONATE BUDGET <br>RESTORATION TOOL</div>",
         position = "topleft",
         className = "map-title"
       ) |>
 
-      # Static control: Red text instruction
+      # Static control: White text instruction
       addControl(
-        html = "<div style='font-size: 22px; font-weight: bold;color:red;'>Click on a site to<br> find out more</div>",
+        html = "<div
+                  style='
+                    font-size: 22px;
+                    font-weight: bold;
+                    color: white;
+                    text-shadow:
+                      -1px -1px 0 black,
+                      1px -1px 0 black,
+                      -1px 1px 0 black,
+                      1px 1px 0 black;'>
+                  Click on a site to<br> find out more</div>",
         position = "bottomright",
         className = "map-title"
       )
@@ -961,9 +1035,9 @@ server <- function(input, output, session) {
 
     # find the matching reef name by the clicked coordinates
     reef_name(df |>
-      filter(lat == click$lat & long == click$lng) |>
-      pull(site) |>
-      unique())
+                filter(lat == click$lat & long == click$lng) |>
+                pull(site) |>
+                unique())
 
 
     # update the input w/ the selected reef
@@ -981,9 +1055,9 @@ server <- function(input, output, session) {
 
     # find the matching reef name by the clicked coordinates
     reef_name(df |>
-      filter(lat == click$lat & long == click$lng) |>
-      pull(site) |>
-      unique())
+                filter(lat == click$lat & long == click$lng) |>
+                pull(site) |>
+                unique())
 
 
     # update the input w/ the selected reef
@@ -1150,7 +1224,8 @@ server <- function(input, output, session) {
     baseline = NULL,
     restored = NULL
   )
-  ## baseline_RAP_box ----
+
+  ## Baseline RAP Box ----
   output$baseline_RAP_box <- renderValueBox({
     req(input$selected_site)
 
@@ -1510,6 +1585,7 @@ server <- function(input, output, session) {
       ) +
       guides(fill = guide_legend(title.position = "none", title.hjust = 0, nrow = 2))
   })
+
   ## Restored Pie ----
   output$restored_pie <- renderPlot({
     req(input$selected_site)
@@ -1520,7 +1596,7 @@ server <- function(input, output, session) {
     output$slr_circle <- renderPlot({
       library(ggplot2)
 
-      # ---- params ----
+      # params
       present_mm <- 4
       future_mm <- 40
       scale_max <- 100 # mm/yr at circle edge
@@ -1534,14 +1610,14 @@ server <- function(input, output, session) {
       max_y_baseline <- r_circle - 0.05
       y_baseline_rap <- min(mm_to_y(rap_values$baseline), max_y_baseline)
 
-      # ---- circle path ----
+      # circle path 
       angle <- seq(0, 2 * pi, length.out = 720)
       circle_df <- data.frame(
         x = r_circle * cos(angle),
         y = r_circle * sin(angle)
       )
 
-      # ---- cutoff height ----
+      # cutoff height 
       y_cut <- mm_to_y(fill_cut_mm)
 
       # lower (blue) fill
@@ -1558,7 +1634,7 @@ server <- function(input, output, session) {
         data.frame(x = rev(upper_edge$x), y = rep(y_cut, nrow(upper_edge)))
       )
 
-      # ---- solid line positions and truncation ----
+      ## solid line positions and truncation 
       draw_horizontal <- function(y_val, col) {
         if (abs(y_val) <= r_circle) {
           x_half <- sqrt(r_circle^2 - y_val^2)
@@ -1876,7 +1952,7 @@ server <- function(input, output, session) {
 
   # ggplot(filtered_slr(), aes(x = Time, y = cumsum(HR/10)))
 
-  ## Schematic to Illustrate Accretion vs. SLR (Box2) ----
+  ## Schematic: Accretion vs. SLR (Box2) ----
 
   output$SLRmetrics <- renderText({
     reef_depth <- filtered_df() |>
@@ -2125,7 +2201,7 @@ server <- function(input, output, session) {
 
 
 
-  ## Upload Photos Depending on Site ----
+  # Load the appropriate photo for the selected site
   output$photo <- renderImage(
     {
       if (input$selectReef == "Cheeca Rocks") {
@@ -2386,6 +2462,7 @@ server <- function(input, output, session) {
     print(head(data, input$maxrows), row.names = FALSE)
     options(orig)
   })
+
   ## Restoration Planning 2 ----
   output$baseline_cover_inputs <- renderUI({
     req(input$baseline_species)
@@ -2404,8 +2481,8 @@ server <- function(input, output, session) {
     "Diploria labyrinthiformis", "Solenastrea bournoni" # use exact name you prefer
   )
 
+  # Build list of sliderInput()s
   output$restoration_sliders <- renderUI({
-    # build your list of sliderInput()s
     sliders <- lapply(restoration_species, function(s) {
       id <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
       sliderInput(id, label = s, min = 0, max = 100, value = 0, step = 0.5, post = "%")
@@ -2418,9 +2495,10 @@ server <- function(input, output, session) {
       column(6, tagList(sliders[(half + 1):length(sliders)]))
     )
   })
+
   # Sum all numericInputs created for baseline cover and show in a valueBox
   output$baseline_cover_box <- shinydashboard::renderValueBox({
-    # ids were created as base_<sanitized species name>
+    # IDs were created as base_<sanitized species name>
     sp <- input$baseline_species %||% character(0)
     ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp))
 
@@ -2450,13 +2528,13 @@ server <- function(input, output, session) {
   }
 
   output$restored_cover_box <- shinydashboard::renderValueBox({
-    # --- baseline total (same IDs you used: base_<sanitized species>) ---
+    # baseline total (same IDs you used: base_<sanitized species>)
     sp_base <- if (is.null(input$baseline_species)) character(0) else input$baseline_species
     base_ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp_base))
     base_vals <- sapply(base_ids, function(id) .safe_num(input[[id]]))
     baseline_total <- sum(base_vals, na.rm = TRUE)
 
-    # --- restoration total (sliders: slider_<sanitized species>) ---
+    # restoration total (sliders: slider_<sanitized species>)
     restoration_species <- c(
       "Acropora palmata", "Acropora cervicornis", "Montastraea cavernosa",
       "Orbicella faveolata", "Colpophyllia natans", "Porites astreoides",
@@ -2467,7 +2545,7 @@ server <- function(input, output, session) {
     slider_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
     restoration_total <- sum(slider_vals, na.rm = TRUE)
 
-    # --- restored cover = baseline + restoration ---
+    # restored cover = baseline + restoration
     restored_total <- baseline_total + restoration_total
 
     shinydashboard::valueBox(
@@ -2516,7 +2594,7 @@ server <- function(input, output, session) {
 
 
   output$restored_budget <- shinydashboard::renderValueBox({
-    # ---- baseline part ----
+    # "baseline" part
     sp <- if (is.null(input$baseline_species)) character(0) else input$baseline_species
     ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp))
     base_vals <- sapply(ids, function(id) {
@@ -2526,7 +2604,7 @@ server <- function(input, output, session) {
     base_rates <- as.numeric(travis_rates$rate[match(sp, travis_rates$Species)])
     net_base <- sum(base_vals * base_rates / 100, na.rm = TRUE)
 
-    # ---- restoration part ----
+    # "restoration" part 
     restoration_species <- c(
       "Acropora palmata", "Acropora cervicornis", "Montastraea cavernosa",
       "Orbicella faveolata", "Colpophyllia natans", "Porites astreoides",
@@ -2541,11 +2619,11 @@ server <- function(input, output, session) {
     rest_rates <- as.numeric(travis_rates$rate[match(restoration_species, travis_rates$Species)])
     net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
 
-    # ---- erosion (by selected habitat) ----
+    # erosion (by selected habitat)
     row <- bioerosion[bioerosion$Location == input$habitat_choice, c("PF", "Urchins", "Micro", "BioSponges"), drop = FALSE]
     total_erosion <- if (nrow(row)) sum(as.numeric(row[1, ]), na.rm = TRUE) else 0
 
-    # ---- restored carbonate budget ----
+    # restored carbonate budget 
     restored_budget <- (net_base + net_rest) - total_erosion
 
     shinydashboard::valueBox(
