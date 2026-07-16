@@ -102,8 +102,6 @@ sidebar <- dashboardSidebar(
   )
 )
 
-"#BFDADA"
-
 ## Body ----
 body <- dashboardBody(
   useShinyjs(),

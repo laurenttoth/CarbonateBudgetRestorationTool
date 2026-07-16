@@ -1,4 +1,4 @@
-# Call the Carbonate Budget Restoration Tool app without noisy file.info warngings
+# Call the Carbonate Budget Restoration Tool app without noisy file.info warnings
 
 script_dir <- dirname(sys.frame(1)$ofile)
 
