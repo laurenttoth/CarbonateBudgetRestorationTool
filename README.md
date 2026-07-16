@@ -9,7 +9,7 @@ The Carbonate Budget Restoration Tool was adapted by Connor M. Jenkins at the U.
 To install the packages required to use the Carbonate Budget Restoration Tool, run the following line in an R console:
 
 ```r
-install.packages(c('rsconnect','shiny','bslib','shinydashboard','ggplot2','dplyr','tidyr','leaflet','shinythemes','leaflegend','ggplot2','tidyverse','ggforce','png','RCurl','jpeg','sf','magrittr','maps','reshape2','RColorBrewer','plotly','geojsonio','shinyWidgets','shinyjs','shinyBS','here','readxl','tidyr','dplyr'))
+install.packages(c('rsconnect','shiny','bslib','shinydashboard','ggplot2','dplyr','tidyr','leaflet','shinythemes','leaflegend','ggplot2','tidyverse','ggforce','png','RCurl','jpeg','sf','magrittr','maps','reshape2','RColorBrewer','plotly','geojsonio','shinyWidgets','shinyjs','shinyBS','here','readxl','tidyr','dplyr','jsonlite'))
 ```
 
 If the package installation times out, adjust the timeout setting. For example, to increase the timeout from the default 60 seconds to 120 seconds:
