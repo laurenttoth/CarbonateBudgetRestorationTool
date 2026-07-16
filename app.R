@@ -61,7 +61,7 @@ sites <- sort(df$site_id)
 
 # Ingest user-input baseline cover data
 base_cover_df <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
-taxa <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Taxon list")
+taxa <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
 # Calculate reef accretion potential
@@ -95,9 +95,9 @@ sidebar <- dashboardSidebar(
     id = "nav",
     menuItem("Home", tabName = "home", icon = icon("map")),
     menuItem("Baseline Input", tabName = "baseline", icon = icon("pen-to-square")),
-    menuItem("Coral Cover & Bioerosion", tabName = "coralcover", icon = icon("chart-column")),
     menuItem("Restoration Planning", tabName = "restoration", icon = icon("seedling")),
     menuItem("Scenario Comparison", tabName = "scenarios", icon = icon("scale-balanced")),
+    menuItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column")),
     menuItem("About this Site", tabName = "about", icon = icon("circle-info"))
   )
 )
@@ -147,12 +147,29 @@ body <- dashboardBody(
             )
           )
         ),
+        # USGS & NOAA logos
         tags$div(
           style = "position: absolute; top: 90px; right: 10px;
                    z-index: 1000; display: flex; gap: 8px;",
 
           tags$img(src = "usgsLogo.png", style = "height: 60px;"),
           tags$img(src = "noaaLogo.png", style = "height: 60px;")
+        ),
+        # Point-size stepper overlaid on the map
+        tags$div(
+          style = "position: absolute; bottom: 100px; right: 10px;
+                   z-index: 1000; background: rgba(255,255,255,0.85);
+                   padding: 6px 12px; border-radius: 6px;",
+          tags$div(
+            style = "font-size: 13px; margin-bottom: 4px; color: #333;",
+            "Point size"
+          ),
+          tags$div(
+            style = "display: flex; align-items: center; gap: 8px;",
+            actionButton("point_size_down", "\u2212", class = "btn-sm"),
+            textOutput("point_size_label", inline = TRUE),
+            actionButton("point_size_up", "+", class = "btn-sm")
+          )
         )
       )
     ),
@@ -213,13 +230,13 @@ body <- dashboardBody(
       )
     ),
 
-    # Coral Cover & Bioerosion Tab ----
+    # Restoration Monitoring Tab ----
     # Filled in per commented guidance:
     #   Sidebar: upload coral cover, upload bioerosion, select site, download report
     #   Main:    baseline vs restored impact (cover/budget/accretion + summary),
     #            timeline of RAP over 10 yrs with SLR reference lines
     tabItem(
-      tabName = "coralcover",
+      tabName = "monitoring",
       fluidRow(
         # Sidebar (left)
         column(
@@ -546,6 +563,20 @@ server <- function(input, output, session) {
     reef_year(input$plot_date2)
   })
 
+  # Point size state, adjusted by the +/- stepper (clamped 2-15)
+  point_size <- reactiveVal(6)
+
+  observeEvent(input$point_size_up, {
+    point_size(min(point_size() + 1, 15))
+  })
+  observeEvent(input$point_size_down, {
+    point_size(max(point_size() - 1, 2))
+  })
+
+  output$point_size_label <- renderText({
+    point_size()
+  })
+
   filtered_df <- reactive({
     df |>
       filter(site_id == input$selected_site)
@@ -599,11 +630,12 @@ server <- function(input, output, session) {
   # Add NCRMP data to map ----
   observe({
     leafletProxy("mymap", data = df) |>
+      clearMarkers() |>
       addCircleMarkers(
         lng    = ~LON_DEGREES,
         lat    = ~LAT_DEGREES,
-        radius = 6,
-        weight = 2,
+        radius = point_size(),
+        weight = point_size() / 2,
         color  = "black",
         fillColor   = ~ num_pal(rap),
         fillOpacity = 0.8,
@@ -619,6 +651,10 @@ server <- function(input, output, session) {
           "<td style='padding: 2px 0;'>", YEAR, "</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current coral cover:</td>",
           "<td style='padding: 2px 0;'>", round(hardCoral_PrctCvr, 1), "%</td></tr>",
+          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Parrotfish bioerosion:</td>",
+          "<td style='padding: 2px 0;'>", round(parrotfish_G, 2), "kg CaCO\u00b3/yr</td></tr>",
+          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Gross bioerosion:</td>",
+          "<td style='padding: 2px 0;'>", round(grossE_G, 2), "kg CaCO\u00b3/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Reef accr. potential:</td>",
           "<td style='padding: 2px 0;'>", round(rap, 2), " mm/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current status:</td>",
@@ -655,9 +691,7 @@ server <- function(input, output, session) {
                 pull(site_id) |>
                 unique())
 
-    updateSelectInput(session, "selectReef2", selected = reef_name())
-
-    # Also sync the restoration-tab site picker to the clicked marker
+    # Also sync the restoration tab site picker to the clicked marker
     updatePickerInput(session, "selected_site", selected = reef_name())
   })
 
@@ -1651,7 +1685,7 @@ server <- function(input, output, session) {
   })
 
   ## ---------------------------------------------------------------------------
-  ## Coral Cover & Bioerosion tab (newly implemented) ----
+  ## Restoration Monitoring tab (newly implemented) ----
   ## ---------------------------------------------------------------------------
 
   # Helper: baseline metrics for a given NCRMP site row
@@ -1788,7 +1822,7 @@ server <- function(input, output, session) {
       theme(legend.position = "top")
   })
 
-  # Download report for the Coral Cover & Bioerosion tab
+  # Download report for the Restoration Monitoring tab
   output$cc_download_report <- downloadHandler(
     filename = function() {
       paste0("carbonate_report_", input$cc_selected_site, "_", Sys.Date(), ".csv")

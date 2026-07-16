@@ -20,6 +20,8 @@ options(timeout=120)
 
 ## Usage
 
+### Launching the app
+
 Open `app.R` in RStudio and run:
 
 ```r
@@ -37,6 +39,14 @@ source("path/to/launch_app_quiet.R")
 ```
 
 (Replace path/to/launch_app_quiet.R with the actual path to where launch_app_quiet.R is saved. Note that filepaths in R must use forward-slash ("/") or double-backslash ("\\\\") separators.)
+
+### Using the Interface
+
+NCRMP reef survey data from 2014-2024 is displayed on the map on the "Home" tab. Select a reef site and view its metadata by clicking on a point.
+
+Adjust point size with the +/- control on the bottom right of the map.
+
+Use the `☰` button in the header bar to show/hide the navigation sidebar. Click on the sidebar tabs to navigate between pages.
 
 ## Artificial Intelligence Disclosure
 
