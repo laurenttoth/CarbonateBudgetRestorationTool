@@ -8,6 +8,7 @@ library(rsconnect)
 library(shiny)
 library(bslib)
 library(shinydashboard)
+library(dashboardthemes) # (optional to use dark theme)
 library(ggplot2)
 library(dplyr)
 library(tidyr)
@@ -85,31 +86,6 @@ restoration_species_global <- c(
 header <- dashboardHeader(
   title = "Carbonate Budget Restoration Tool",
   titleWidth = 380
-  # Right-aligned logos + data caption, kept from the original navbar-custom block
-  # tags$li(
-  #   class = "dropdown",
-  #   tags$span(
-  #     style = "color: black; line-height: 50px; margin-right: 15px; font-size: 14px;
-  #              text-shadow: -1px -1px 0 black, 1px -1px 0 black,
-  #                           -1px 1px 0 black, 1px 1px 0 black;
-  #                           ",
-  #     "Displaying 2014-2024 NCRMP data"
-  #   )
-  # )
-  # tags$li(
-  #   class = "dropdown",
-  #   tags$a(
-  #     href = "#",
-  #     tags$img(src = "usgsLogo.png", style = "height: 16px; margin: 2px;")
-  #   )
-  # ),
-  # tags$li(
-  #   class = "dropdown",
-  #   tags$a(
-  #     href = "#",
-  #     tags$img(src = "noaaLogo.png", style = "height: 16px; margin: 2px;")
-  #   )
-  # )
 )
 
 ## Sidebar ----
@@ -126,19 +102,22 @@ sidebar <- dashboardSidebar(
   )
 )
 
+"#BFDADA"
+
 ## Body ----
 body <- dashboardBody(
   useShinyjs(),
+  # shinyDashboardThemes(theme = 'grey_dark'), # change dashboard theme (optional. reactive?)
 
   # Tag Setup ----
   tags$head(
     includeHTML(here("gtag.html")),
     includeCSS(here("styles.css")),
-    # Preserve the dark background used by the original setBackgroundColor()
+    # Preserve custom background color (optional)
     tags$style(HTML("
-      .content-wrapper, .right-side { background-color: #363737; }
+      .content-wrapper, .right-side { background-color: #BFDADA; }
       .custom-absolute-panel { z-index: 9999; }
-      .box { color: #000; }
+      /* .box { color: #000; } */
       /* Full-bleed map on the Home tab */
       .home-map-outer {
         position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -154,10 +133,26 @@ body <- dashboardBody(
       div(
         class = "home-map-outer",
         leafletOutput("mymap", width = "100%", height = "100%"),
+        # Right-aligned logos + data caption, kept from the original navbar-custom block
         # Logos overlaid on the top-right corner of the map
         tags$div(
-          style = "position: absolute; top: 70px; right: 10px;
+          style = "position: absolute; top: 45px; right: 10px;
+          z-index: 1000; display: flex; gap: 8px;",
+          tags$li(
+            class = "dropdown",
+            tags$span(
+              style = "color: white; line-height: 50px; margin-right: 15px; font-size: 18px;
+                       text-shadow: -1px -1px 0 black, 1px -1px 0 black,
+                                    -1px 1px 0 black, 1px 1px 0 black;
+                                    ",
+              "Displaying 2014-2024 NCRMP data"
+            )
+          )
+        ),
+        tags$div(
+          style = "position: absolute; top: 90px; right: 10px;
                    z-index: 1000; display: flex; gap: 8px;",
+
           tags$img(src = "usgsLogo.png", style = "height: 60px;"),
           tags$img(src = "noaaLogo.png", style = "height: 60px;")
         )
@@ -429,8 +424,8 @@ body <- dashboardBody(
         # Main content (right)
         column(
           width = 9,
-          tags$h3("Year 10 Outcome Summary",
-            style = "text-align:center; color:white; font-weight:bold;"
+          tags$h2("Outcome Summary: Year 10",
+            style = "text-align:center; color:black; font-weight:bold;"
           ),
           fluidRow(
             column(
