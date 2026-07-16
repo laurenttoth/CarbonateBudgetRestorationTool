@@ -40,27 +40,9 @@ options(shiny.autoreload = TRUE)
 cv_dates <- as.data.frame(c(2019:2100))
 colnames(cv_dates) <- c("year")
 
-# # call data for world map
-# world_data <- ggplot2::map_data("world")
-# worldcountry <- fortify(world_data)
-
-# # import Cheeca peojections and simulated data
-# data <- read.csv(here("data", "shiny_all_fake_projections.csv"))
-
-# # import relative contribution data
-# rel <- read.csv(here("data", "relative.csv"))
-
-# # import coral cover data
-# coral_cover_s <- read.csv(here("data", "coralcoverS.csv"))
-
-# # import SLR data for all sites
-# reef_data <- read.csv(here("data", "SLR_all_sites.csv"))
-
-# # import SLR data for Cheeca and the image output
-# slr_2019_2100 <- read.csv(here("data", "SLR_2019_2100.csv"))
-
-# # High resolution from cm to mm
-# slr_2019_2100$hr_cesmmm <- slr_2019_2100$HR_CESM * 10
+# call data for world map
+world_data <- ggplot2::map_data("world")
+worldcountry <- fortify(world_data)
 
 # # Mote sites
 # triangle_sites <- read.csv(here("data", "Mote_sites.csv"))
@@ -68,41 +50,6 @@ mote_cover <- read.csv(here("data", "Mote_cover.csv"))
 travis_rates <- read.csv(here("data", "Travis_rates.csv"))
 bioerosion <- read.csv(here("data", "Bioerosion.csv"))
 
-# # merge all data frame
-# data <- merge(data, coral_cover_s, by = c("Time", "variable", "Scenario"))
-# data <- merge(data, slr_2019_2100, by = c("Time"))
-# data <- merge(data, rel, by = c("Time", "variable", "Scenario"))
-
-# # name columns
-# scenario <- data$Scenario
-# adaptation <- data$variable
-# num <- data$Time
-# ncc <- data$ncc # net calcium carbonate
-# sdncc <- data$sdncc
-# rap <- data$RAP # reef accretion potential
-# sdrap <- data$sdRAP
-# ah <- data$AH
-# sdah <- data$sdAH
-# site <- data$Site
-# lat <- data$lat
-# long <- data$long
-# coralcover <- data$CoralCover
-# slr <- data$SLR_HR
-# accslr <- data$hr_cesmmm
-# ah10 <- data$AH + 15
-# coral <- data$perHC
-# macro <- data$perBBS
-# micro <- data$permicro
-# cca <- data$perSCP
-
-# # recreate data_frame
-# df <- data.frame(
-#   num, ncc, sdncc, rap, sdrap, ah, sdah, coralcover, adaptation, scenario,
-#   site, lat, long, slr, accslr, ah10, coral, macro, micro, cca
-# )
-
-
-# Re-writing data imports:
 # Ingest NCRMP carbonate budget data
 df <- read.csv(here("data", "NCRMP_CarbonateBudgets_2014_to_2024.csv"))
 
@@ -122,9 +69,7 @@ df$rap <- df$net_G / 2.9 / (1 - 0.6265)
 # Shiny User Interface ----
 ui <- bootstrapPage(
   title = "Carbonate Budget Restoration Tool",
-  useShinyjs(),
-  # use this in non shinydashboard app
-  setBackgroundColor(color = "#f8fffb"),
+  setBackgroundColor(color = "#363737"),
   useShinyjs(),
 
   # Tag Setup ----
@@ -157,7 +102,7 @@ ui <- bootstrapPage(
 
     tags$div(
       class = "navbar-custom",
-      HTML('<h3 style="
+      HTML('<h4 style="
                 float: right;
                 margin: 5px auto;
                 height: 45px;
@@ -170,7 +115,7 @@ ui <- bootstrapPage(
                   1px -1px 0 black,
                   -1px 1px 0 black,
                   1px 1px 0 black;">
-              Displaying 2014-2024 NCRMP data</h3> 
+              Displaying 2014-2024 NCRMP data</h4> 
             <img src="noaaLogo.png" style="
               float: right;
               margin: 0px auto;
@@ -207,403 +152,91 @@ ui <- bootstrapPage(
         tags$head(includeCSS(here("styles.css"))),
         leafletOutput("mymap", width = "100%", height = "100%"),
         tags$h4("In construction"),
-
-
-        # absolutePanel(
-        #   id = "controls", class = "panel panel-default",
-        #   top = 50, right = 300, width = 365, fixed = FALSE,
-        #   draggable = FALSE, height = "auto",
-
-        #   span(tags$i(h2("LOOK INTO THE FUTURE")), style = "color:#045a8d"),
-        #   sliderTextInput("plot_date",
-        #     label = h4("Choose your year"),
-        #     choices = seq(from = min(cv_dates$year), to = max(cv_dates$year), by = 1),
-        #     selected = min(cv_dates$year),
-        #     grid = FALSE,
-        #     animate = animationOptions(interval = 2000, loop = FALSE)
-        #   ),
-
-
-        #   actionButton("more_info", "More info", icon = icon("info")),
-        #   hidden(div(
-        #     id = "more_info_text", class = "hidden-text", "Carbonate budget projections are used as a metric for reef persistence. A carbonate budget
-        #                                                    represents the summation of all processes contributing to calcification and bioerosion on a reef.
-        #                                                    When the budget is positive, building capacity outweighs loss due to biological, chemical and physical erosion,
-        #                                                    the reef is growing. If negative, the reef is in a state of net loss, the reef is flattening. We project these rates
-        #                                                    into the future using site-specific climatic projections and species-specific relationships between 
-        #                                                    rates of calcification and erosion and ocean acidification and temperature.",
-        #     style = "color:#045a8d"
-        #   ))
-        # ),
-
-
-        # absolutePanel(
-        #   id = "controls", class = "panel panel-default",
-        #   top = 50, right = 10, width = 270, fixed = FALSE,
-        #   draggable = TRUE, height = "auto",
-
-        #   span(tags$i(h2("LETS'S GO GREEN")), style = "color:#045a8d"),
-
-
-        #   sliderInput("home_adaptation",
-        #     label = h5("Change bleaching tolerance (in \u00B0C)"),
-        #     min = 0, max = 2, step = 0.25, value = 0
-        #   ),
-
-
-        #   radioButtons("home_scenario",
-        #     label = h4("Choose emission scenario"),
-        #     choices = list("Reduce gas emission" = "SSP2_4.5", "Business as usual" = "SSP5_8.5"),
-        #     selected = "SSP5_8.5",
-        #     inline = FALSE,
-        #     width = "100%"
-        #   ),
-        #   actionButton("more_info2", "More info", icon = icon("info")),
-        #   hidden(div(
-        #     id = "more_info2_text", class = "hidden-text", "The two scenarios presented here refer to SSP5-8.5 
-        #                                                     (Buisness as usual) which is the pathway that represents current 
-        #                                                     rates of emissions and emissions growth. It is considered a
-        #                                                     “worst case scenario” and it assumes there is no climate policy or 
-        #                                                     that policy is not effective. SSP2-4.5 (reduced emissions) is a highly
-        #                                                     ambitious but still possible scenario. It is considered a “middle of the road” 
-        #                                                     pathway whith intermediate CO2 emissions peaking in 2040 and gradually declining towards 2100.",
-        #     style = "color:#045a8d"
-        #   ))
-        # )
       )
     ),
 
-    # Reef Characteristics Tab ----
+    # Baseline Input Tab ----
     tabPanel(
-      "Reef Characteristics",
-      value = "reef",
-      tags$style("
-        #controls {
-          background-color: white;
-          opacity: 0.6;
-        }
-        #controls:hover{
-          opacity: 1;
-        }
-               "),
-      tags$style(HTML("
-        .well {
-          background-color: #141c44; /* Pink background color */
-          color: white; /* Blue text color */
-        }
-
-      ")),
-
-      # Sidebar layout: Reef Selection ----
-      sidebarLayout(
-        sidebarPanel(
+      "Baseline Input",
+      fluidRow(
+        column(
           width = 3,
-          pickerInput("selectReef",
-            "Select Your Reef",
-            label = tags$span(style = "font-size: 20px;
-                                       color: #00CC99;
-                                       font-weight: bold;",
-                                    "Select Your Reef"),
-            choices = sites),
-          br(),
-          tags$style(HTML("#chosenReef {
-          font-size: 18px; /* Adjust the font size as needed */
-              color: white;     /* Set text color to green */
-        }
-      ")),
-          textOutput("chosenReef"),
-          # imageOutput("photo", width = "100%", height = "100%"),
-          sliderTextInput("plot_date2",
-            selected = min(cv_dates$year),
-            label = h4("Look into the future"),
-            choices = seq(from = min(cv_dates$year), to = max(cv_dates$year), by = 1),
-            grid = FALSE,
-            animate = animationOptions(interval = 3000, loop = FALSE)
-          ),
-          # radioButtons("reef_scenario",
-          #   label = h4("Let's go green"),
-          #   choices = list("Reduce gas emissions" = "SSP2_4.5",
-          #                  "Business as usual" = "SSP5_8.5"),
-          #   selected = "SSP5_8.5",
-          #   inline = FALSE,
-          #   width = "100%"
-          # )
+          shinydashboard::box(
+            title = "Baseline cover",
+            width = 12, status = "primary", solidHeader = TRUE,
+
+            # Site area and habitat
+            numericInput(
+              "site_area_m2",
+              label = "Site area (m\u00b2)",
+              value = NA, min = 0, step = 1
+            ),
+            selectInput(
+              "habitat_choice",
+              label = "Habitat",
+              choices = c("\u2014 Select habitat \u2014" = "", "Inshore", "Offshore"),
+              selected = ""
+            ),
+
+            # Existing species selector + dynamic inputs
+            selectizeInput(
+              "baseline_species",
+              "select your species:",
+              choices = sort(unique(taxa)), # assumes available in global
+              multiple = TRUE,
+              options = list(maxItems = 12, placeholder = "Select species...")
+            ),
+            uiOutput("baseline_cover_inputs")
+          )
         ),
-
-        # Reef Characteristics: Output illustrations ----
-        fluidRow(
-          column(
-            3,
-            valueBoxOutput("stateBox", width = NULL),
-            textOutput("SLRmetrics") |>
-              tagAppendAttributes(style = "text-align:center;font-weight:bold"),
-            imageOutput("myImageSLR"),
-          ),
-          column(
-            3,
-            box(
-              width = NULL, align = "center", collapsible = FALSE, title = tagList(
-                div("Construction vs. Erosion",
-                    style = "font-size: 24px;
-                             font-weight: bold;
-                             margin-bottom: 10px;"),
-                div("Percentage contribution of constructional forces (coral and calcifying algae) and erosional processes (micro- and macro-erosion)",
-                    style = "font-size: 1vw;
-                             color: gray;")
-              ), background = "navy", solidHeader = FALSE,
-              collapsed = FALSE, imageOutput("myImage", width = "22vw", height = "auto")
-            ),
-            box(
-              width = NULL, title = tagList(
-                div("Sea level rise projections", style = "font-size: 24px; font-weight: bold;")
-              ), collapsible = FALSE, background = "navy",
-              collapsed = FALSE,
-              plotOutput("slr_curve", height = "200px", width = "100%")
-            ),
-          ),
-          column(
-            2,
-            valueBoxOutput("coverBox", width = NULL),
-            valueBoxOutput("carbonateBox", width = NULL),
-            valueBoxOutput("rapBox", width = NULL),
-            valueBoxOutput("slrBox", width = NULL)
-          )
-        )
-      )
-    ),
-
-    # Restoration & Adaptation Tab ----
-    tabPanel(
-      "Restoration & Adaptation",
-      value = "reef2",
-      tags$style("
-        #controls {
-          background-color: white;
-          opacity: 0.6;
-        }
-        #controls:hover{
-          opacity: 1;
-        }
-               "),
-      tags$style(HTML("
-        .well {
-          background-color: #141c44; /* Pink background color */
-          color: white; /* Blue text color */
-        }
-      ")),
-      sidebarLayout(
-        sidebarPanel(
+        column(
           width = 3,
-
-
-          pickerInput("selectReef2",
-            "Select Your Reef",
-            label = tags$span(style = "font-size: 20px; color: #00CC99; font-weight: bold;", "Select Your Reef"),
-            choices = sites),
-          br(),
-          tags$style(HTML("#chosenReef2 {
-          font-size: 18px; /* Adjust the font size as needed */
-        }
-      ")),
-          textOutput("chosenReef2"),
-          # imageOutput("photo2", width = "100%", height = "100%"),
-          sliderTextInput("plot_date3",
-            selected = min(cv_dates$year),
-            label = h4("Look into the future"),
-            choices = seq(from = min(cv_dates$year), to = max(cv_dates$year), by = 1),
-            grid = FALSE,
-            animate = animationOptions(interval = 3000, loop = FALSE)
-          ),
-          # radioButtons("reef_scenario2",
-          #   label = h4("Let's go green"),
-          #   choices = list("Reduce gas emissions" = "SSP2_4.5", "Business as usual" = "SSP5_8.5"),
-          #   selected = "SSP5_8.5",
-          #   inline = FALSE,
-          #   width = "100%"
-          # )
-        ), mainPanel(
-          box(
-            div("RESTORATION", style = "text-align: center;font-size: 24px; font-weight: bold;"),
-            solidHeader = FALSE,
-            div(h2("Plant corals over the next 20 years to increase percentage coral cover at your site", style = "text-align: center;font-size: 20px;font-weight: bold;color: #337ab7;")),
-            width = 8, # Full width of the page (12 out of 12 columns)
-            height = "auto",
-
-            # Use fluidRow to arrange the three images and sliders in a row
-            fluidRow(
-              # First Image and Slider
-              column(
-                4,
-                div(
-                  style = "text-align: center;",
-                  tags$h4("Branching")
-                ),
-                div(
-                  style = "text-align: center;",
-                  tags$img(src = "images/structure.png", height = "auto", width = "67%")
-                ),
-                div(
-                  style = "display: flex; justify-content: flex-end;",
-                  sliderTextInput(
-                    inputId = "slider1",
-                    label = NULL,
-                    choices = c(0, 1, 3, 7, 10, 15, 20),
-                    grid = TRUE,
-                    selected = 0,
-                    post = "%",
-                    width = "80%"
-                  )
-                ),
-                div(
-                  style = "text-align: center;",
-                  actionButton("Branching_info", "More info", icon = icon("info"), style = " color: white; border: none;"),
-                  hidden(div(
-                    id = "Branching_info_text", class = "hidden-text", "Branching and plating corals grow rapidly, forming large,
-                    tree-like colonies that provide structural complexity, effectively shading out competitors for light. These 
-                    corals are highly susceptible to breakage during storms and suffer high mortality rates following temperature
-                    anomalies. This sensitivity means they can only be dominant in ideal environments.",
-                    style = "color:#045a8d"
-                  ))
-                )
-              ),
-
-              # Second Image and Slider
-              column(
-                4,
-                div(
-                  style = "text-align: center;",
-                  tags$h4("Builders")
-                ),
-                div(
-                  style = "text-align:  center;",
-                  tags$img(src = "images/builder.png", height = "auto", width = "70%")
-                ),
-                div(
-                  style = "display: flex; justify-content: flex-end;",
-                  sliderTextInput(
-                    inputId = "slider2",
-                    label = NULL,
-                    choices = c(0, 1, 3, 7, 10, 15, 20),
-                    grid = TRUE,
-                    selected = 0,
-                    post = "%",
-                    width = "80%",
-                  )
-                ),
-                div(
-                  style = "text-align: center;",
-                  actionButton("Builders_info", "More info", icon = icon("info"), style = "color: white; border: none;"),
-                  hidden(div(
-                    id = "Builders_info_text", class = "hidden-text", "Domed colonies with moderate growth rates that can reach large colony sizes.
-                                This group includes corals such as Orbicella spp., Montastrea cavernosa and brain corals. These reef builders represent a generalist stress tolerant
-                                           life-history strategy that can do well in habitats where competition is limited by low levels of stress.",
-                    style = "color:#045a8d"
-                  ))
-                )
-              ),
-
-              # Third Image and Slider
-              column(
-                4,
-                div(
-                  style = "text-align: center;",
-                  tags$h4("Weedy")
-                ),
-                div(
-                  style = "text-align: center;",
-                  tags$img(src = "images/weedy.png", height = "auto", width = "60%")
-                ),
-                div(
-                  style = "display: flex; justify-content: flex-end;",
-                  sliderTextInput(
-                    inputId = "slider3",
-                    label = NULL,
-                    choices = c(0, 1, 3, 7, 10, 15, 20),
-                    grid = TRUE,
-                    selected = 0,
-                    post = "%",
-                    width = "80%"
-                  )
-                ),
-                div(
-                  style = "text-align: center;",
-                  actionButton("Weedy_info", "More info", icon = icon("info"), style = "color: white; border: none;"),
-                  hidden(div(
-                    id = "Weedy_info_text", class = "hidden-text", "Small corals with brooding reproduction, fast growth rates, high population turnover
-                            that can opportunistically colonise recently disturbed habitats. \u2018Weedy\u2019 species include Porites astreoides and Siderastrea spp.
-                                       are more likely to be \u2018winners\u2019 and persist in unfavourable and disturbed environments.",
-                    style = "color:#045a8d"
-                  ))
-                )
-              )
-            )
-          ),
-          box(
-            div(
-              style = "text-align: center;",
-              div("ADAPTATION", style = "font-size: 24px; font-weight: bold;")
-            ),
-            div(
-              style = "text-align: center;",
-              tags$img(src = "images/adapted3.png", height = "auto", width = "20%"),
-              tags$img(src = "images/sun.png", height = "auto", width = "45%")
-            ),
-            solidHeader = FALSE,
-            width = 4, # Full width of the page (12 out of 12 columns)
-            height = "auto",
-
-            # Use fluidRow to arrange the three images and sliders in a row
-            fluidRow(
-              # First Image and Slider
-              column(
-                12,
-                div(
-                  style = "text-align: center;",
-                  h2("Increase bleaching tolerance of all corals", style = "font-size: 20px; font-weight: bold; color: #337ab7;")
-                ),
-                sliderInput("home_adaptation2",
-                  label = NULL, post = "\u00B0C",
-                  min = 0, max = 2, step = 0.25, value = 0
-                )
-              )
-            ),
-            div(
-              style = "text-align: center;",
-              actionButton("Adaptation_info", "More info", icon = icon("info"), style = "color: white; border: none;"),
-              hidden(div(
-                id = "Adaptation_info_text", class = "hidden-text", "To explore the potential effects of coral thermal adaptation on reef
-                              persistence, the bleaching threshold of all corals is increased up to 2\u00B0C by increments of 0.25\u00B0C.
-                              By adding adaptation to your scenario, bleaching is delayed in time.   ",
-                style = "color:#045a8d"
-              ))
-            )
-          ),
-          fluidRow(
-            tabBox(
-              id = "tabset1", width = 5,
-              tabPanel("Vertical Growth", plotOutput("rapPlot", width = "auto", height = "300px")),
-              tabPanel("with Sea Level Rise", plotOutput("wSLRPlot", width = "auto", height = "300px"))
-            ),
-            column(
-              6,
-              valueBoxOutput("restoredCoral", width = 5)
-            ),
-            column(
-              6,
-              valueBoxOutput("x_value_at_y0", width = 5)
-            ),
-            column(
-              6,
-              valueBoxOutput("withSLR", width = 5)
-            )
+          shinydashboard::box(
+            title = "Restoration mix",
+            width = 12, status = "success", solidHeader = TRUE,
+            div(tags$strong("Set target restoration cover (%) for each species:")),
+            uiOutput("restoration_sliders")
           )
+        ),
+        column(
+          width = 2,
+          valueBoxOutput("baseline_cover_box", width = NULL),
+          valueBoxOutput("baseline_budget", width = NULL)
+        ),
+        column(
+          width = 2,
+          valueBoxOutput("restored_cover_box", width = NULL),
+          valueBoxOutput("restored_budget", width = NULL)
         )
       )
     ),
-    # Planning Restoration Tab ----
+
+    # Coral Cover & Bioerosion Tab ----
     tabPanel(
-      "Mote Sites Restoration",
-      value = "Planning Restoration",
+      "Coral Cover & Bioerosion",
+      # Coral cover & bioerosion inputs
+      # Contents:
+        # Sidebar:
+          # Upload coral cover data: Push button
+          # Upload bioerosion data: Push button
+          # Select site: Dropdown (reactive to map selection)
+          # Download report: Push button
+        # Main content:
+          # Vertical layout:
+            # Baseline vs restored impact
+              # Horizontal layout
+                # Baseline cover / budget / accretion
+                # Restored cover / budget / accretion
+                # Impact summary: text box
+            # Timeline:
+              # Reef accretion potential (mm/yr) over 10 years
+                # Horizontal lines for current SLR, future SLR, and geological baseline RAP
+    ),
+
+    # Restoration Planning Tab ----
+    tabPanel(
+      "Restoration Planning",
+      value = "Restoration Planning",
       sidebarLayout(
 
         # sidebar panel (left column)
@@ -669,7 +302,6 @@ ui <- bootstrapPage(
             column(
               width = 4,
 
-              # Title like Baseline and Restored
               tags$h4("Sea level rise and reef growth",
                 style = "text-align:center; font-size: 1.5vw;"
               ),
@@ -712,74 +344,25 @@ ui <- bootstrapPage(
         )
       )
     ),
-    # Planning Restoration Tab 2 ----
-    # --- UI ---
+
+    # Scenario Comparison Tab ----
     tabPanel(
-      "Planning Restoration",
-      fluidRow(
-        column(
-          width = 3,
-          shinydashboard::box(
-            title = "Baseline cover",
-            width = 12, status = "primary", solidHeader = TRUE,
-
-            # NEW: site area and habitat
-            numericInput(
-              "site_area_m2",
-              label = "Site area (m\u00b2)",
-              value = NA, min = 0, step = 1
-            ),
-            selectInput(
-              "habitat_choice",
-              label = "Habitat",
-              choices = c("\u2014 Select habitat \u2014" = "", "Inshore", "Offshore"),
-              selected = ""
-            ),
-
-            # Existing species selector + dynamic inputs
-            selectizeInput(
-              "baseline_species",
-              "select your species:",
-              choices = sort(unique(taxa)), # assumes available in global
-              multiple = TRUE,
-              options = list(maxItems = 12, placeholder = "Select species...")
-            ),
-            uiOutput("baseline_cover_inputs")
-          )
-        ),
-        column(
-          width = 3,
-          shinydashboard::box(
-            title = "Restoration mix",
-            width = 12, status = "success", solidHeader = TRUE,
-            div(tags$strong("Set target restoration cover (%) for each species:")),
-            uiOutput("restoration_sliders")
-          )
-        ),
-        column(
-          width = 2,
-          valueBoxOutput("baseline_cover_box", width = NULL),
-          valueBoxOutput("baseline_budget", width = NULL)
-        ),
-        column(
-          width = 2,
-          valueBoxOutput("restored_cover_box", width = NULL),
-          valueBoxOutput("restored_budget", width = NULL)
-        )
-      )
-    ),
-
-    # Data Tab ----
-    tabPanel(
-      "Data",
-      tags$h4("Data not availabe at this time"),
-      numericInput("maxrows", "Rows to show", 25),
-      verbatimTextOutput("rawtable"),
-      downloadButton("downloadCsv", "Download as CSV"), tags$br(), tags$br(),
-      "Projections for Cheeca Rocks can be found ", tags$a(
-        href = "https://www.nature.com/articles/s41598-022-26930-4",
-        "here."
-      )
+      "Scenario Comparison",
+      # Content for the scenario comparison tab will go here
+      # Contents:
+        # Sidebar:
+        # Project Name: single-selection checkable list
+        # Scenario: multiple-selection checkable list. Pull from local .json files.
+          # Each scenario added to output graphs graphs
+        # Download report: push button to generate a downloadable .csv
+      # Main content:
+        # Vertical layout:
+          # Layout Title: Year 10 Outcome Summary
+          # Output graphs:
+            # Horizontal layout: Bar graphs:
+              # (bar, left) Project cost
+              # (bar, right) ROI
+            # (scatter, bottom) Carbonate budget: RAP & Elev gain
     ),
 
     # "About this Site" Tab ----
@@ -828,7 +411,6 @@ at <- c(-8, -6, -4, -2, 0, 2, 4, 6, 8)
 colors = c("darkred", "red", "orange", "yellow", "white", "#0099FF", "#0033FF", "darkblue", "#000066")
 num_pal <- colorNumeric(colors, domain = at)
 num_pal_rev <- colorNumeric(colors, domain = at, reverse = TRUE)
-# num_pal <- colorBin("RdYlBu",  bins = at, domain = at)
 
 # make data frame reactive
 server <- function(input, output, session) {
@@ -836,7 +418,6 @@ server <- function(input, output, session) {
   reef_name       <- reactiveVal()
   reef_year       <- reactiveVal(2019)
   # reef_adaptation <- reactiveVal(0)
-  reef_scenario   <- reactiveVal("SSP5_8.5")
   initial_budget  <- reactiveVal(NULL)
 
   slider_ids <- reactive({
@@ -851,57 +432,25 @@ server <- function(input, output, session) {
   })
 
 
-  # update the reef panel
-  # output$chosenReef <- renderText({
-  #   paste(
-  #     input$selectReef, "reef looks like this:"
-  #   )
-  # })
-  # output$chosenReef2 <- renderText({
-  #   paste(
-  #     input$selectReef2, "reef looks like this:"
-  #   )
-  # })
 
-  # change inputSlider from 2nd tab when slider from 1st tab is changed
-
-  # observeEvent(input$home_adaptation, {
-  #   reef_adaptation(input$home_adaptation)
-  #   updateSliderInput(session, "reef_adaptation", value = reef_adaptation())
-  # })
   observeEvent(input$plot_date, {
     reef_year(input$plot_date)
     updateSliderTextInput(session, "plot_date2", selected = reef_year())
   })
-  # observeEvent(input$home_scenario, {
-  #   reef_scenario(input$home_scenario)
-  #   updateRadioButtons(session, "reef_scenario", selected = reef_scenario())
-  # })
+
   # Observe changes in the second slider and update the first slider
   observeEvent(input$plot_date2, {
     reef_year(input$plot_date2)
 
     updateSliderTextInput(session, "plot_date", selected = reef_year())
   })
-  # Observe changes in the second set of radio buttons and update the first set
-  # observeEvent(input$reef_scenario, {
-  #   reef_scenario(input$reef_scenario) # Update the state with the second set's value
-  #   updateRadioButtons(session, "home_scenario", selected = reef_scenario())
-  # })
-  # input slider from second tab changes Circle shematic
-  # observeEvent(input$reef_adaptation, {
-  #   reef_adaptation(input$reef_adaptation)
-  #   #  updateSliderInput(session, "reef_adaptation", value=reef_adaptation())
-  # })
+
   observeEvent(input$plot_date2, {
     reef_year(input$plot_date2)
 
     # updateSliderTextInput(session, "plot_date2", selected=reef_year())
   })
-  # observeEvent(input$reef_scenario, {
-  #   reef_scenario(input$reef_scenario)
-  #   #  updateRadioButtons(session, "reef_scenario", selected=reef_scenario())
-  # })
+
 
 
   filtered_df <- reactive({
@@ -913,10 +462,6 @@ server <- function(input, output, session) {
   })
 
 
-  # df$reef_depth <- ah10 - accslr
-
-  # df$rd_scaled <- df$reef_depth / 100
-  # df$rheight <- df$ah10 / 100
 
   # Initialize leaflet map ----
   output$mymap <- renderLeaflet({
@@ -925,7 +470,8 @@ server <- function(input, output, session) {
         options = providerTileOptions(attribution = 'Map data &copy; <a href="https://www.esri.com/">Esri</a>')
       ) |>
       setView(lng = -80.6097, lat = 25, zoom = 8) |>
-      # Completely static legend for Carbonate budget
+
+      # Static legend for carbonate budget
       addLegendNumeric(
         pal = num_pal_rev,
         title = HTML("Reef<br/>accretion<br/>potential<br/>(mm/yr)"),
@@ -936,31 +482,13 @@ server <- function(input, output, session) {
         position = "bottomleft"
       ) |>
 
-      # Static elements like the title and reef status legend
+      # Static legend for reef status
       addLegend("bottomleft",
         colors  = c("#0099FF", "#FFFF99", "#FF6600"),
         labels  = c("Growing", "Stasis", "Eroding"),
         title   = HTML("<span style='font-size: 16px;'>Reef Status</span>"),
         opacity = 1
       ) |>
-
-      # Static control: White text title - "CARBONATE BUDGET RESTORATION TOOL"
-      # We don't need this. Title is in the ribbon bar.
-      # addControl(
-      #   html = "<div 
-      #             style='
-      #               font-size: 42px;
-      #               font-weight: bold;
-      #               color:white;
-      #               text-shadow:
-      #                 -1px -1px 0 black,
-      #                 1px -1px 0 black,
-      #                 -1px 1px 0 black,
-      #                 1px 1px 0 black;'>
-      #             CARBONATE BUDGET <br>RESTORATION TOOL</div>",
-      #   position = "topleft",
-      #   className = "map-title"
-      # ) |>
 
       # Static control: White text instruction
       addControl(
@@ -980,25 +508,6 @@ server <- function(input, output, session) {
       )
   })
 
-  # Dynamic map update without touching the legend or static controls
-  # observe({
-  #   leafletProxy("mymap", data = filtered_df()) |>
-  #     clearShapes() |> # Clear previous circles
-  #     addCircles(
-  #       lng = ~long, lat = ~lat, weight = 40,
-  #       popup = ~ paste(
-  #         "<a style='cursor: pointer' onclick='Shiny.onInputChange(\"linkClickReef\", Math.random())'>",
-  #         "<span style='font-size: 20px;'>", site, "</span>",
-  #         "</a>",
-  #         "<br/><span style='font-size: 14px;'>Coral cover: ", round(coralcover, 1), "%</span>",
-  #         "<br/><span style='font-size: 14px;'>Carbonate budget: ", round(ncc, 1), " kg/m", tags$sup("2"), "/year</span>"
-  #       ),
-  #       radius = 1,
-  #       color = ~ num_pal(ncc), opacity = 0.8
-  #     )
-
-  #   # No need to clear or re-add the static legend
-  # })
 
   # Add NCRMP data to map ----
   observe({
@@ -1093,7 +602,7 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$linkClickPlanning, {
-    updateTabsetPanel(session, inputId = "nav", selected = "Planning Restoration")
+    updateTabsetPanel(session, inputId = "nav", selected = "Restoration Planning")
   })
   ## Sliders ----
 
@@ -1190,7 +699,7 @@ server <- function(input, output, session) {
     }
   })
 
-  ## Planning Restoration ----
+  ## Restoration Planning ----
   observeEvent(input$Restoration_info, {
     toggle("Restoration_info_text")
   })
@@ -1845,14 +1354,6 @@ server <- function(input, output, session) {
     )
   })
 
-  ## Aliiiiiiiiiiiiiiiiiiiiiiiiiiiiiice ----
-  # observeEvent(input$bt2, {
-  #   updateBox("box2", action = "toggle")
-  # })
-
-
-
-
   output$coverBox <- renderValueBox({
     dat <- df |> filter(site_id == reef_name())
     valueBox(
@@ -1884,19 +1385,6 @@ server <- function(input, output, session) {
     )
   })
 
-  # output$slrBox <- renderValueBox({
-  #   dat <- df |> filter(site_id == reef_name())
-  #   valueBox(
-  #     value = tags$p(paste0(round(dat$SLR, 1), "mm/year"), style = "font-size: 2vw;"),
-  #     "Sea level rise",
-  #     icon = icon("house-flood-water"),
-  #     color = "teal",
-  #   )
-  # })
-
-
-
-
   # update the reef panel
   output$State <- renderText({
     dat <- df |> filter(site_id == reef_name())
@@ -1927,45 +1415,8 @@ server <- function(input, output, session) {
       round(dat$hardCoral_PrctCvr), "%."
     )
   })
-  # output$seaL <- renderText({
-  #   dat <- df |> filter(site_id == reef_name())
-
-  #   paste(
-  #     "Sea level is increasing by",
-  #     round(dat$SLR, 1), "mm/year."
-  #   )
-  # })
-
-
-  # filtered_slr <- reactive({
-  #   reef_data |> filter(site_id == input$selectReef)
-  # })
-  # output$slr_curve <- renderPlot({
-  #   ggplot(filtered_slr(), aes(x = Time, y = cumsum(HR / 10))) + # put a cumsum wrapper around y
-  #     geom_line(colour = "#00d4d4") +
-  #     geom_point(aes(size = ifelse(Time == input$plot_date2, 6, 3)),
-  #       alpha = 0.8, colour = "#00d4d4"
-  #     ) +
-  #     ylab("Sea level rise (mm)") +
-  #     xlab("Year") +
-  #     theme_bw() +
-  #     theme(
-  #       legend.title = element_blank(), legend.position = "", plot.title = element_text(size = 10),
-  #       plot.margin = margin(5, 12, 5, 5),
-  #       axis.text = element_text(size = 12, color = "white"), # Set axis text color to white
-  #       axis.title = element_text(size = 14, color = "white"),
-  #       axis.line = element_line(color = "white", linewidth = 1),
-  #       panel.grid = element_blank(), # Remove major grid lines
-  #       panel.border = element_blank(),
-  #       panel.background = element_rect(fill = "#141c44", linewidth = 0), # Set panel background to transparent
-  #       plot.background = element_rect(fill = "#141c44", linewidth = 0)
-  #     )
-  # })
-
-  # ggplot(filtered_slr(), aes(x = Time, y = cumsum(HR/10)))
 
   ## Schematic: Accretion vs. SLR (Box2) ----
-
   output$SLRmetrics <- renderText({
     reef_depth <- df |>
       filter(site_id == reef_name()) |>
@@ -1988,179 +1439,7 @@ server <- function(input, output, session) {
 
 
 
-  # output$myImageSLR <- renderImage(
-  #   {
-  #     path <- here("www", "images", "silhouette2.png")
-  #     img <- readPNG(path, native = TRUE)
-
-  #     # generate plot
-  #     dat <- df |> filter(site_id == reef_name())
-
-  #     if (dat$AVG_DEPTH < 0) {
-  #       reef <- tibble(
-  #         deg = 0:360,
-  #         r = 3,
-  #         x = r * cos((deg * pi) / 180),
-  #         y = r * sin((deg * pi) / 180)
-  #       ) |>
-  #         filter(y <= dat$rd_scaled)
-
-  #       reef1 <- tibble(
-  #         deg = 0:360,
-  #         r = 3,
-  #         x1 = r * cos((deg * pi) / 180),
-  #         y1 = r * sin((deg * pi) / 180)
-  #       ) |>
-  #         filter(y1 >= (((dat$SLR - 0.4576675) / (3.284522 - 0.4576675)) + 1.5))
-
-
-
-  #       p1 <- ggplot() +
-  #         geom_circle(aes(
-  #           x0 = 0,
-  #           y0 = 0,
-  #           r = 3
-  #         ),
-  #         fill = "deepskyblue3", color = "white", # 5b8899#43accb
-  #         # linewidth = 2,
-  #         inherit.aes = FALSE
-  #         ) +
-  #         geom_ribbon(
-  #           data = reef,
-  #           aes(x, ymin = y, ymax = dat$rd_scaled),
-  #           fill = "black", color = "black", linewidth = 0.5
-  #         ) +
-  #         geom_ribbon(
-  #           data = reef1,
-  #           aes(x1, ymin = y1, ymax = (((dat$SLR - 0.4576675) / (3.284522 - 0.4576675)) + 1.5 + 0.03 * sin(10 * x1))),
-  #           fill = "aliceblue", color = "white", linewidth = 0.5
-  #         ) +
-  #         geom_segment(aes(x = -2.8, xend = 2.8, y = 0.95, yend = 0.95),
-  #           linetype = "dotted", linewidth = 0.8, color = "#2c383e"
-  #         ) +
-  #         annotation_raster(img,
-  #           xmin = -3.7, # Make it cover more area along x-axis
-  #           xmax = 3.8, # Same for xmax
-  #           ymin = dat$rd_scaled - 1.5, # Adjust ymin to make it larger vertically
-  #           ymax = dat$rd_scaled + 2.5
-  #         ) +
-  #         theme_void() +
-  #         # annotate("text", x = 0, y = 3.9,size=4, label = paste0("The natural wall of the reef is now \n",
-  #         #                                                  abs(round(dat$reef_depth)),
-  #         #                                                  " mm deeper compared to 2019.")) +
-  #         annotate("text", x = 2.3, y = 0.95, label = "reef height\n in 2019", size = 2.7, colour = "1d2529") +
-  #         geom_circle(aes(
-  #           x0 = 0,
-  #           y0 = 0,
-  #           r = 3
-  #         ),
-  #         color = "white",
-  #         #  linewidth = 2,
-  #         inherit.aes = FALSE
-  #         ) +
-  #         coord_fixed()
-
-
-  #       outfile1 <- tempfile(fileext = ".png")
-
-  #       # Generate the PNG
-  #       png(outfile1,
-  #         width = 300 * 8,
-  #         height = 300 * 8,
-  #         res = 72 * 8
-  #       )
-  #       print(p1)
-  #       dev.off()
-  #       list(
-  #         src = outfile1,
-  #         contentType = "image/png",
-  #         height = "auto",
-  #         width = "100%"
-  #       )
-  #     } else {
-  #       reef <- tibble(
-  #         deg = 0:360,
-  #         r = 3,
-  #         x = r * cos((deg * pi) / 180),
-  #         y = r * sin((deg * pi) / 180)
-  #       ) |>
-  #         filter(y >= dat$rd_scaled)
-
-  #       reef1 <- tibble(
-  #         deg = 0:360,
-  #         r = 3,
-  #         x1 = r * cos((deg * pi) / 180),
-  #         y1 = r * sin((deg * pi) / 180)
-  #       ) |>
-  #         filter(y1 >= (((dat$SLR - 0.4576675) / (3.284522 - 0.4576675)) + 1.5))
-
-  #       p2 <- ggplot() +
-  #         geom_circle(aes(
-  #           x0 = 0,
-  #           y0 = 0,
-  #           r = 3
-  #         ),
-  #         fill = "black", color = "white",
-  #         #  linewidth = 2,
-  #         inherit.aes = FALSE
-  #         ) +
-  #         geom_ribbon(
-  #           data = reef,
-  #           aes(x, ymin = dat$rd_scaled, ymax = y),
-  #           fill = "deepskyblue3", color = "white", linewidth = 0.5
-  #         ) + # 3ba3bf#43accb
-  #         geom_ribbon(
-  #           data = reef1,
-  #           aes(x1, ymin = (((dat$SLR - 0.4576675) / (3.284522 - 0.4576675)) + 1.5 + 0.03 * sin(10 * x1)), ymax = y1),
-  #           fill = "aliceblue", color = "white", linewidth = 0.5
-  #         ) +
-  #         geom_segment(aes(x = -2.8, xend = 2.8, y = 0.95, yend = 0.95),
-  #           linetype = "dotted", linewidth = 0.8, color = "#2c383e"
-  #         ) +
-  #         geom_segment(
-  #           data = reef, aes(x = -x, xend = x, y = dat$rd_scaled, yend = dat$rd_scaled),
-  #           linewidth = 0.8, color = "black"
-  #         ) +
-  #         annotate("text", x = 2.3, y = 0.95, label = "reef height\n in 2019", size = 3, colour = "#1d2529") +
-  #         annotation_raster(img,
-  #           xmin = -3.7, # Make it cover more area along x-axis
-  #           xmax = 3.8, # Same for xmax
-  #           ymin = dat$rd_scaled - 1.5, # Adjust ymin to make it larger vertically
-  #           ymax = dat$rd_scaled + 2.5
-  #         ) +
-  #         theme_void() +
-  #         geom_circle(aes(
-  #           x0 = 0,
-  #           y0 = 0,
-  #           r = 3
-  #         ),
-  #         color = "white",
-  #         inherit.aes = FALSE
-  #         ) +
-  #         coord_fixed()
-  #       outfile2 <- tempfile(fileext = ".png")
-
-  #       # Generate the PNG
-  #       png(outfile2,
-  #         width = 300 * 8,
-  #         height = 300 * 8,
-  #         res = 72 * 8
-  #       )
-  #       print(p2)
-  #       dev.off()
-  #       list(
-  #         src = outfile2,
-  #         contentType = "image/png",
-  #         height = "auto",
-  #         width = "100%"
-  #       )
-  #     }
-  #   },
-  #   deleteFile = TRUE
-  # )
-
   ## Box3 ----
-  # Plot the data ----
   output$myImage <- renderImage(
     {
       # generate plot
@@ -2213,180 +1492,6 @@ server <- function(input, output, session) {
 
 
 
-  # Load the appropriate photo for the selected site
-  # output$photo <- renderImage(
-  #   {
-  #     if (input$selectReef == "Cheeca Rocks") {
-  #       filename <- normalizePath(here("www", "images", "cheeca.jpg"))
-  #     }
-  #     if (input$selectReef == "La Parguera") {
-  #       filename <- normalizePath(here("www", "images", "parguera2.jpg"))
-  #     }
-  #     if (input$selectReef == "Flower Garden Banks") {
-  #       filename <- normalizePath(here("www", "images", "flower.jpg"))
-  #     }
-  #     if (input$selectReef == "Saint Croix") {
-  #       filename <- normalizePath(here("www", "images", "croix.jpg"))
-  #     }
-  #     if (input$selectReef == "Saint Thomas") {
-  #       filename <- normalizePath(here("www", "images", "thomas.jpg"))
-  #     }
-  #     if (input$selectReef == "Dry Tortugas") {
-  #       filename <- normalizePath(here("www", "images", "tortugas.jpg"))
-  #     }
-  #     list(
-  #       src = filename,
-  #       height = "auto",
-  #       width = "100%"
-  #     )
-  #   },
-  #   deleteFile = FALSE
-  # )
-
-  # output$photo2 <- renderImage(
-  #   {
-  #     if (input$selectReef2 == "Cheeca Rocks") {
-  #       filename <- normalizePath(here("www", "images", "cheeca.jpg"))
-  #     }
-  #     if (input$selectReef2 == "La Parguera") {
-  #       filename <- normalizePath(here("www", "images", "parguera2.jpg"))
-  #     }
-  #     if (input$selectReef2 == "Flower Garden Banks") {
-  #       filename <- normalizePath(here("www", "images", "flower.jpg"))
-  #     }
-  #     if (input$selectReef2 == "Saint Croix") {
-  #       filename <- normalizePath(here("www", "images", "croix.jpg"))
-  #     }
-  #     if (input$selectReef2 == "Saint Thomas") {
-  #       filename <- normalizePath(here("www", "images", "thomas.jpg"))
-  #     }
-  #     if (input$selectReef2 == "Dry Tortugas") {
-  #       filename <- normalizePath(here("www", "images", "tortugas.jpg"))
-  #     }
-  #     list(
-  #       src = filename,
-  #       height = "auto",
-  #       width = "100%"
-  #     )
-  #   },
-  #   deleteFile = FALSE
-  # )
-
-  # filtered_data <- reactive({
-  #   dat |>
-  #     filter(
-  #       # Scenario == input$reef_scenario2,
-  #       # variable == input$home_adaptation2,
-  #       site_id == input$selectReef2
-  #     )
-  # })
-
-  # filtered_slr2 <- reactive({
-  #   reef_data |> filter(Site == input$selectReef2)
-  # })
-
-
-  # output$rapPlot <- renderPlot({
-  #   x_value <- x_when_negative()
-  #   p <- ggplot(filtered_data(), aes(x = Time, y = rap)) +
-  #     geom_line(colour = "white") +
-  #     geom_point(aes(size = ifelse(Time == input$plot_date3, 6, 3)),
-  #       alpha = 0.8, colour = "white"
-  #     ) +
-  #     ylab("vertical reef growth (mm/year)") +
-  #     xlab("Year") +
-  #     theme_bw() +
-  #     theme(
-  #       legend.title = element_blank(), legend.position = "", plot.title = element_text(size = 10),
-  #       plot.margin = margin(5, 12, 5, 5),
-  #       axis.text = element_text(size = 12, color = "white"), # Set axis text color to white
-  #       axis.title = element_text(size = 14, color = "white"),
-  #       axis.line = element_line(color = "white"),
-  #       panel.grid.major = element_blank(), # Remove major grid lines
-  #       panel.grid.minor = element_blank(),
-  #       panel.background = element_rect(fill = "#141c44"), # Set panel background to transparent
-  #       plot.background = element_rect(fill = "#141c44")
-  #     ) +
-  #     geom_hline(yintercept = 0, colour = "blue", linetype = "dashed")
-
-  #   if (!is.na(x_value)) {
-  #     p <- p + geom_vline(xintercept = x_value, linetype = "dashed", color = "#DD4B39")
-  #   }
-
-  #   p
-  # })
-
-  # output$wSLRPlot <- renderPlot({
-  #   ggplot(filtered_data(), aes(x = Time, y = RAP)) +
-  #     geom_line(colour = "white") +
-  #     geom_point(aes(size = ifelse(Time == input$plot_date3, 6, 3)),
-  #       alpha = 0.8, colour = "white"
-  #     ) +
-  #     geom_line(aes(x = Time, y = HR / 10), data = filtered_slr2(), colour = "#00d4d4") +
-  #     ylab("vertical reef growth & SLR (mm/year)") +
-  #     xlab("Year") +
-  #     theme_bw() +
-  #     theme(
-  #       legend.title = element_blank(), legend.position = "", plot.title = element_text(size = 10),
-  #       plot.margin = margin(5, 12, 5, 5),
-  #       axis.text = element_text(size = 12, color = "white"), # Set axis text color to white
-  #       axis.title = element_text(size = 14, color = "white"),
-  #       axis.line = element_line(color = "white"),
-  #       panel.grid.major = element_blank(), # Remove major grid lines
-  #       panel.grid.minor = element_blank(),
-  #       panel.background = element_rect(fill = "#141c44"), # Set panel background to transparent
-  #       plot.background = element_rect(fill = "#141c44")
-  #     ) +
-  #     geom_hline(yintercept = 0, colour = "blue", linetype = "dashed")
-  # })
-
-
-
-  # Calculate the x-value where y = 0
-  # x_when_negative <- reactive({
-  #   df <- filtered_data()
-  #   # Find the index where RAP changes sign
-  #   index <- which(diff(sign(df$rap)) < 0)
-
-  #   if (length(index) == 0) {
-  #     return(NA) # No negative crossing
-  #   }
-
-  #   # Take the first interval where RAP becomes negative
-  #   i <- index[1]
-
-  #   # Linear interpolation between points
-  #   x0 <- df$Time[i]
-  #   x1 <- df$Time[i + 1]
-  #   y0 <- df$rap[i]
-  #   y1 <- df$rap[i + 1]
-
-  #   # Linear interpolation formula to find exact x where RAP = 0
-  #   x_when_negative <- x0 - (y0 * (x1 - x0) / (y1 - y0))
-
-  #   return(x_when_negative)
-  # })
-
-
-
-  # # Render the valueBox with x value where y=0
-  # output$x_value_at_y0 <- renderValueBox({
-  #   x_value <- x_when_negative()
-  #   box_color <- ifelse(!is.na(x_value), "red", "blue")
-  #   valueBox(
-  #     value = tags$p(
-  #       ifelse(is.na(x_value), "> 2100", round(x_value, 0)),
-  #       style = "font-size: 2.2vw;" # Adjust the font size based on viewport width
-  #     ),
-  #     subtitle = tags$p(
-  #       "Transition year to reef net erosion"
-  #     ),
-  #     icon = icon("exclamation-triangle"),
-  #     color = box_color
-  #   )
-  # })
-
-
   # Reactive expression to compute the percentage
   reactive_percentage <- reactive({
     # Example calculation: average of slider values
@@ -2406,67 +1511,6 @@ server <- function(input, output, session) {
       color = "green"
     )
   })
-
-  # filtered_time_value <- reactive({
-  #   filtered_data()
-  #   filtered_slr2()
-
-  #   # Ensure both datasets have the same Time range
-  #   merged_data <- merge(filtered_data(), filtered_slr2(), by = "Time")
-
-  #   # Find the first Time where HR > RAP
-  #   condition_met <- merged_data[which(merged_data$HR / 10 > merged_data$RAP), ]
-
-  #   if (nrow(condition_met) > 0) {
-  #     return(condition_met$Time[1]) # Return the first occurrence
-  #   } else {
-  #     return(NA) # Return NA if no condition is met
-  #   }
-  # })
-
-  # observeEvent(input$Adaptation_info, {
-  #   toggle("Adaptation_info_text")
-  # })
-
-  # observeEvent(input$Branching_info, {
-  #   toggle("Branching_info_text")
-  # })
-  # observeEvent(input$Builders_info, {
-  #   toggle("Builders_info_text")
-  # })
-  # observeEvent(input$Weedy_info, {
-  #   toggle("Weedy_info_text")
-  # })
-
-  # output$withSLR <- renderValueBox({
-  #   time_value <- filtered_time_value()
-
-  #   if (!is.na(time_value)) {
-  #     valueBox(
-  #       value = tags$p(
-  #         time_value,
-  #         style = "font-size: 2.2vw; max-width: 100%; word-wrap: break-word;" # Adjusted font size and added word wrap
-  #       ),
-  #       subtitle = tags$p(
-  #         "Year reef growth stops matching sea level rise"
-  #       ),
-  #       icon = icon("house-flood-water"),
-  #       color = "teal"
-  #     )
-  #   } else {
-  #     valueBox(
-  #       value = tags$p(
-  #         ">2100",
-  #         style = "font-size: 2.2vw; max-width: 100%; word-wrap: break-word;" # Adjusted font size and added word wrap
-  #       ),
-  #       subtitle = tags$p(
-  #         "Year reef growth stops matching sea level rise"
-  #       ),
-  #       icon = icon("house-flood-water"),
-  #       color = "teal"
-  #     )
-  #   }
-  # })
 
 
   output$rawtable <- renderPrint({
@@ -2654,11 +1698,5 @@ server <- function(input, output, session) {
       width = 12
     )
   })
-  # value =tags$p( ">100%",
-  #                style = "font-size: 2.1vw;"
-  # ),
-  # subtitle = tags$p("Total Target Cover",
-  #                   style = "font-size:1.1vw;"
-  # ),
 }
 shinyApp(ui, server)
