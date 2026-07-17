@@ -43,14 +43,14 @@ cv_dates <- as.data.frame(c(2019:2100))
 colnames(cv_dates) <- c("year")
 
 # call data for world map
-world_data <- ggplot2::map_data("world")
+world_data   <- ggplot2::map_data("world")
 worldcountry <- fortify(world_data)
 
 # # Mote sites
 # triangle_sites <- read.csv(here("data", "Mote_sites.csv"))
-mote_cover <- read.csv(here("data", "Mote_cover.csv"))
+mote_cover   <- read.csv(here("data", "Mote_cover.csv"))
 travis_rates <- read.csv(here("data", "Travis_rates.csv"))
-bioerosion <- read.csv(here("data", "Bioerosion.csv"))
+bioerosion   <- read.csv(here("data", "Bioerosion.csv"))
 
 # Ingest NCRMP carbonate budget data
 df <- read.csv(here("data", "NCRMP_CarbonateBudgets_2014_to_2024.csv"))
@@ -92,8 +92,9 @@ if (!dir.exists(scenario_dir)) dir.create(scenario_dir, showWarnings = FALSE)
 
 # Shared restoration species list (used across multiple tabs) ----
 restoration_species_global <- c(
-  "Acropora palmata", "Acropora cervicornis", "Montastraea cavernosa",
-  "Orbicella faveolata", "Colpophyllia natans", "Porites astreoides",
+  "Acropora palmata", "Acropora cervicornis",
+  "Montastraea cavernosa", "Orbicella faveolata",
+  "Colpophyllia natans", "Porites astreoides",
   "Siderastrea siderea", "Stephanocoenia intersepta",
   "Diploria labyrinthiformis", "Solenastrea bournoni"
 )
@@ -408,7 +409,7 @@ body <- dashboardBody(
         column(
           width = 12,
           shinydashboard::box(
-            title = "Projected reef accretion potential (12 years)",
+            title = "Projected reef accretion potential (10 years)",
             width = 12, status = "info", solidHeader = TRUE,
             plotly::plotlyOutput("restoration_timeline", height = "400px")
           )
@@ -649,10 +650,10 @@ server <- function(input, output, session) {
     classify <- function(base, restored) {
       if (base > 0.5) {
         "blue"
-      } else if (base < 0.5 && restored >= 0.5) {
+      } else if (base < -0.5 && restored >= 0.5) {
         "darkgreen"
       } else if (base >= -0.5 && base < 0.5 && restored >= 0.5) {
-        "limegreen"
+        "palegreen"
       } else if (base <= -0.5 && restored > -0.5 && restored < 0.5) {
         "yellow"
       } else if (restored <= -0.5) {
@@ -740,14 +741,14 @@ server <- function(input, output, session) {
 
     # Draw halos first (underneath) when slider is active
     if (inc > 0) {
-      halo_cols <- c(blue = "#1f78ff", green = "#33a02c", yellow = "#ffcc00")
+      halo_cols <- c(blue = "#1f78ff", darkgreen = "darkgreen", palegreen = "palegreen", yellow = "#ffcc00")
       hd <- d[d$halo %in% names(halo_cols), , drop = FALSE]
       if (nrow(hd) > 0) {
         proxy <- proxy |>
           addCircleMarkers(
             data = hd,
             lng = ~LON_DEGREES, lat = ~LAT_DEGREES,
-            radius = point_size() + 2,
+            radius = point_size() + 3,
             weight = 0,
             fillColor = unname(halo_cols[hd$halo]),
             fillOpacity = 0.9,
@@ -801,7 +802,7 @@ server <- function(input, output, session) {
     # Legend for Restoration Potential
     rest_colors = c("Growth  → Growth"  = "#1f78ff",
                     "Erosion → Growth"  = "darkgreen",
-                    "Stasis  → Growth"  = "limegreen",
+                    "Stasis  → Growth"  = "palegreen",
                     "Erosion → Stasis"  = "yellow",
                     "Erosion → Erosion" = "gray")
 
@@ -1049,7 +1050,7 @@ server <- function(input, output, session) {
 
     # Year 0 baseline annotation text
     y0_label <- paste0(
-      "Baseline (Year 0)<br>Cover: ", round(b$cover, 1), "%",
+      "Baseline<br>Cover: ", round(b$cover, 1), "%",
       "<br>Budget: ", round(b$budget, 2), " kg/m\u00b2/yr"
     )
 
@@ -1064,7 +1065,7 @@ server <- function(input, output, session) {
         )),
         size = 4, color = "forestgreen"
       ) +
-      scale_x_continuous(breaks = 0:12, limits = c(0, 12)) +
+      scale_x_continuous(breaks = 0:10, limits = c(0, 11)) +
       labs(x = "Year", y = "Reef accretion potential (mm/yr)") +
       theme_minimal(base_size = 14)
 
@@ -1085,13 +1086,13 @@ server <- function(input, output, session) {
   ## Save scenario (from Restoration Planning tab) ----
   ## ---------------------------------------------------------------------------
   observeEvent(input$save_scenario, {
-    validate(need(nzchar(input$scenario_project), "Enter a project name."))
-    validate(need(nzchar(input$scenario_name), "Enter a scenario name."))
+    #validate(need(nzchar(input$scenario_project), "Enter a project name."))
+    #validate(need(nzchar(input$scenario_name), "Enter a scenario name."))
 
     r <- restored_metrics()
     b <- baseline_metrics()
 
-    total_cover <- r$cover
+    total_cover  <- r$cover
     restored_rap <- r$rap
     baseline_rap <- b$rap
 
