@@ -46,9 +46,7 @@ colnames(cv_dates) <- c("year")
 world_data   <- ggplot2::map_data("world")
 worldcountry <- fortify(world_data)
 
-# # Mote sites
-# triangle_sites <- read.csv(here("data", "Mote_sites.csv"))
-mote_cover   <- read.csv(here("data", "Mote_cover.csv"))
+# Observational data
 travis_rates <- read.csv(here("data", "Travis_rates.csv"))
 bioerosion   <- read.csv(here("data", "Bioerosion.csv"))
 
@@ -72,13 +70,15 @@ pastel_colors <- colorRampPalette(RColorBrewer::brewer.pal(9, "Pastel1"))(length
 region_pal <- colorFactor(pastel_colors, domain = region_levels)
 
 
-# Ingest user-input baseline cover data
+# Ingest baseline cover data template to retrieve list of taxa
 base_cover_df <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
 taxa <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
 # Calculate reef accretion potential
 df$rap <- df$net_G / 2.9 / (1 - 0.6265)
+df$current_state <- ifelse(df$rap > 0.5, "Growth", ifelse(df$rap < -0.5, "Erosion", "Stasis"))
+# write.csv(df, "data/processed_data.csv", row.names = FALSE)
 
 # Linear regression: relationship between percent cover and RAP ----
 # Used on the Home tab to translate a target percent-cover increase into a
@@ -105,17 +105,36 @@ habitat_choices <- sort(unique(df$HABITAT_TYPE))
 
 # White-to-red palettes for the "Symbolize by" numeric options ----
 # Each clamped 0 -> field max.
-make_wr_pal <- function(field, rev=FALSE) {
-  colorNumeric(
-    palette = colorRampPalette(c("white", "red"))(100),
-    domain = c(0, max(df[[field]], na.rm = TRUE)),
+# make_wr_pal <- function(field, rev = FALSE) {
+#   colorNumeric(
+#     palette = colorRampPalette(c("white", "red"))(100),
+#     domain = c(0, max(df[[field]], na.rm = TRUE)),
+#     reverse = rev
+#   )
+# }
+
+# Experiment with jenks symbology
+make_wr_pal <- function(field, n = 7, rev = FALSE) {
+  vals <- df[[field]]
+  vals <- vals[is.finite(vals)]
+
+  # Jenks natural-breaks classification
+  brks <- classInt::classIntervals(vals, n = n, style = "fisher")$brks
+
+  # Guard against duplicate breaks (can happen with skewed/zero-heavy data)
+  brks <- unique(brks)
+
+  colorBin(
+    palette = colorRampPalette(c("white", "red"))(length(brks) - 1),
+    domain  = vals,
+    bins    = brks,
     reverse = rev
   )
 }
 
 # Color palette for RAP symbology
-at <- c(-8, -6, -4, -2, 0, 2, 4, 6, 8)
-colors <- c("darkred", "red", "orange", "yellow", "white", "#0099FF", "#0033FF", "darkblue", "#000066")
+at <- c(-8, -6, -4, -2, -0.5, 0, 0.5, 2, 4, 6, 8)
+colors <- c("darkred", "red", "orangered", "orange", "yellow", "white", "#0099FF", "#0033FF", "darkblue", "#000066", "midnightblue")
 num_pal <- colorNumeric(colors, domain = at)
 
 pal_rap        <- num_pal
@@ -123,16 +142,17 @@ pal_parrotfish <- make_wr_pal("parrotfish_G")
 pal_gross      <- make_wr_pal("grossE_G")
 
 # Reversed palettes for legend displays
-num_pal_rev <- colorNumeric(colors, domain = at, reverse = TRUE)
+num_pal_rev        <- colorNumeric(colors, domain = at, reverse = TRUE)
 pal_parrotfish_rev <- make_wr_pal("parrotfish_G", rev = TRUE)
-pal_gross_rev  <- make_wr_pal("grossE_G", rev = TRUE)
-
-# Categorical palette for Reef State (budget_State is categorical) ----
-state_levels <- sort(unique(as.character(df$budget_State)))
+pal_gross_rev      <- make_wr_pal("grossE_G", rev = TRUE)
 
 # Reef State: original Blue / Yellow / Orange status colors
 state_colors <- c("Growth" = "#0099FF", "Stasis" = "#FFFF99", "Erosion" = "#FF6600")
-num_pal_state <- colorFactor(unname(state_colors), domain = names(state_colors))
+num_pal_state <- colorFactor(
+  palette = unname(state_colors),
+  levels  = names(state_colors)
+)
+
 # Shiny User Interface ----
 # Converted from bootstrapPage/navbarPage to shinydashboard::dashboardPage
 
@@ -187,6 +207,21 @@ body <- dashboardBody(
       }
       .map-controls-body { padding: 10px 12px; max-height: 60vh; overflow-y: auto; }
       .map-controls-body .form-group { margin-bottom: 10px; }
+      /* Compact baseline species inputs: name + narrow box side-by-side */
+      .baseline-species-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 6px; margin-bottom: 4px;
+      }
+      .baseline-species-row label { margin: 0; font-weight: normal; }
+      .baseline-species-row .form-group { margin-bottom: 0; }
+      .baseline-species-row .shiny-input-container { width: auto; margin-bottom: 0; }
+      .baseline-species-name {
+        flex: 1 1 auto; font-style: italic; font-size: 13px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .baseline-species-input input {
+        width: 10ch; min-width: 10ch; padding: 2px 4px; text-align: right;
+      }
     "))
   ),
 
@@ -239,28 +274,6 @@ body <- dashboardBody(
               min = 0, max = 30, value = 0, step = 5, post = "%", width = "100%"
             ),
 
-            # Restoration Potential legend (halo meanings)
-            # tags$div(
-            #   style = "margin: 4px 0 10px 0;",
-            #   tags$strong("Restoration Potential"),
-            #   tags$div(style = "display:flex; align-items:center; gap:6px; margin-top:4px;",
-            #     tags$span(style = "width:14px; height:14px; border:3px solid #1f78ff; border-radius:50%; display:inline-block;"),
-            #     tags$span("Was Growing Anyway")
-            #   ),
-            #   tags$div(style = "display:flex; align-items:center; gap:6px;",
-            #     tags$span(style = "width:14px; height:14px; border:3px solid #33a02c; border-radius:50%; display:inline-block;"),
-            #     tags$span("Growth Resumed")
-            #   ),
-            #   tags$div(style = "display:flex; align-items:center; gap:6px;",
-            #     tags$span(style = "width:14px; height:14px; border:3px solid #ffcc00; border-radius:50%; display:inline-block;"),
-            #     tags$span("Erosion Mitigated")
-            #   ),
-            #   tags$div(style = "display:flex; align-items:center; gap:6px;",
-            #     tags$span(style = "width:14px; height:14px; background:rgba(150,150,150,0.5); border-radius:50%; display:inline-block;"),
-            #     tags$span("No Return")
-            #   )
-            # ),
-
             # Filter group: Year + Habitat dropdown checkboxes
             tags$strong("Filter"),
             shinyWidgets::dropdownButton(
@@ -286,10 +299,10 @@ body <- dashboardBody(
             # Symbolize by: exclusive radio buttons
             radioButtons("symbolize_by", "Symbolize by:",
               choices = c(
-                "Reef Accretion Potential" = "rap",
-                "Reef State"               = "budget_State",
-                "Parrotfish Bioerosion"    = "parrotfish_G",
-                "Gross Bioerosion"         = "grossE_G"
+                "Reef Accretion Potential (RAP)" = "rap",
+                "Reef State"                     = "current_state",
+                "Parrotfish Bioerosion"          = "parrotfish_G",
+                "Gross Bioerosion"               = "grossE_G"
               ),
               selected = "rap"
             ),
@@ -319,42 +332,58 @@ body <- dashboardBody(
       fluidRow(
         # --- Input element 1: Baseline cover (subsumed from Baseline Input) ---
         column(
-          width = 4,
+          width = 5,
           shinydashboard::box(
             title = "Baseline Cover",
             width = 12, status = "primary", solidHeader = TRUE,
 
-            # Load from file
-            fileInput("baseline_upload", "Load from file (.xlsx)",
-              accept = c(".xlsx")
-            ),
+            fluidRow(
+              # Left column: controls
+              column(
+                width = 6,
+                fileInput("baseline_upload", "Load from file (.xlsx)",
+                  accept = c(".xlsx")
+                ),
+                selectInput(
+                  "baseline_site",
+                  label = "Site",
+                  choices = c("\u2014 Select site \u2014" = ""),
+                  selected = ""
+                ),
+                numericInput(
+                  "site_area_m2",
+                  label = "Site area (m\u00b2)",
+                  value = 100, min = 0, step = 1
+                ),
+                selectInput(
+                  "habitat_choice",
+                  label = "Habitat",
+                  choices = c("\u2014 Select habitat \u2014" = "", "Inshore", "Offshore"),
+                  selected = ""
+                ),
+                selectizeInput(
+                  "baseline_species",
+                  "Select your species:",
+                  choices = sort(unique(taxa)),
+                  multiple = TRUE,
+                  options = list(maxItems = 20, placeholder = "Select species...")
+                ),
 
-            numericInput(
-              "site_area_m2",
-              label = "Site area (m\u00b2)",
-              value = 100, min = 0, step = 1
-            ),
-            selectInput(
-              "habitat_choice",
-              label = "Habitat",
-              choices = c("\u2014 Select habitat \u2014" = "", "Inshore", "Offshore"),
-              selected = ""
-            ),
-            selectizeInput(
-              "baseline_species",
-              "select your species:",
-              choices = sort(unique(taxa)),
-              multiple = TRUE,
-              options = list(maxItems = 12, placeholder = "Select species...")
-            ),
-            uiOutput("baseline_cover_inputs"),
+                tags$hr(),
 
-            tags$hr(),
+                # Scenario save controls
+                textInput("scenario_project", "Project name", value = ""),
+                textInput("scenario_name", "Scenario name", value = ""),
+                actionButton("save_scenario", "Save scenario", icon = icon("floppy-disk"))
+              ),
 
-            # Scenario save controls (retained)
-            textInput("scenario_project", "Project name", value = ""),
-            textInput("scenario_name", "Scenario name", value = ""),
-            actionButton("save_scenario", "Save scenario", icon = icon("floppy-disk"))
+              # Right column: dedicated vertical species:value list
+              column(
+                width = 6,
+                tags$strong("Species cover (%)"),
+                uiOutput("baseline_cover_inputs")
+              )
+            )
           )
         ),
 
@@ -371,17 +400,25 @@ body <- dashboardBody(
 
         # --- Input element 3: outplant + bleaching parameters ---
         column(
-          width = 4,
+          width = 3,
           shinydashboard::box(
             title = "Restoration Parameters",
             width = 12, status = "warning", solidHeader = TRUE,
 
-            # Outplant parameters (vertical)
-            numericInput("outplant_size", "Average outplant size (cm)",
-              value = 5, min = 1, max = 100, step = 0.1
-            ),
-            numericInput("outplant_cost", "Average outplant cost ($)",
-              value = 10, min = 1, max = 100, step = 0.01
+            # Outplant parameters (side-by-side)
+            fluidRow(
+              column(
+                width = 6,
+                numericInput("outplant_size", "Avg. outplant diameter (cm)",
+                  value = 5, min = 1, max = 100, step = 0.1
+                )
+              ),
+              column(
+                width = 6,
+                numericInput("outplant_cost", "Avg. outplant cost ($)",
+                  value = 10, min = 1, max = 100, step = 0.01
+                )
+              )
             ),
 
             # Bleaching scenario (vertical, red outline)
@@ -641,23 +678,22 @@ server <- function(input, output, session) {
     # Projected RAP from the target cover increase, via the regression slope
     inc <- if (is.null(input$target_cover_increase)) 0 else input$target_cover_increase
     d$restored_rap <- d$rap + cover_rap_slope * inc
+    d$restored_state <- ifelse(d$restored_rap > 0.5, "Growth", ifelse(d$restored_rap < -0.5, "Erosion", "Stasis"))
 
     # Halo / fill classification (only meaningful when inc > 0)
-    # Blue  = was already growing (baseline rap > 0.5)
-    # Green = transitioned from <=-0.5 to >=0.5
-    # Yellow= transitioned from <=-0.5 to (-0.5, 0.5)
-    # Gray  = still <=-0.5
     classify <- function(base, restored) {
       if (base > 0.5) {
-        "blue"
+        "skyblue"  # Was already growing
       } else if (base < -0.5 && restored >= 0.5) {
-        "darkgreen"
+        "darkgreen" # Erosion to growth
       } else if (base >= -0.5 && base < 0.5 && restored >= 0.5) {
-        "palegreen"
+        "limegreen" # Stasis to growth
       } else if (base <= -0.5 && restored > -0.5 && restored < 0.5) {
-        "yellow"
+        "palegreen" # Erosion to stasis
+      } else if (restored > -0.5 && restored < 0.5) {
+        "ivory" # Stasis to stasis
       } else if (restored <= -0.5) {
-        "gray"
+        "red" # Still eroding
       } else {
         NA_character_
       }
@@ -719,8 +755,8 @@ server <- function(input, output, session) {
     }
 
     # Choose fill color + legend per the selected symbolize-by field
-    if (field == "budget_State") {
-      fill_cols <- num_pal_state(as.character(d$budget_State))
+    if (field == "current_state") {
+      fill_cols <- num_pal_state(as.character(d$current_state))
     } else if (field == "rap") {
       fill_cols <- num_pal(d$rap)
     } else {
@@ -731,17 +767,17 @@ server <- function(input, output, session) {
       fill_cols <- pal(pmax(0, d[[field]]))
     }
 
-    # In RAP mode, gray-out "No Return" sites at 50% transparency
+    # In RAP mode, reduce "No Return" sites to 25% opacity
     fill_opacity <- rep(0.85, nrow(d))
     if (field == "rap" && inc > 0) {
-      gray_idx <- which(d$halo == "gray")
-      fill_cols[gray_idx] <- "gray"
-      fill_opacity[gray_idx] <- 0.5
+      red_idx <- which(d$halo == "red")
+      fill_cols[red_idx] <- "red"
+      fill_opacity[red_idx] <- 0.25
     }
 
     # Draw halos first (underneath) when slider is active
     if (inc > 0) {
-      halo_cols <- c(blue = "#1f78ff", darkgreen = "darkgreen", palegreen = "palegreen", yellow = "#ffcc00")
+      halo_cols <- c(skyblue = "skyblue", darkgreen = "darkgreen", limegreen = "limegreen", palegreen = "palegreen", ivory = "ivory", red = "red")
       hd <- d[d$halo %in% names(halo_cols), , drop = FALSE]
       if (nrow(hd) > 0) {
         proxy <- proxy |>
@@ -785,12 +821,12 @@ server <- function(input, output, session) {
           "<td style='padding: 2px 0;'>", round(parrotfish_G, 2), "kg CaCO\u00b3/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Gross bioerosion:</td>",
           "<td style='padding: 2px 0;'>", round(grossE_G, 2), "kg CaCO\u00b3/yr</td></tr>",
-          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Reef accr. potential:</td>",
-          "<td style='padding: 2px 0;'>", round(rap, 2), " mm/yr</td></tr>",
-          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Projected RAP:</td>",
-          "<td style='padding: 2px 0;'>", round(restored_rap, 2), " mm/yr</td></tr>",
-          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current status:</td>",
-          "<td style='padding: 2px 0;'>", budget_State, "</td></tr>",
+          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current RAP:</td>",
+          "<td style='padding: 2px 0;'>", round(rap, 2), " mm/yr (", current_state, ")</td></tr>",
+          "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>RAP with restoration:</td>",
+          "<td style='padding: 2px 0;'>", round(restored_rap, 2), " mm/yr (", restored_state, ")</td></tr>",
+          #"<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current status:</td>",
+          #"<td style='padding: 2px 0;'>", current_state, "</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Water depth:</td>",
           "<td style='padding: 2px 0;'>", round(AVG_DEPTH, 1), " m</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Coordinates:</td>",
@@ -800,11 +836,12 @@ server <- function(input, output, session) {
       )
 
     # Legend for Restoration Potential
-    rest_colors = c("Growth  → Growth"  = "#1f78ff",
+    rest_colors = c("Growth  → Growth"  = "skyblue",
                     "Erosion → Growth"  = "darkgreen",
-                    "Stasis  → Growth"  = "palegreen",
-                    "Erosion → Stasis"  = "yellow",
-                    "Erosion → Erosion" = "gray")
+                    "Stasis  → Growth"  = "limegreen",
+                    "Erosion → Stasis"  = "palegreen",
+                    "Stasis  → Stasis"  = "ivory",
+                    "Erosion → Erosion" = "red")
 
     proxy <- proxy |>
       addLegend("bottomleft",
@@ -815,7 +852,7 @@ server <- function(input, output, session) {
       )
 
     # Legend for the selected symbolize-by field
-    if (field == "budget_State") {
+    if (field == "current_state") {
       proxy <- proxy |>
         addLegend("bottomleft",
           colors = unname(state_colors), labels = names(state_colors),
@@ -844,7 +881,8 @@ server <- function(input, output, session) {
           pal = pal,
           values = c(0, max(df[[field]], na.rm = TRUE)),
           title = HTML(ttl), opacity = 1,
-          labFormat = labelFormat(transform = function(x) sort(x, decreasing = TRUE))
+          labFormat = labelFormat(digits = 1,
+                                  transform = function(x) sort(x, decreasing = TRUE))
         )
     }
 
@@ -875,7 +913,9 @@ server <- function(input, output, session) {
   ## Baseline cover: dynamic per-species inputs + upload auto-populate ----
   ## ---------------------------------------------------------------------------
 
-  # Holds Taxon -> Percent_Cover from the last upload
+  # Full uploaded "Coral Cover input" sheet (all sites)
+  baseline_upload_data <- reactiveVal(NULL)
+  # Holds Taxon -> Percent_Cover for the CURRENTLY SELECTED site
   uploaded_covers <- reactiveVal(NULL)
 
   # Baseline cover: load from uploaded .xlsx (Coral Cover input sheet)
@@ -891,48 +931,79 @@ server <- function(input, output, session) {
     )
     req(up)
 
+    baseline_upload_data(up)
+
+    # Populate the Site dropdown from Unique_Site_ID
+    if ("Unique_Site_ID" %in% names(up)) {
+      site_ids <- unique(as.character(up$Unique_Site_ID[!is.na(up$Unique_Site_ID)]))
+      updateSelectInput(session, "baseline_site",
+        choices = c("\u2014 Select site \u2014" = "", site_ids),
+        selected = if (length(site_ids)) site_ids[1] else ""
+      )
+    } else {
+      showNotification("Upload has no 'Unique_Site_ID' column.", type = "warning")
+    }
+  })
+
+  # When the selected site changes, filter the upload to that site and
+  # push habitat / area / species / covers into the inputs.
+  observeEvent(input$baseline_site, {
+    up <- baseline_upload_data()
+    req(up, nzchar(input$baseline_site))
+
+    site_rows <- up[as.character(up$Unique_Site_ID) == input$baseline_site, , drop = FALSE]
+    req(nrow(site_rows) > 0)
+
     # Site area: default 100, overridden by Site_Area_m2 if present
-    area_val <- if ("Site_Area_m2" %in% names(up) && any(!is.na(up$Site_Area_m2))) {
-      up$Site_Area_m2[!is.na(up$Site_Area_m2)][1]
+    area_val <- if ("Site_Area_m2" %in% names(site_rows) && any(!is.na(site_rows$Site_Area_m2))) {
+      site_rows$Site_Area_m2[!is.na(site_rows$Site_Area_m2)][1]
     } else {
       100
     }
     updateNumericInput(session, "site_area_m2", value = area_val)
 
     # Habitat
-    if ("Habitat" %in% names(up) && any(!is.na(up$Habitat))) {
+    if ("Habitat" %in% names(site_rows) && any(!is.na(site_rows$Habitat))) {
       updateSelectInput(session, "habitat_choice",
-        selected = up$Habitat[!is.na(up$Habitat)][1]
+        selected = site_rows$Habitat[!is.na(site_rows$Habitat)][1]
       )
     }
 
-    # Species selection from the Taxon field
-    if ("Taxon" %in% names(up)) {
-      sp <- unique(up$Taxon[!is.na(up$Taxon)])
+    # Species + covers for this site only
+    if ("Taxon" %in% names(site_rows)) {
+      sp <- unique(site_rows$Taxon[!is.na(site_rows$Taxon)])
       updateSelectizeInput(session, "baseline_species", selected = sp)
 
-      # Stash covers so the dynamic numericInputs can pick them up once rendered
       uploaded_covers(setNames(
-        round(as.numeric(up$Percent_Cover[match(sp, up$Taxon)]), 2),
+        round(as.numeric(site_rows$Percent_Cover[match(sp, site_rows$Taxon)]), 2),
         sp
       ))
     }
-  })
+  }, ignoreInit = TRUE)
 
-  # Dynamic per-species numericInputs, seeded from any uploaded covers
+  # Dynamic per-species numericInputs: species:%cover
   output$baseline_cover_inputs <- renderUI({
     req(input$baseline_species)
     sp <- input$baseline_species
     covers <- uploaded_covers()
-    tagList(lapply(sp, function(s) {
+
+    # Build one compact row (name + squished input) per species
+    rows <- lapply(sp, function(s) {
       id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
       val <- if (!is.null(covers) && s %in% names(covers) && !is.na(covers[[s]])) {
         covers[[s]]
       } else {
         0
       }
-      numericInput(id, label = s, value = val, min = 0, max = 100, step = 0.1)
-    }))
+      tags$div(
+        class = "baseline-species-row",
+        tags$span(class = "baseline-species-name", title = s, s),
+        tags$div(
+          class = "baseline-species-input",
+          numericInput(id, label = NULL, value = val, min = 0, max = 20, step = 0.1)
+        )
+      )
+    })
   })
 
   # Fixed restoration species sliders (Restoration mix box)
@@ -1105,6 +1176,7 @@ server <- function(input, output, session) {
     scenario <- list(
       project = input$scenario_project,
       scenario = input$scenario_name,
+      site = input$baseline_site,
       habitat = input$habitat_choice,
       site_area_m2 = .safe_num(input$site_area_m2),
       total_cover = total_cover,
