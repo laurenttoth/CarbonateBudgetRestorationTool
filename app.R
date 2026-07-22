@@ -210,6 +210,97 @@ pbr <- c(0.60, 0.35, 0.15, 0.05)
 # List restoration species by morphology
 massive_corals <- c("Orbicella faveolata", "Montastraea cavernosa", "Colpophyllia natans", "Siderastrea siderea", "Diploria labyrinthiformis", "Solenastrea bournoni")
 
+# Assemblage-porosity selector (shared by the model and baseline grower) ----
+# Chooses Acropora / Massive / Mixed porosity (as a proportion) from a
+# cover_df with columns `taxon` and a numeric cover column named by cover_col.
+assemblage_porosity <- function(cover_df, cover_col) {
+  total_pct <- sum(cover_df[[cover_col]], na.rm = TRUE)
+  massive_pct <- 0
+  for (s in massive_corals) {
+    if (s %in% cover_df$taxon) {
+      massive_pct <- massive_pct + cover_df[cover_df$taxon == s, cover_col]
+    }
+  }
+  acer_pct <- if ("Acropora cervicornis" %in% cover_df$taxon) cover_df[cover_df$taxon == "Acropora cervicornis", cover_col] else 0
+  apal_pct <- if ("Acropora palmata"     %in% cover_df$taxon) cover_df[cover_df$taxon == "Acropora palmata", cover_col] else 0
+
+  if (total_pct > 0 && (acer_pct + apal_pct) > total_pct * 0.75) {
+    por <- porosity$Porosity[porosity$Assemblage == "Acropora"]
+  } else if (total_pct > 0 && massive_pct > total_pct * 0.75) {
+    por <- porosity$Porosity[porosity$Assemblage == "Massive"]
+  } else {
+    por <- porosity$Porosity[porosity$Assemblage == "Mixed"]
+  }
+  por / 100 # proportion
+}
+
+# ----------------------------------------------------------------------------
+# Baseline-only original growth for the timeline ----
+# Mirrors the model's originals path (mortality-free, symmetric bleaching +
+# bioerosion) and returns a per-year RAP series summed across the selected
+# species. Porosity is chosen from the baseline assemblage.
+# ----------------------------------------------------------------------------
+run_baseline_growth <- function(habitat, subregion, site_area, sim_duration,
+                                bleaching_severity, bleaching_frequency,
+                                baseline_cover_df) {
+  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
+  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
+  be_pfish    <- if (nrow(be_hab)) be_hab$AVG_PARROTFISH[1] else 0
+  be_urchin   <- if (nrow(be_hab)) be_hab$AVG_URCHIN[1] else 0
+  be_macro    <- if (nrow(be_hab)) be_hab$AVG_MACROBIOEROSION[1] else 0
+  be_nonmicro <- sum(be_pfish, be_urchin, be_macro, na.rm = TRUE)
+  be_micro    <- 0.24
+
+  # Porosity from the baseline assemblage (current cover)
+  por <- assemblage_porosity(baseline_cover_df, "current_cvr_pct")
+
+  total_rap <- rep(0, sim_duration + 1)
+
+  for (row_i in seq_len(nrow(baseline_cover_df))) {
+    species        <- baseline_cover_df$taxon[row_i]
+    current_sp_pct <- baseline_cover_df$current_cvr_pct[row_i]
+    genus          <- stringr::str_split(species, " ")[[1]][1]
+    if (is.na(current_sp_pct) || current_sp_pct <= 0) next
+
+    sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
+    if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.50
+    sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100
+    sp_dhw_mortality <- 0.25
+
+    current_sp_m   <- site_area * (current_sp_pct / 100)
+    sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
+    if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
+    sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
+    if (length(sp_diam) == 0 || is.na(sp_diam)) next
+
+    sp_area       <- (sp_diam / 2) ^ 2 * pi
+    orig_colonies <- round(current_sp_m / sp_area)
+
+    new_size <- sp_diam
+    run_colony_count <- orig_colonies
+    last_bleach_year <- 0
+    for (i in 1:(sim_duration + 1)) {
+      bleaching <- FALSE
+      if ((bleaching_frequency == 1 && i %% 4 == 0)
+       || (bleaching_frequency == 2 && i %% 2 == 0)
+       || (bleaching_frequency == 5)) {
+        bleaching <- TRUE
+        last_bleach_year <- i
+        run_colony_count <- round(run_colony_count * (1 - sp_dhw_loss * sp_dhw_mortality))
+      }
+      ysb <- i - last_bleach_year
+      reduction <- if (ysb <= 4 && ysb > 0) pbr[ysb] else 0
+      new_size <- new_size + sp_growth_rate * (1 - reduction)
+      new_area <- (new_size / 2) ^ 2 * pi * run_colony_count
+      if (bleaching) new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
+      contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
+      contrib <- contrib - new_area * be_micro - new_area * be_nonmicro
+      total_rap[i] <- total_rap[i] + (contrib / site_area) / 2.9 / (1 - por)
+    }
+  }
+  data.frame(Year = 0:sim_duration, RAP_orig = total_rap)
+}
+
 # ----------------------------------------------------------------------------
 # Restoration model (adapted from acer_model_mockup.R) ----
 # Two-phase per species:
@@ -247,27 +338,8 @@ run_restoration_model <- function(habitat, subregion, site_area,
   # Generalized Caribbean be_microerosion rate: 0.24 kg CaCO3/m2/yr
   be_micro <- 0.24
 
-  # Total target cover across all species (for assemblage/porosity logic)
-  total_target_pct <- sum(target_cover_df$target_cvr_pct, na.rm = TRUE)
-
-  massive_pct <- 0
-  for (s in massive_corals) {
-    if (s %in% target_cover_df$taxon) {
-      massive_pct <- massive_pct + target_cover_df[target_cover_df$taxon == s, "target_cvr_pct"]
-    }
-  }
-
   # Assign porosity by target assemblage
-  acer_pct <- if ("Acropora cervicornis" %in% target_cover_df$taxon) target_cover_df[target_cover_df$taxon == "Acropora cervicornis", "target_cvr_pct"] else 0
-  apal_pct <- if ("Acropora palmata"     %in% target_cover_df$taxon) target_cover_df[target_cover_df$taxon == "Acropora palmata", "target_cvr_pct"] else 0
-  if (total_target_pct > 0 && (acer_pct + apal_pct) > total_target_pct * 0.75) {
-    por <- porosity$Porosity[porosity$Assemblage == "Acropora"]
-  } else if (total_target_pct > 0 && massive_pct > total_target_pct * 0.75) {
-    por <- porosity$Porosity[porosity$Assemblage == "Massive"]
-  } else {
-    por <- porosity$Porosity[porosity$Assemblage == "Mixed"]
-  }
-  por <- por / 100 # convert from percentage to proportion
+  por <- assemblage_porosity(target_cover_df, "target_cvr_pct")
 
   # Growth simulation function applicable to original colonies and new outplants.
   # Applies Year-1 mortality, per-event bleaching dieoff, post-bleaching
@@ -344,11 +416,6 @@ run_restoration_model <- function(habitat, subregion, site_area,
   budget_df <- data.frame()
   outplants_by_species <- c()   # named: species -> outplant count
   total_cost <- 0
-
-  # Baseline-only accumulation: originals for every species with cover > 0,
-  # regardless of whether a restoration target is set. Lets the timeline show
-  # baseline growth as soon as data is ingested.
-  baseline_orig_df <- data.frame()
 
   # Iterate per species (only those with a positive amount to grow)
   for (row_i in seq_len(nrow(target_cover_df))) {
@@ -1653,6 +1720,40 @@ server <- function(input, output, session) {
     list(cover = total_cover, budget = budget, rap = rap_values$baseline, sim_duration = sim_duration)
   })
 
+  # Baseline growth series for the timeline (originals only). Available as soon
+  # as species + covers + subregion/habitat are set, independent of any target.
+  baseline_growth <- reactive({
+    habitat       <- input$habitat_choice
+    subregion_lbl <- input$subregion_choice
+    site_area     <- .safe_num(input$site_area_m2)
+    sim_duration  <- .safe_num(input$sim_duration)
+    if (site_area <= 0) site_area <- 100
+    subregion <- if (subregion_lbl %in% names(subregion_codes)) subregion_codes[[subregion_lbl]] else subregion_lbl
+    req(nzchar(habitat), nzchar(subregion_lbl))
+
+    sp <- setdiff(if (is.null(input$baseline_species)) character(0) else input$baseline_species,
+                  "REQUIRED_Unconsolidated_substrate")
+    if (length(sp) == 0) return(NULL)
+
+    bdf <- data.frame(taxon = character(), current_cvr_pct = numeric(), stringsAsFactors = FALSE)
+    for (s in sp) {
+      base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
+      bdf[nrow(bdf) + 1, ] <- list(s, .safe_num(input[[base_id]]))
+    }
+    if (all(bdf$current_cvr_pct <= 0)) return(NULL)
+
+    tryCatch(
+      run_baseline_growth(
+        habitat = habitat, subregion = subregion, site_area = site_area,
+        sim_duration = sim_duration,
+        bleaching_severity  = .safe_num(input$dhw),
+        bleaching_frequency = .safe_num(input$bleach_events),
+        baseline_cover_df = bdf
+      ),
+      error = function(e) NULL
+    )
+  })
+
   # Restored (target) cover & carbonate budget
   restored_metrics <- reactive({
     b <- baseline_metrics()
@@ -1779,12 +1880,32 @@ server <- function(input, output, session) {
     }
 
     if (is.null(mr) || nrow(mr$budget_df) == 0) {
-      # Empty-state plot: just axes + SLR lines
-      d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
-      p <- ggplot(d0, aes(Year, RAP)) +
-        scale_x_continuous(breaks = x_breaks, limits = c(0,  dur * 1.1)) +
-        labs(x = "Year", y = "RAP (mm/yr)") +
-        theme_minimal(base_size = 14)
+      # No restoration target yet: show baseline growth (gray) if available.
+      bg <- baseline_growth()
+      if (is.null(bg)) {
+        d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
+        p <- ggplot(d0, aes(Year, RAP)) +
+          scale_x_continuous(breaks = x_breaks, limits = c(0,  dur * 1.1)) +
+          labs(x = "Year", y = "RAP (mm/yr)") +
+          theme_minimal(base_size = 14)
+      } else {
+        p <- ggplot(bg, aes(x = Year)) +
+          # Shade graph area under -0.5 RAP: light semitransparent red
+          annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
+                   fill = "red", alpha = 0.10) +
+          # Shade graph area between -0.5 and 0.5 RAP: light semitransparent yellow
+          annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
+                   fill = "yellow", alpha = 0.10) +
+          # Baseline (original) growth in dark gray
+          geom_line(aes(y = RAP_orig, group = 1,
+                        text = paste0("Baseline growth",
+                                      "<br>Year ", Year,
+                                      "<br>", round(RAP_orig, 2), " mm/yr")),
+                    color = "gray30", linewidth = 1.1) +
+          scale_x_continuous(breaks = x_breaks, limits = c(0, dur * 1.1)) +
+          labs(x = "Year", y = "RAP (mm/yr)") +
+          theme_minimal(base_size = 14)
+      }
     } else {
       # budget_df rows 1..(dur+1) map to Years 0..dur
       bd <- mr$budget_df
