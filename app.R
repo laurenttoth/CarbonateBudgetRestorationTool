@@ -4,58 +4,59 @@
 # from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Lauren T. Toth (USGS) and John T. Morris (NOAA).
 
 # Call Packages ----
-library(rsconnect)
-library(shiny)
+library(sf)
+library(png)
+library(jpeg)
+library(maps)
+library(here)
 library(bslib)
-library(shinydashboard)
-library(dashboardthemes) # (optional to use dark theme)
-library(ggplot2)
 library(dplyr)
+library(later)
 library(tidyr)
+library(RCurl)
+library(readxl)
+library(plotly)
+library(stringr)
+library(ggplot2)
+library(ggforce)
 library(leaflet)
-library(shinythemes)
 library(leaflegend)
 library(tidyverse)
-library(ggforce)
-library(png)
-library(RCurl)
-library(jpeg)
-library(sf)
 library(magrittr)
-library(maps)
 library(reshape2)
-library(RColorBrewer)
-library(plotly)
+library(rsconnect)
 library(geojsonio)
-library(shinyWidgets)
+library(jsonlite)
+library(RColorBrewer)
+
+library(shiny)
 library(shinyjs)
 library(shinyBS)
-library(here)
-library(readxl)
-library(jsonlite)
-library(later)
-library(stringr)
+library(shinythemes)
+library(shinyWidgets)
+library(shinydashboard)
+library(dashboardthemes) # (optional to use dark theme)
 
 # Enable automatic reloading of the app when code changes are detected
 options(shiny.autoreload = TRUE)
+
+# Ingest data ----
 
 # call data for world map
 world_data   <- ggplot2::map_data("world")
 worldcountry <- fortify(world_data)
 
-# Observational data
-travis_rates <- read.csv(here("data", "Travis_rates.csv"))
-bioerosion   <- read.csv(here("data", "Bioerosion.csv"))
-
-# Model observational data (from acer_model_mockup.R) ----
+# Model observational data:
 # Assemblage-specific porosity
 porosity     <- read.csv(here("data", "Porosity.csv"))
 # Species-specific growth rates
 growth_rates <- read.csv(here("data", "growth_rates_ReefBudget_NCRMP.csv"))
-# Species-specific calcification rates (same file as travis_rates, kept explicit)
+# Species-specific calcification rates (same file as calc_rates, kept explicit)
 calc_rates   <- read.csv(here("data", "Travis_rates.csv"))
 # Species-specific average colony diameters
 diams        <- read.csv(here("data", "NCRMP_colony_dia_Florida.csv"))
+# Region- and habitat-specific bioerosion rates
+bioerosion   <- read.csv(here("data", "Bioerosion.csv"))
 
 # Ingest NCRMP carbonate budget data
 df <- read.csv(here("data", "NCRMP_CarbonateBudgets_2014_to_2024.csv"))
@@ -82,7 +83,7 @@ base_cover_df <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet 
 taxa <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
-# Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet) ----
+# Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)
 slr_raw <- readxl::read_excel(
   here("data", "ipcc_ar6_sea_level_projection_psmsl_id_363.xlsx"),
   sheet = "Total"
@@ -144,9 +145,8 @@ build_slr_timeline <- function(start_year, n_years = 10) {
 # Calculate reef accretion potential
 df$rap <- df$net_G / 2.9 / (1 - 0.6265)
 df$current_state <- ifelse(df$rap > 0.5, "Growth", ifelse(df$rap < -0.5, "Erosion", "Stasis"))
-# write.csv(df, "data/processed_data.csv", row.names = FALSE)
 
-# Linear regression: relationship between percent cover and RAP ----
+# Linear regression: RAP ~ % Cover ----
 # Used on the Home tab to translate a target percent-cover increase into a
 # projected ("restored") RAP for each site.
 cover_rap_lm <- lm(rap ~ hardCoral_PrctCvr, data = df)
@@ -156,7 +156,36 @@ cover_rap_slope <- unname(coef(cover_rap_lm)["hardCoral_PrctCvr"])
 scenario_dir <- here("scenarios")
 if (!dir.exists(scenario_dir)) dir.create(scenario_dir, showWarnings = FALSE)
 
-# Shared restoration species list (used across multiple tabs) ----
+# Cache dir for the most-recent baseline .xlsx (auto-reload on launch) ----
+cache_dir <- here("cache")
+if (!dir.exists(cache_dir)) dir.create(cache_dir, showWarnings = FALSE)
+cached_baseline_path <- file.path(cache_dir, "last_baseline.xlsx")
+
+# Canonical field order for saved scenarios (used to sanitize read + write) ----
+scenario_fields <- c(
+  "project", "scenario", "site", "subregion", "habitat", "site_area_m2",
+  "total_cover", "baseline_rap", "restored_rap", "outplants",
+  "outplant_size", "outplant_cost", "dhw", "bleach_events",
+  "rest_horizon", "sim_duration", "cost", "roi", "elev_gain_10yr", "saved"
+)
+
+# Coerce a parsed scenario (list from fromJSON) into a clean one-row data.frame.
+# Guards against length-0 / NULL / multi-length fields that break as.data.frame.
+scenario_to_row <- function(s) {
+  if (is.null(s) || !length(s)) return(NULL)
+  vals <- lapply(scenario_fields, function(f) {
+    v <- s[[f]]
+    if (is.null(v) || length(v) == 0) return(NA)
+    # Collapse any accidental multi-length field to a single scalar
+    if (length(v) > 1) v <- paste(v, collapse = "; ")
+    v
+  })
+  names(vals) <- scenario_fields
+  as.data.frame(vals, stringsAsFactors = FALSE)
+}
+
+# Shared restoration species list ----
+# (used across multiple tabs)
 restoration_species_global <- c(
   "Acropora palmata", "Acropora cervicornis",
   "Montastraea cavernosa", "Orbicella faveolata",
@@ -165,7 +194,8 @@ restoration_species_global <- c(
   "Diploria labyrinthiformis", "Solenastrea bournoni"
 )
 
-# Subregion code -> full label remap (used for the Subregion dropdown) ----
+# Subregion code -> full label remap ----
+# (used for the Subregion dropdown)
 subregion_labels <- c(
   "SEFCRI" = "SoutheastFlorida",
   "BISC"   = "Biscayne",
@@ -177,7 +207,7 @@ subregion_labels <- c(
 # Reverse map (label -> code) for looking up habitat sets / model data
 subregion_codes <- setNames(names(subregion_labels), unname(subregion_labels))
 
-# Abbreviate a species name to "G. species" unless it ends with "spp." ----
+# Abbreviate a species name to "G. species" unless it ends with "spp."
 abbrev_species <- function(s) {
   if (grepl("spp\\.$", s)) return(s)          # leave "Genus spp." intact
   parts <- stringr::str_split(s, " ")[[1]]
@@ -185,7 +215,8 @@ abbrev_species <- function(s) {
   paste0(substr(parts[1], 1, 1), ". ", paste(parts[-1], collapse = " "))
 }
 
-# Bleaching lookup: Percent reduction in cover per degree-heating week ----
+# Bleaching lookup ----
+# Percent reduction in cover per degree-heating week
 # (from acer_model_mockup.R)
 dhw_slope_lookup_fk <- tibble::tribble(
   ~taxon,           ~slope_pct_per_dhw,
@@ -207,10 +238,38 @@ dhw_slope_lookup_fk <- tibble::tribble(
 # Reductions applied the 1st .. 4th years after bleaching occurs
 pbr <- c(0.60, 0.35, 0.15, 0.05)
 
-# List restoration species by morphology
-massive_corals <- c("Orbicella faveolata", "Montastraea cavernosa", "Colpophyllia natans", "Siderastrea siderea", "Diploria labyrinthiformis", "Solenastrea bournoni")
+# Identify massive corals
+massive_corals <- c(
+  "Montastraea cavernosa",
+  "Orbicella annularis",
+  "Orbicella faveolata",
+  "Orbicella franksi",
+  "Colpophyllia natans",
+  "Diploria labyrinthiformis",
+  "Pseudodiploria clivosa",
+  "Pseudodiploria strigosa",
+  "Siderastrea siderea",
+  "Siderastrea radians",
+  "Solenastrea bournoni",
+  "Solenastrea hyades",
+  "Meandrina meandrites",
+  "Meandrina spp.",
+  "Favia fragum",
+  "Favia spp.",
+  "Mycetophyllia aliciae",
+  "Mycetophyllia ferox",
+  "Mycetophyllia lamarckiana",
+  "Mycetophyllia spp.",
+  "Isophyllia rigida",
+  "Isophyllia sinuosa",
+  "Isophyllia spp.",
+  "Scolymia cubensis",
+  "Scolymia lacera",
+  "Scolymia spp."
+)
 
-# Assemblage-porosity selector (shared by the model and baseline grower) ----
+# Assemblage-porosity selector ----
+# (shared by the model and baseline grower) 
 # Chooses Acropora / Massive / Mixed porosity (as a proportion) from a
 # cover_df with columns `taxon` and a numeric cover column named by cover_col.
 assemblage_porosity <- function(cover_df, cover_col) {
@@ -221,6 +280,7 @@ assemblage_porosity <- function(cover_df, cover_col) {
       massive_pct <- massive_pct + cover_df[cover_df$taxon == s, cover_col]
     }
   }
+  # Only branching corals in the Keys are A. cervicornis and A. palmata
   acer_pct <- if ("Acropora cervicornis" %in% cover_df$taxon) cover_df[cover_df$taxon == "Acropora cervicornis", cover_col] else 0
   apal_pct <- if ("Acropora palmata"     %in% cover_df$taxon) cover_df[cover_df$taxon == "Acropora palmata", cover_col] else 0
 
@@ -235,7 +295,7 @@ assemblage_porosity <- function(cover_df, cover_col) {
 }
 
 # ----------------------------------------------------------------------------
-# Growth simulation (single source of truth) ----
+# Growth simulation ----
 # Applicable to original colonies and new outplants, and reused by both the
 # restoration model and the baseline-growth reactive. Performs its own per-
 # species lookups (growth rate, DHW slope) from `species` + `bleaching_severity`.
@@ -276,9 +336,9 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Will bleaching occur this year?:
     bleaching <- FALSE
-    if ((bleaching_frequency == 1 && i %% 4 == 0)
-     || (bleaching_frequency == 2 && i %% 2 == 0)
-     || (bleaching_frequency == 5)) {
+    if ((bleaching_frequency == 1 && i %% 4 == 0)    # Every 4th year
+     || (bleaching_frequency == 2 && i %% 2 == 0)    # Even years
+     || (bleaching_frequency == 5 && i %% 1 == 0)) { # Every year
         # If so, kill colonies before growth if bleaching occurs
         # Apply species-specific dieoff proportion to the colony count:
         bleaching <- TRUE
@@ -306,9 +366,9 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
     }
 
-    # Incorporate generalized bioerosion:
+    # Incorporate generalized microbioerosion:
     be_micro_effect    <- new_area * be_micro
-    # Region/habitat-specific rate:
+    # Region/habitat-specific (non-micro)bioerosion rate:
     be_nonmicro_effect <- new_area * be_nonmicro
 
     # Calculate the carbonate budget contribution for this year
@@ -326,7 +386,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   list(df = out_df, final_count = run_colony_count, final_area = new_area)
 }
 
-# Resolve habitat-specific non-microbioerosion (kg CaCO3/m2/yr) ----
+# Resolve habitat-specific bioerosion ----
+# (non-microbioerosion; kg CaCO3/m2/yr)
 resolve_bioerosion <- function(subregion, habitat) {
   be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
   be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
@@ -339,11 +400,9 @@ resolve_bioerosion <- function(subregion, habitat) {
 # Generalized Caribbean microbioerosion rate: 0.24 kg CaCO3/m2/yr
 be_micro_rate <- 0.24
 
-# ----------------------------------------------------------------------------
-# Baseline-only original growth for the timeline ----
+# Baseline-only original growth ----
 # Thin wrapper over simulate_growth: loops the selected species (originals
 # only) and sums the per-year RAP. Porosity from the baseline assemblage.
-# ----------------------------------------------------------------------------
 run_baseline_growth <- function(habitat, subregion, site_area, sim_duration,
                                 bleaching_severity, bleaching_frequency,
                                 baseline_cover_df) {
@@ -375,7 +434,8 @@ run_baseline_growth <- function(habitat, subregion, site_area, sim_duration,
 }
 
 # ----------------------------------------------------------------------------
-# Restoration model (adapted from acer_model_mockup.R) ----
+# Restoration model ----
+# (adapted from acer_model_mockup.R)
 # Two-phase per species:
 #   (1) Solve for the number of outplants needed to meet target % cover by the
 #       RESTORATION HORIZON (rest_horizon).
@@ -439,7 +499,6 @@ run_restoration_model <- function(habitat, subregion, site_area,
                                  bleaching_frequency = bleaching_frequency)
 
     orig_df   <- orig_list[[1]]
-    orig_area <- orig_list[[3]]
 
     colnames(orig_df) <- c("area_orig", "calc_total_orig", "calc_budg_orig", "RAP_orig", "pct_cvr_orig")
 
@@ -449,9 +508,7 @@ run_restoration_model <- function(habitat, subregion, site_area,
     orig_area_at_horizon <- orig_df[["area_orig"]][min(rest_horizon + 1, nrow(orig_df))]
     sp_to_grow_m <- target_sp_m - orig_area_at_horizon
 
-    # -----------------------------------------------------------------------
-    # PHASE 1: solve outplant count to hit target by the RESTORATION HORIZON
-    # -----------------------------------------------------------------------
+    # ---- PHASE 1: solve outplant count to hit target by the RESTORATION HORIZON ----
     # Have to start with a guess for the number of required outplants
     outplant_guess <- 70
 
@@ -488,9 +545,7 @@ run_restoration_model <- function(habitat, subregion, site_area,
       }
     }
 
-    # -----------------------------------------------------------------------
-    # PHASE 2: run the solved outplant count for the FULL simulation duration
-    # -----------------------------------------------------------------------
+    # ---- PHASE 2: run the solved outplant count for the FULL simulation duration ----
     new_list <- simulate_growth(group = "outplant", species = species,
                                 colony_count = outplant_guess, colony_diam = outplant_diam,
                                 duration = sim_duration + 1,
@@ -534,17 +589,10 @@ run_restoration_model <- function(habitat, subregion, site_area,
 year_choices <- sort(unique(df$YEAR))
 habitat_choices <- sort(unique(df$HABITAT_TYPE))
 
-# White-to-red palettes for the "Symbolize by" numeric options ----
+# White-to-red palettes ----
+# Used for the "Symbolize by" numeric options.
 # Each clamped 0 -> field max.
-# make_wr_pal <- function(field, rev = FALSE) {
-#   colorNumeric(
-#     palette = colorRampPalette(c("white", "red"))(100),
-#     domain = c(0, max(df[[field]], na.rm = TRUE)),
-#     reverse = rev
-#   )
-# }
-
-# Experiment with jenks symbology
+# Use Jenks symbology:
 make_wr_pal <- function(field, n = 7, rev = FALSE) {
   vals <- df[[field]]
   vals <- vals[is.finite(vals)]
@@ -584,13 +632,38 @@ num_pal_state <- colorFactor(
   levels  = names(state_colors)
 )
 
+# Restoration Mix groupings ----
+# Branching (tan) | Weedy/Other (lime) across the top; Massive (gray) below.
+branching_species <- c("Acropora cervicornis", "Acropora palmata")
+mix_massive_species <- c(
+  "Colpophyllia natans", "Diploria labyrinthiformis",
+  "Montastraea cavernosa", "Orbicella faveolata",
+  "Siderastrea siderea", "Solenastrea bournoni",
+  "Pseudodiploria spp."
+)
+weedy_species <- c("Porites astreoides", "Porites porites", "Stephanocoenia intersepta")
+
 # Shiny User Interface ----
 # Converted from bootstrapPage/navbarPage to shinydashboard::dashboardPage
 
 ## Header ----
+# Dark Mode toggle lives in the top ribbon (as a right-aligned dropdown item)
 header <- dashboardHeader(
   title = "Carbonate Budget Restoration Tool",
-  titleWidth = 380
+  titleWidth = 380,
+  tags$li(
+    class = "dropdown",
+    tags$div(
+      style = "padding: 12px 15px 0 0; color: white;",
+      materialSwitch(
+        inputId = "dark_mode",
+        label = "Dark Mode",
+        status = "primary",
+        right = TRUE,
+        inline = TRUE
+      )
+    )
+  )
 )
 
 ## Sidebar ----
@@ -609,7 +682,6 @@ sidebar <- dashboardSidebar(
 ## Body ----
 body <- dashboardBody(
   useShinyjs(),
-  # shinyDashboardThemes(theme = 'grey_dark'), # change dashboard theme (optional. reactive?)
 
   # Tag Setup ----
   tags$head(
@@ -663,6 +735,21 @@ body <- dashboardBody(
         font-size: 11px; color: #2f4f2f; font-style: italic;
         margin: -6px 0 6px 2px;
       }
+      /* Restoration mix: morphology sub-boxes */
+      .mix-subbox {
+        border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;
+      }
+      .mix-subbox > legend, .mix-subbox .mix-subbox-title {
+        font-size: 13px; font-weight: bold; margin-bottom: 4px; display: block;
+      }
+      .mix-branching { border: 2px solid #c8a165; }   /* tan */
+      .mix-branching .mix-subbox-title { color: #a97d3e; }
+      .mix-massive   { border: 2px solid #9e9e9e; }   /* gray */
+      .mix-massive   .mix-subbox-title { color: #6f6f6f; }
+      .mix-weedy     { border: 2px solid #7bc043; }   /* lime */
+      .mix-weedy     .mix-subbox-title { color: #5a9130; }
+      /* Tighten gutters between the three top-row boxes (~1/3 spacing) */
+      .restoration-toprow > [class*='col-'] { padding-left: 5px; padding-right: 5px; }
       /* Outplant parameter inputs: Inline label + narrow box*/
       .param-inline-row {
         display: flex; align-items: center; justify-content: space-between;
@@ -678,6 +765,43 @@ body <- dashboardBody(
       .param-inline-row .param-unit {
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
+
+      /* ---------------- DARK MODE (CSS-class toggle on <body>) ---------------- */
+      body.dark-mode .content-wrapper,
+      body.dark-mode .right-side { background-color: #1b2027 !important; }
+      body.dark-mode .main-header .logo,
+      body.dark-mode .main-header .navbar { background-color: #10141a !important; }
+      body.dark-mode .main-sidebar { background-color: #141a21 !important; }
+      body.dark-mode .box {
+        background-color: #232a33 !important;
+        color: #e6e6e6 !important;
+        border-top-color: #3a4552 !important;
+      }
+      body.dark-mode .box-title,
+      body.dark-mode .box-body,
+      body.dark-mode label,
+      body.dark-mode .control-label,
+      body.dark-mode h1, body.dark-mode h2, body.dark-mode h3,
+      body.dark-mode h4, body.dark-mode .param-label,
+      body.dark-mode .param-unit { color: #e6e6e6 !important; }
+      body.dark-mode .form-control,
+      body.dark-mode .selectize-input,
+      body.dark-mode input[type='number'],
+      body.dark-mode input[type='text'] {
+        background-color: #2c353f !important; color: #e6e6e6 !important;
+        border-color: #3a4552 !important;
+      }
+      body.dark-mode .selectize-dropdown { background-color: #2c353f !important; color: #e6e6e6 !important; }
+      body.dark-mode .rest-outplant-note { color: #9fd08a !important; }
+      body.dark-mode .impact-summary-box {
+        background: #2c353f !important; border-color: #3a4552 !important; color: #e6e6e6 !important;
+      }
+    ")),
+    # Toggle the body dark-mode class from the switch
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('toggle_dark', function(on) {
+        document.body.classList.toggle('dark-mode', on);
+      });
     "))
   ),
 
@@ -785,10 +909,12 @@ body <- dashboardBody(
     tabItem(
       tabName = "restoration",
       # Vertical layout: horizontal input row on top, timeline on the bottom
+      # `restoration-toprow` class tightens the inter-box gutters.
       fluidRow(
-        # --- Input element 1: Baseline cover (subsumed from Baseline Input) ---
+        class = "restoration-toprow",
+        # ---- Input element 1: Baseline cover (subsumed from Baseline Input) ----
         column(
-          width = 5,
+          width = 4,
           shinydashboard::box(
             title = "Baseline Cover",
             width = 12, status = "primary", solidHeader = TRUE,
@@ -837,7 +963,7 @@ body <- dashboardBody(
 
               ),
 
-              # Right column: dedicated vertical species:value list
+              # Right column: vertical species:value list
               column(
                 width = 6,
                 tags$strong("Baseline species cover (%)"),
@@ -853,18 +979,44 @@ body <- dashboardBody(
           )
         ),
 
-        # --- Input element 2: Restoration mix (subsumed from Baseline Input) ---
+        # ---- Input element 2: Restoration mix (subsumed from Baseline Input) ----
         column(
-          width = 4,
+          width = 5,
           shinydashboard::box(
             title = "Restoration Mix",
             width = 12, status = "success", solidHeader = TRUE,
             div(tags$strong("Target cover (%) post-restoration:")),
-            uiOutput("restoration_sliders")
+            # Top row: Branching (1 col) + Weedy/Other (2 cols)
+            fluidRow(
+              column(4,
+                tags$div(
+                  class = "mix-subbox mix-branching",
+                  tags$span(class = "mix-subbox-title", "Branching"),
+                  uiOutput("mix_branching")
+                )
+              ),
+              column(8,
+                tags$div(
+                  class = "mix-subbox mix-weedy",
+                  tags$span(class = "mix-subbox-title", "Weedy / Other"),
+                  uiOutput("mix_weedy")
+                )
+              )
+            ),
+            # Bottom row: Massive across all 3 columns
+            fluidRow(
+              column(12,
+                tags$div(
+                  class = "mix-subbox mix-massive",
+                  tags$span(class = "mix-subbox-title", "Massive"),
+                  uiOutput("mix_massive")
+                )
+              )
+            )
           )
         ),
 
-        # --- Input element 3: outplant + bleaching parameters ---
+        # ---- Input element 3: outplant + bleaching parameters ----
         column(
           width = 3,
           shinydashboard::box(
@@ -1049,6 +1201,7 @@ body <- dashboardBody(
                 width = 4,
                 tags$h4("Impact summary", style = "text-align:center; font-weight:bold;"),
                 div(
+                  class = "impact-summary-box",
                   style = "background:#f7f7f7; border:1px solid #ddd;
                            border-radius:6px; padding:12px; min-height:180px;",
                   htmlOutput("cc_impact_summary")
@@ -1124,6 +1277,11 @@ server <- function(input, output, session) {
   .safe_num <- function(x) {
     if (is.null(x) || length(x) == 0 || is.na(x)) 0 else as.numeric(x)
   }
+
+  # Dark Mode: toggle the body CSS class from the switch ----
+  observeEvent(input$dark_mode, {
+    session$sendCustomMessage("toggle_dark", isTRUE(input$dark_mode))
+  }, ignoreInit = FALSE)
 
   # Register large site lists server-side (performance)
   updateSelectizeInput(session, "monitoring_selected_site",
@@ -1411,7 +1569,8 @@ server <- function(input, output, session) {
   })
 
   ## ---------------------------------------------------------------------------
-  ## Baseline cover: dynamic per-species inputs + upload auto-populate ----
+  ## Baseline cover ----
+  ## dynamic per-species inputs + upload auto-populate
   ## ---------------------------------------------------------------------------
 
   # Full uploaded "Coral Cover input" sheet (all sites)
@@ -1421,7 +1580,8 @@ server <- function(input, output, session) {
   # Current carbonate budget computed at ingest time (for Year-0 pip / popup)
   ingested_current_budget <- reactiveVal(NULL)
 
-  # Habitat choices depend on the selected subregion ----
+  # Habitat choices ----
+  # respond to changes in the selected subregion
   observeEvent(input$subregion_choice, {
     # Map the full label back to a code for the habitat-set switch
     code <- if (input$subregion_choice %in% names(subregion_codes)) {
@@ -1444,18 +1604,18 @@ server <- function(input, output, session) {
     )
   }, ignoreInit = TRUE)
 
-  # Baseline cover: load from uploaded .xlsx (Coral Cover input sheet)
-  observeEvent(input$baseline_upload, {
-    req(input$baseline_upload)
-
+  # Shared baseline-ingest routine ----
+  # Reused by both the fileInput upload and the cached-file auto-load so the
+  # two paths behave identically. `path` points to an .xlsx on disk.
+  ingest_baseline_file <- function(path) {
     up <- tryCatch(
-      readxl::read_excel(input$baseline_upload$datapath, sheet = "Coral Cover input"),
+      readxl::read_excel(path, sheet = "Coral Cover input"),
       error = function(e) {
         showNotification(paste("Could not read sheet:", e$message), type = "error")
         NULL
       }
     )
-    req(up)
+    if (is.null(up)) return(invisible(NULL))
 
     baseline_upload_data(up)
 
@@ -1469,7 +1629,25 @@ server <- function(input, output, session) {
     } else {
       showNotification("Upload has no 'Unique_Site_ID' column.", type = "warning")
     }
+    invisible(TRUE)
+  }
+
+  # Baseline cover: load from uploaded .xlsx (Coral Cover input sheet).
+  # Also caches a copy so it auto-loads on the next launch.
+  observeEvent(input$baseline_upload, {
+    req(input$baseline_upload)
+    ingest_baseline_file(input$baseline_upload$datapath)
+    # Cache a copy for auto-reload on next launch
+    tryCatch(
+      file.copy(input$baseline_upload$datapath, cached_baseline_path, overwrite = TRUE),
+      error = function(e) NULL
+    )
   })
+
+  # On launch: if a cached baseline exists, auto-load it via the same path.
+  if (file.exists(cached_baseline_path)) {
+    ingest_baseline_file(cached_baseline_path)
+  }
 
   # When the selected site changes, filter the upload to that site and
   # push subregion / habitat / area / species / covers into the inputs.
@@ -1524,7 +1702,7 @@ server <- function(input, output, session) {
       # When baseline cover data is ingested, calculate the current carbonate
       # budget by area occupied per species. For each species, convert its
       # percent cover to occupied area (m^2), then multiply that area by the
-      # species' travis_rates['rate'] (queried by Taxon). Subtract habitat
+      # species' calc_rates['rate'] (queried by Taxon). Subtract habitat
       # bioerosion so the Year-0 pip/popup shows a true net budget.
       area_val_num <- .safe_num(area_val)
       sp_budget <- 0
@@ -1532,7 +1710,7 @@ server <- function(input, output, session) {
         cvr <- covers_vec[[s]]
         if (is.na(cvr)) next
         sp_area_m2 <- area_val_num * (cvr / 100)               # occupied area (m^2)
-        rate <- travis_rates$rate[travis_rates$Taxon == s]     # query by Taxon
+        rate <- calc_rates$rate[calc_rates$Taxon == s]     # query by Taxon
         if (length(rate) == 0 || is.na(rate[1])) next
         sp_budget <- sp_budget + sp_area_m2 * rate[1]          # kg CaCO3/yr (patch)
       }
@@ -1574,7 +1752,7 @@ server <- function(input, output, session) {
     })
   })
 
-  # Fixed restoration species sliders (Restoration Mix box)
+  # Fixed restoration species sliders (Restoration Mix box) ----
   restoration_species <- c(
     "Acropora cervicornis",  "Acropora palmata",
     "Colpophyllia natans",   "Diploria labyrinthiformis",
@@ -1584,25 +1762,48 @@ server <- function(input, output, session) {
     "Solenastrea bournoni",  "Stephanocoenia intersepta"
   )
 
-  # Sliders are STATIC: they must not depend on model output, or the UI would
-  # rebuild (resetting every slider to 0) whenever the model reruns. The
-  # per-species outplant counts render in a separate, independent output below.
-  output$restoration_sliders <- renderUI({
-    sliders <- lapply(restoration_species, function(s) {
+  # Helper: build a column of species sliders for one morphology sub-box.
+  # STATIC: sliders must not depend on model output, or the UI would rebuild
+  # (resetting every slider to 0) whenever the model reruns. Per-species
+  # outplant counts render in separate, independent outputs below.
+  make_mix_sliders <- function(species_vec) {
+    lapply(species_vec, function(s) {
       id  <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
       nid <- paste0("outplants_", gsub("[^A-Za-z0-9]", "_", s))
       tagList(
         sliderInput(id, label = s, min = 0, max = 20, value = 0, step = 0.5, post = "%"),
-        # Placeholder that a separate observer fills with the outplant count
         tags$div(class = "rest-outplant-note", textOutput(nid, inline = TRUE))
       )
     })
+  }
 
-    half <- ceiling(length(sliders) / 2)
+  # Branching sub-box: single column
+  output$mix_branching <- renderUI({
+    tagList(make_mix_sliders(branching_species))
+  })
 
+  # Weedy / Other sub-box: two columns
+  output$mix_weedy <- renderUI({
+    sl <- make_mix_sliders(weedy_species)
+    half <- ceiling(length(sl) / 2)
     fluidRow(
-      column(6, tagList(sliders[1:half])),
-      column(6, tagList(sliders[(half + 1):length(sliders)]))
+      column(6, tagList(sl[1:half])),
+      column(6, tagList(sl[(half + 1):length(sl)]))
+    )
+  })
+
+  # Massive sub-box: three columns
+  output$mix_massive <- renderUI({
+    sl <- make_mix_sliders(mix_massive_species)
+    n <- length(sl)
+    per <- ceiling(n / 3)
+    idx1 <- 1:min(per, n)
+    idx2 <- if (per + 1 <= n) (per + 1):min(2 * per, n) else integer(0)
+    idx3 <- if (2 * per + 1 <= n) (2 * per + 1):n else integer(0)
+    fluidRow(
+      column(4, tagList(sl[idx1])),
+      column(4, tagList(sl[idx2])),
+      column(4, tagList(sl[idx3]))
     )
   })
 
@@ -1654,7 +1855,8 @@ server <- function(input, output, session) {
   )
 
   ## ---------------------------------------------------------------------------
-  ## Restoration Planning: baseline / restored metrics + plotly timeline ----
+  ## Restoration Planning ----
+  ## baseline / restored metrics + plotly timeline
   ## ---------------------------------------------------------------------------
 
   # Reactive store of RAP values (shared with Monitoring tab)
@@ -1665,7 +1867,7 @@ server <- function(input, output, session) {
 
   # Baseline cover & carbonate budget from the entered/uploaded data.
   # Budget uses the area-occupied method: per species, area (m^2) * rate,
-  # queried from travis_rates by Taxon, normalized to per-m2, minus bioerosion.
+  # queried from calc_rates by Taxon, normalized to per-m2, minus bioerosion.
   baseline_metrics <- reactive({
     sim_duration <- .safe_num(input$sim_duration)
     unconsolidated_cover <- .safe_num(input$unconsolidated_substrate)
@@ -1683,7 +1885,7 @@ server <- function(input, output, session) {
     for (k in seq_along(sp)) {
       s <- sp[k]
       sp_area_m2 <- area_val_num * (covers[k] / 100)
-      rate <- travis_rates$rate[travis_rates$Taxon == s]
+      rate <- calc_rates$rate[calc_rates$Taxon == s]
       if (length(rate) == 0 || is.na(rate[1])) next
       patch_budget <- patch_budget + sp_area_m2 * rate[1]
     }
@@ -1737,7 +1939,7 @@ server <- function(input, output, session) {
     b <- baseline_metrics()
     slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
     rest_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
-    rest_rates <- as.numeric(travis_rates$rate[match(restoration_species, travis_rates$Species)])
+    rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Species)])
     net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
 
     total_cover <- b$cover + sum(rest_vals, na.rm = TRUE)
@@ -1748,7 +1950,7 @@ server <- function(input, output, session) {
     list(cover = total_cover, budget = budget, rap = rap_values$restored)
   })
 
-  # Run the restoration model reactively ----
+  # ---- Reactive restoration model ----
   # Derives all parameters from Shiny inputs, builds target_cover_df from the
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
@@ -1812,14 +2014,16 @@ server <- function(input, output, session) {
     )
   })
 
-  # Per-species outplant counts (drives the Restoration Mix captions) ----
+  # ---- Per-species outplant counts ----
+  # (drives the Restoration Mix captions)
   model_outplants <- reactive({
     mr <- model_result()
     if (is.null(mr)) return(NULL)
     mr$outplants_by_species
   })
 
-  # Reactive surround: total project cost from the model ----
+  # ---- Reactive graph surround ----
+  # total project cost from the model
   output$model_final_cost <- renderText({
     mr <- model_result()
     if (is.null(mr)) return("Final cost: \u2014")
@@ -1863,7 +2067,7 @@ server <- function(input, output, session) {
       if (is.null(bg)) {
         d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
         p <- ggplot(d0, aes(Year, RAP)) +
-          scale_x_continuous(breaks = x_breaks, limits = c(0,  dur * 1.1)) +
+          scale_x_continuous(breaks = x_breaks) +
           labs(x = "Year", y = "RAP (mm/yr)") +
           theme_minimal(base_size = 14)
       } else {
@@ -1880,7 +2084,7 @@ server <- function(input, output, session) {
                                       "<br>Year ", Year,
                                       "<br>", round(RAP_orig, 2), " mm/yr")),
                     color = "gray30", linewidth = 1.1) +
-          scale_x_continuous(breaks = x_breaks, limits = c(0, dur * 1.1)) +
+          scale_x_continuous(breaks = x_breaks) +
           labs(x = "Year", y = "RAP (mm/yr)") +
           theme_minimal(base_size = 14)
       }
@@ -1938,7 +2142,7 @@ server <- function(input, output, session) {
           )),
           size = 4, color = "darkgreen"
         ) +
-        scale_x_continuous(breaks = x_breaks, limits = c(0, dur * 1.1)) +
+        scale_x_continuous(breaks = x_breaks) +
         labs(x = "Year", y = "RAP (mm/yr)") +
         theme_minimal(base_size = 14)
     }
@@ -2000,11 +2204,11 @@ server <- function(input, output, session) {
   })
 
   ## ---------------------------------------------------------------------------
-  ## Save scenario (from Restoration Planning tab) ----
+  ## Save scenario (Restoration Planning) ----
   ## ---------------------------------------------------------------------------
   observeEvent(input$save_scenario, {
-    #validate(need(nzchar(input$scenario_project), "Enter a project name."))
-    #validate(need(nzchar(input$scenario_name), "Enter a scenario name."))
+    shiny::validate(shiny::need(nzchar(input$scenario_project), "Enter a project name."))
+    shiny::validate(shiny::need(nzchar(input$scenario_name), "Enter a scenario name."))
 
     r <- restored_metrics()
     b <- baseline_metrics()
@@ -2017,30 +2221,34 @@ server <- function(input, output, session) {
     # Prefer model-derived cost when available; else illustrative fallback
     added_cover <- r$cover - b$cover
     cost <- if (!is.null(mr)) mr$cost else added_cover * .safe_num(input$outplant_cost) * 100
-    outplants <- if (!is.null(mr)) mr$outplants else NA
+    # Coerce potentially-empty model outputs to a scalar NA so the JSON never
+    # holds a length-0 field (which breaks as.data.frame on read).
+    outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
     elev_gain_10yr <- restored_rap * 10 # mm over 10 years
     roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
 
+    # Build the scenario, forcing every field to a length-1 scalar
+    scalar1 <- function(x) if (is.null(x) || length(x) == 0) NA else x[[1]]
     scenario <- list(
-      project = input$scenario_project,
-      scenario = input$scenario_name,
-      site = input$baseline_site,
-      subregion = input$subregion_choice,
-      habitat = input$habitat_choice,
+      project = scalar1(input$scenario_project),
+      scenario = scalar1(input$scenario_name),
+      site = scalar1(input$baseline_site),
+      subregion = scalar1(input$subregion_choice),
+      habitat = scalar1(input$habitat_choice),
       site_area_m2 = .safe_num(input$site_area_m2),
-      total_cover = total_cover,
-      baseline_rap = baseline_rap,
-      restored_rap = restored_rap,
-      outplants = outplants,
+      total_cover = scalar1(total_cover),
+      baseline_rap = scalar1(baseline_rap),
+      restored_rap = scalar1(restored_rap),
+      outplants = scalar1(outplants),
       outplant_size = .safe_num(input$outplant_size),
       outplant_cost = .safe_num(input$outplant_cost),
       dhw = .safe_num(input$dhw),
       bleach_events = .safe_num(input$bleach_events),
       rest_horizon = .safe_num(input$rest_horizon),
       sim_duration = .safe_num(input$sim_duration),
-      cost = cost,
-      roi = roi,
-      elev_gain_10yr = elev_gain_10yr,
+      cost = scalar1(cost),
+      roi = scalar1(roi),
+      elev_gain_10yr = scalar1(elev_gain_10yr),
       saved = as.character(Sys.time())
     )
 
@@ -2266,7 +2474,7 @@ server <- function(input, output, session) {
   ## Scenario Comparison tab ----
   ## ---------------------------------------------------------------------------
 
-  # Read all saved scenario .json files
+  # Read all saved scenario .json files (sanitized to one clean row each)
   all_scenarios <- reactive({
     input$sc_refresh
     input$save_scenario # refresh after a save
@@ -2276,11 +2484,10 @@ server <- function(input, output, session) {
     }
     rows <- lapply(files, function(f) {
       s <- tryCatch(fromJSON(f), error = function(e) NULL)
-      if (is.null(s)) {
-        return(NULL)
-      }
-      as.data.frame(s, stringsAsFactors = FALSE)
+      scenario_to_row(s)
     })
+    rows <- rows[!vapply(rows, is.null, logical(1))]
+    if (length(rows) == 0) return(data.frame())
     do.call(rbind, rows)
   })
 
@@ -2299,17 +2506,21 @@ server <- function(input, output, session) {
     updateCheckboxGroupInput(session, "sc_scenarios", choices = scen)
   })
 
-  # Filtered scenarios for plotting
+  # Filtered scenarios for plotting (coerce numeric cols used by the plots)
   sc_selected <- reactive({
     sc <- all_scenarios()
     req(nrow(sc) > 0, input$sc_project, input$sc_scenarios)
-    sc[sc$project == input$sc_project & sc$scenario %in% input$sc_scenarios, ]
+    d <- sc[sc$project == input$sc_project & sc$scenario %in% input$sc_scenarios, ]
+    for (col in c("cost", "roi", "restored_rap", "elev_gain_10yr")) {
+      if (col %in% names(d)) d[[col]] <- as.numeric(d[[col]])
+    }
+    d
   })
 
   # Project cost bar
   output$sc_cost_bar <- renderPlot({
     d <- sc_selected()
-    validate(need(nrow(d) > 0, "Select one or more scenarios."))
+    shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     ggplot(d, aes(x = scenario, y = cost, fill = scenario)) +
       geom_col() +
       labs(x = NULL, y = "Project cost ($)") +
@@ -2321,7 +2532,7 @@ server <- function(input, output, session) {
   # ROI bar
   output$sc_roi_bar <- renderPlot({
     d <- sc_selected()
-    validate(need(nrow(d) > 0, "Select one or more scenarios."))
+    shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     ggplot(d, aes(x = scenario, y = roi, fill = scenario)) +
       geom_col() +
       labs(x = NULL, y = "ROI (mm elevation per $1k)") +
@@ -2333,7 +2544,7 @@ server <- function(input, output, session) {
   # RAP & elevation-gain scatter
   output$sc_scatter <- renderPlot({
     d <- sc_selected()
-    validate(need(nrow(d) > 0, "Select one or more scenarios."))
+    shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     ggplot(d, aes(x = restored_rap, y = elev_gain_10yr, color = scenario)) +
       geom_point(size = 4) +
       geom_text(aes(label = scenario), show.legend = FALSE, vjust = -1) +

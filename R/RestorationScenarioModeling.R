@@ -549,10 +549,8 @@ year_x_site$elevation <- year(x - 1)$elevation +# invalid: "year(x - 1)" is not 
 ### Ranking of Reef-Accretion Potential ###
 # Needs to be reported in the context of what this actually means for whether the reef is growing
 # and how fast
-baseline_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < baseline_rap) /# invalid: missing closing bracket before closing paren
-length(baseline_budgets$rap) * 100
-year_x_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < year_x_site$rap]) /
-length(baseline_budgets$rap) * 100
+baseline_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < baseline_rap]) / length(baseline_budgets$rap) * 100
+year_x_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < year_x_site$rap]) / length(baseline_budgets$rap) * 100
 
 library(tidyr)
 library(dplyr)
