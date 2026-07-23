@@ -238,34 +238,48 @@ dhw_slope_lookup_fk <- tibble::tribble(
 # Reductions applied the 1st .. 4th years after bleaching occurs
 pbr <- c(0.60, 0.35, 0.15, 0.05)
 
+# Mortality by colony size:
+mortality_by_size <- function(size) {
+  # Placeholder function - replace with actual mortality rates by size
+  if (size < 5) {
+    0.35
+  } else if (size >= 5 && size < 10) {
+    0.30
+  } else if (size >= 10 && size < 15) {
+    0.25
+  } else {
+  0.20  # Default: 0% mortality for larger colonies
+  }
+}
+
 # Identify massive corals
-massive_corals <- c(
-  "Montastraea cavernosa",
-  "Orbicella annularis",
-  "Orbicella faveolata",
-  "Orbicella franksi",
+all_massive_species <- c(
   "Colpophyllia natans",
   "Diploria labyrinthiformis",
-  "Pseudodiploria clivosa",
-  "Pseudodiploria strigosa",
-  "Siderastrea siderea",
-  "Siderastrea radians",
-  "Solenastrea bournoni",
-  "Solenastrea hyades",
-  "Meandrina meandrites",
-  "Meandrina spp.",
   "Favia fragum",
   "Favia spp.",
+  "Isophyllia rigida",
+  "Isophyllia sinuosa",
+  "Isophyllia spp.",
+  "Meandrina meandrites",
+  "Meandrina spp.",
+  "Montastraea cavernosa",
   "Mycetophyllia aliciae",
   "Mycetophyllia ferox",
   "Mycetophyllia lamarckiana",
   "Mycetophyllia spp.",
-  "Isophyllia rigida",
-  "Isophyllia sinuosa",
-  "Isophyllia spp.",
+  "Orbicella annularis",
+  "Orbicella faveolata",
+  "Orbicella franksi",
+  "Pseudodiploria clivosa",
+  "Pseudodiploria strigosa",
   "Scolymia cubensis",
   "Scolymia lacera",
-  "Scolymia spp."
+  "Scolymia spp.",
+  "Siderastrea radians",
+  "Siderastrea siderea",
+  "Solenastrea bournoni",
+  "Solenastrea hyades"
 )
 
 # Assemblage-porosity selector ----
@@ -275,7 +289,7 @@ massive_corals <- c(
 assemblage_porosity <- function(cover_df, cover_col) {
   total_pct <- sum(cover_df[[cover_col]], na.rm = TRUE)
   massive_pct <- 0
-  for (s in massive_corals) {
+  for (s in all_massive_species) {
     if (s %in% cover_df$taxon) {
       massive_pct <- massive_pct + cover_df[cover_df$taxon == s, cover_col]
     }
@@ -309,21 +323,22 @@ assemblage_porosity <- function(cover_df, cover_col) {
 # ----------------------------------------------------------------------------
 simulate_growth <- function(group, species, colony_count, colony_diam, duration,
                             site_area, por, be_micro, be_nonmicro,
-                            bleaching_severity, bleaching_frequency,
-                            outplant_mortality = 0.30) {
+                            bleaching_severity, bleaching_frequency
+                            ) {
 
   # Per-species lookups
   genus        <- stringr::str_split(species, " ")[[1]][1]
   sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
-  if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.50 # generic fallback
+  if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.80 # generic fallback
   sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100 # % -> proportion
   sp_dhw_mortality <- 0.25 # 25% of the cover loss applied as whole-colony mortality
+                           # (generalized default, see about species-specific values later)
   sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
 
   out_df <- data.frame()
   new_size          <- colony_diam
   run_colony_count  <- colony_count # working colony count for this run
-  last_bleach_year  <- 0            # placeholder
+  last_bleach_year  <- 1            # placeholder
 
   for (i in 1:duration) { # R starts counting at 1 so "Year 0" = Year 1; "Year 10" = Year 11
 
@@ -331,7 +346,16 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     # Assume 30% outplant die-off. Apply before growth calculation.
     # Should colony numbers be rounded at every step or only at the end?
     if (group == "outplant" && i == 1) {
-      run_colony_count <- round(run_colony_count * (1 - outplant_mortality))
+      run_colony_count <- round(run_colony_count * (1 - mortality_by_size(colony_diam)))
+    }
+
+    # Calculate post-bleaching growth reduction from last year's bleaching
+    years_since_last_bleach <- i - last_bleach_year
+    if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
+        # Apply post-bleaching production losses
+        reduction <- pbr[years_since_last_bleach]
+    } else {
+        reduction <- 0
     }
 
     # Will bleaching occur this year?:
@@ -344,15 +368,6 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
         bleaching <- TRUE
         last_bleach_year <- i
         run_colony_count <- round(run_colony_count * (1 - sp_dhw_loss * sp_dhw_mortality))
-    }
-
-    # Calculate post-bleaching growth reduction
-    years_since_last_bleach <- i - last_bleach_year
-    if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
-        # Apply post-bleaching production losses
-        reduction <- pbr[years_since_last_bleach]
-    } else {
-        reduction <- 0
     }
 
     # Grow the surviving colonies
@@ -636,12 +651,17 @@ num_pal_state <- colorFactor(
 # Branching (tan) | Weedy/Other (lime) across the top; Massive (gray) below.
 branching_species <- c("Acropora cervicornis", "Acropora palmata")
 mix_massive_species <- c(
-  "Colpophyllia natans", "Diploria labyrinthiformis",
-  "Montastraea cavernosa", "Orbicella faveolata",
-  "Siderastrea siderea", "Solenastrea bournoni",
-  "Pseudodiploria spp."
+  "Colpophyllia natans",
+  "Diploria labyrinthiformis",
+  "Montastraea cavernosa",
+  "Orbicella faveolata",
+  "Pseudodiploria spp.",
+  "Siderastrea siderea",
+  "Solenastrea bournoni",
+  "Stephanocoenia intersepta"
 )
-weedy_species <- c("Porites astreoides", "Porites porites", "Stephanocoenia intersepta")
+
+weedy_species <- c("Porites astreoides", "Porites porites")
 
 # Shiny User Interface ----
 # Converted from bootstrapPage/navbarPage to shinydashboard::dashboardPage
@@ -671,7 +691,7 @@ sidebar <- dashboardSidebar(
   width = 230,
   sidebarMenu(
     id = "nav",
-    menuItem("Home", tabName = "home", icon = icon("map")),
+    menuItem("Reef Site Map", tabName = "home", icon = icon("map")),
     menuItem("Restoration Planning", tabName = "restoration", icon = icon("seedling")),
     menuItem("Scenario Comparison", tabName = "scenarios", icon = icon("scale-balanced")),
     menuItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column")),
@@ -851,7 +871,7 @@ body <- dashboardBody(
 
             # Target Percent-Cover Increase slider
             sliderInput("target_cover_increase", "Target Percent-Cover Increase",
-              min = 0, max = 30, value = 0, step = 5, post = "%", width = "100%"
+              min = 0, max = 30, value = 0, step = 1, post = "%", width = "100%"
             ),
 
             # Filter group: Year + Habitat dropdown checkboxes
@@ -1043,10 +1063,10 @@ body <- dashboardBody(
 
             # Timeline parameters
             sliderInput("rest_horizon", "Restoration horizon (years)",
-              value = 10, min = 10, max = 120, step = 10
+              value = 10, min = 0, max = 30, step = 5
               ),
             sliderInput("sim_duration", "Simulation duration (years)",
-              value = 10, min = 10, max = 120, step = 10
+              value = 10, min = 10, max = 30, step = 5
               ),
 
             # Bleaching scenario (vertical, red outline)
@@ -2191,9 +2211,9 @@ server <- function(input, output, session) {
         plotly::layout(
           annotations = list(
             list(
-              x = 0, y = mr$budget_df$RAP_total[1], text = y0_label,
+              x = 0, y = b$rap, text = y0_label,
               showarrow = TRUE, arrowhead = 0, ax = 40, ay = -40,
-              align = "left", bgcolor = "white", bordercolor = "#ccc",
+              align = "left", bgcolor = "white", bordercolor = "steelblue",
               font = list(size = 11)
             )
           )
