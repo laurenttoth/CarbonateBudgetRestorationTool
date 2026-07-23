@@ -235,23 +235,119 @@ assemblage_porosity <- function(cover_df, cover_col) {
 }
 
 # ----------------------------------------------------------------------------
+# Growth simulation (single source of truth) ----
+# Applicable to original colonies and new outplants, and reused by both the
+# restoration model and the baseline-growth reactive. Performs its own per-
+# species lookups (growth rate, DHW slope) from `species` + `bleaching_severity`.
+# Applies Year-1 outplant mortality (group == "outplant" only), per-event
+# bleaching dieoff, post-bleaching growth reduction, and bioerosion.
+# Returns a per-year data.frame (area, calc_total, calc_budg, RAP, pct_cvr)
+# plus the final colony count and final area.
+#
+# UNITS NOTE: contrib is a whole-patch flux (kg CaCO3/yr). RAP normalizes it to
+# a per-m2 basis by dividing by site_area before the /2.9/(1-por) conversion.
+# ----------------------------------------------------------------------------
+simulate_growth <- function(group, species, colony_count, colony_diam, duration,
+                            site_area, por, be_micro, be_nonmicro,
+                            bleaching_severity, bleaching_frequency,
+                            outplant_mortality = 0.30) {
+
+  # Per-species lookups
+  genus        <- stringr::str_split(species, " ")[[1]][1]
+  sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
+  if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.50 # generic fallback
+  sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100 # % -> proportion
+  sp_dhw_mortality <- 0.25 # 25% of the cover loss applied as whole-colony mortality
+  sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
+
+  out_df <- data.frame()
+  new_size          <- colony_diam
+  run_colony_count  <- colony_count # working colony count for this run
+  last_bleach_year  <- 0            # placeholder
+
+  for (i in 1:duration) { # R starts counting at 1 so "Year 0" = Year 1; "Year 10" = Year 11
+
+    # Incorporate Mote outplant mortality observations during Year 0 = "Year 1"
+    # Assume 30% outplant die-off. Apply before growth calculation.
+    # Should colony numbers be rounded at every step or only at the end?
+    if (group == "outplant" && i == 1) {
+      run_colony_count <- round(run_colony_count * (1 - outplant_mortality))
+    }
+
+    # Will bleaching occur this year?:
+    bleaching <- FALSE
+    if ((bleaching_frequency == 1 && i %% 4 == 0)
+     || (bleaching_frequency == 2 && i %% 2 == 0)
+     || (bleaching_frequency == 5)) {
+        # If so, kill colonies before growth if bleaching occurs
+        # Apply species-specific dieoff proportion to the colony count:
+        bleaching <- TRUE
+        last_bleach_year <- i
+        run_colony_count <- round(run_colony_count * (1 - sp_dhw_loss * sp_dhw_mortality))
+    }
+
+    # Calculate post-bleaching growth reduction
+    years_since_last_bleach <- i - last_bleach_year
+    if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
+        # Apply post-bleaching production losses
+        reduction <- pbr[years_since_last_bleach]
+    } else {
+        reduction <- 0
+    }
+
+    # Grow the surviving colonies
+    # Apply post-bleaching growth reduction to planar growth rate
+    new_size <- new_size + sp_growth_rate * (1 - reduction)
+    new_area <- (new_size / 2) ^ 2 * pi * run_colony_count
+
+    # If bleaching, apply the remaining bleaching stress that did not cause mortality
+    # as a reduction to the new_area created this year:
+    if (bleaching) {
+      new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
+    }
+
+    # Incorporate generalized bioerosion:
+    be_micro_effect    <- new_area * be_micro
+    # Region/habitat-specific rate:
+    be_nonmicro_effect <- new_area * be_nonmicro
+
+    # Calculate the carbonate budget contribution for this year
+    contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
+    contrib <- contrib - be_micro_effect - be_nonmicro_effect
+    budget  <- contrib / site_area
+    # Populate the output dataframe with total values as of this year:
+    out_df[i, "area"]       <- new_area # Calcifier area
+    out_df[i, "calc_total"] <- contrib # Site-wide calcite contribution (kg CaCO3 / yr)
+    out_df[i, "calc_budg"]  <- budget # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
+    out_df[i, "RAP"]        <- budget / 2.9 / (1 - por) # Reef accretion potential
+    out_df[i, "pct_cvr"]    <- new_area / site_area * 100 # Calcifier percent cover
+  }
+
+  list(df = out_df, final_count = run_colony_count, final_area = new_area)
+}
+
+# Resolve habitat-specific non-microbioerosion (kg CaCO3/m2/yr) ----
+resolve_bioerosion <- function(subregion, habitat) {
+  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
+  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
+  be_pfish  <- if (nrow(be_hab)) be_hab$AVG_PARROTFISH[1] else 0
+  be_urchin <- if (nrow(be_hab)) be_hab$AVG_URCHIN[1] else 0
+  be_macro  <- if (nrow(be_hab)) be_hab$AVG_MACROBIOEROSION[1] else 0
+  sum(be_pfish, be_urchin, be_macro, na.rm = TRUE)
+}
+
+# Generalized Caribbean microbioerosion rate: 0.24 kg CaCO3/m2/yr
+be_micro_rate <- 0.24
+
+# ----------------------------------------------------------------------------
 # Baseline-only original growth for the timeline ----
-# Mirrors the model's originals path (mortality-free, symmetric bleaching +
-# bioerosion) and returns a per-year RAP series summed across the selected
-# species. Porosity is chosen from the baseline assemblage.
+# Thin wrapper over simulate_growth: loops the selected species (originals
+# only) and sums the per-year RAP. Porosity from the baseline assemblage.
 # ----------------------------------------------------------------------------
 run_baseline_growth <- function(habitat, subregion, site_area, sim_duration,
                                 bleaching_severity, bleaching_frequency,
                                 baseline_cover_df) {
-  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
-  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
-  be_pfish    <- if (nrow(be_hab)) be_hab$AVG_PARROTFISH[1] else 0
-  be_urchin   <- if (nrow(be_hab)) be_hab$AVG_URCHIN[1] else 0
-  be_macro    <- if (nrow(be_hab)) be_hab$AVG_MACROBIOEROSION[1] else 0
-  be_nonmicro <- sum(be_pfish, be_urchin, be_macro, na.rm = TRUE)
-  be_micro    <- 0.24
-
-  # Porosity from the baseline assemblage (current cover)
+  be_nonmicro <- resolve_bioerosion(subregion, habitat)
   por <- assemblage_porosity(baseline_cover_df, "current_cvr_pct")
 
   total_rap <- rep(0, sim_duration + 1)
@@ -259,44 +355,21 @@ run_baseline_growth <- function(habitat, subregion, site_area, sim_duration,
   for (row_i in seq_len(nrow(baseline_cover_df))) {
     species        <- baseline_cover_df$taxon[row_i]
     current_sp_pct <- baseline_cover_df$current_cvr_pct[row_i]
-    genus          <- stringr::str_split(species, " ")[[1]][1]
     if (is.na(current_sp_pct) || current_sp_pct <= 0) next
 
-    sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
-    if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.50
-    sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100
-    sp_dhw_mortality <- 0.25
-
-    current_sp_m   <- site_area * (current_sp_pct / 100)
-    sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
-    if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
+    current_sp_m <- site_area * (current_sp_pct / 100)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
     if (length(sp_diam) == 0 || is.na(sp_diam)) next
+    orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
 
-    sp_area       <- (sp_diam / 2) ^ 2 * pi
-    orig_colonies <- round(current_sp_m / sp_area)
-
-    new_size <- sp_diam
-    run_colony_count <- orig_colonies
-    last_bleach_year <- 0
-    for (i in 1:(sim_duration + 1)) {
-      bleaching <- FALSE
-      if ((bleaching_frequency == 1 && i %% 4 == 0)
-       || (bleaching_frequency == 2 && i %% 2 == 0)
-       || (bleaching_frequency == 5)) {
-        bleaching <- TRUE
-        last_bleach_year <- i
-        run_colony_count <- round(run_colony_count * (1 - sp_dhw_loss * sp_dhw_mortality))
-      }
-      ysb <- i - last_bleach_year
-      reduction <- if (ysb <= 4 && ysb > 0) pbr[ysb] else 0
-      new_size <- new_size + sp_growth_rate * (1 - reduction)
-      new_area <- (new_size / 2) ^ 2 * pi * run_colony_count
-      if (bleaching) new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
-      contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
-      contrib <- contrib - new_area * be_micro - new_area * be_nonmicro
-      total_rap[i] <- total_rap[i] + (contrib / site_area) / 2.9 / (1 - por)
-    }
+    sim <- simulate_growth(group = "original", species = species,
+                           colony_count = orig_colonies, colony_diam = sp_diam,
+                           duration = sim_duration + 1,
+                           site_area = site_area, por = por,
+                           be_micro = be_micro_rate, be_nonmicro = be_nonmicro,
+                           bleaching_severity = bleaching_severity,
+                           bleaching_frequency = bleaching_frequency)
+    total_rap <- total_rap + sim$df$RAP
   }
   data.frame(Year = 0:sim_duration, RAP_orig = total_rap)
 }
@@ -310,11 +383,6 @@ run_baseline_growth <- function(habitat, subregion, site_area, sim_duration,
 #       sim_duration to produce the graphed budget_df.
 # Returns the summed budget_df across species, a per-species outplant vector,
 # and total cost.
-#
-# UNITS NOTE: contrib is a whole-patch flux (kg CaCO3/yr). To convert to a
-# vertical accretion RATE comparable to the site-level RAP (mm/yr), the flux is
-# normalized to a per-m2 basis by dividing by site_area before the
-# /2.9/(1-por) conversion. Without this, RAP is inflated ~site_area-fold.
 # ----------------------------------------------------------------------------
 run_restoration_model <- function(habitat, subregion, site_area,
                                   sim_duration, rest_horizon,
@@ -322,95 +390,12 @@ run_restoration_model <- function(habitat, subregion, site_area,
                                   bleaching_severity, bleaching_frequency,
                                   target_cover_df) {
 
-  # Mortality: for now, static variable
-  outplant_mortality <- 0.30 # 30% die-off (estimate)
-
-  # Subregion- and habitat-specific bioerosion rates (non-microbioerosion)
-  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
-  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
-
-  # Bioerosion recorded in Kg CaCO3/m2/yr
-  be_pfish     <- if (nrow(be_hab)) be_hab$AVG_PARROTFISH[1] else 0
-  be_urchin    <- if (nrow(be_hab)) be_hab$AVG_URCHIN[1] else 0
-  be_macro     <- if (nrow(be_hab)) be_hab$AVG_MACROBIOEROSION[1] else 0
-  be_nonmicro  <- sum(be_pfish, be_urchin, be_macro, na.rm = TRUE)
-
-  # Generalized Caribbean be_microerosion rate: 0.24 kg CaCO3/m2/yr
-  be_micro <- 0.24
+  # Subregion/habitat-specific non-microbioerosion + generalized microerosion
+  be_nonmicro <- resolve_bioerosion(subregion, habitat)
+  be_micro    <- be_micro_rate
 
   # Assign porosity by target assemblage
   por <- assemblage_porosity(target_cover_df, "target_cvr_pct")
-
-  # Growth simulation function applicable to original colonies and new outplants.
-  # Applies Year-1 mortality, per-event bleaching dieoff, post-bleaching
-  # growth reduction, and bioerosion symmetrically. Returns a per-year
-  # data.frame (area, calc, RAP, pct_cvr) plus the final colony count.
-  simulate_growth <- function(group, species, colony_count, colony_diam, duration) {
-    out_df <- data.frame()
-    new_size         <- colony_diam
-    run_colony_count        <- colony_count # working colony count for this run
-    last_bleach_year <- 0            # placeholder
-
-    for (i in 1:duration) { # R starts counting at 1 so "Year 0" = Year 1; "Year 10" = Year 11
-
-      # Incorporate Mote outplant mortality observations during Year 0 = "Year 1"
-      # Assume 30% outplant die-off. Apply before growth calculation.
-      # Should colony numbers be rounded at every step or only at the end?
-      if (group == "outplant" && i == 1) {
-        run_colony_count <- round(run_colony_count * (1 - outplant_mortality))
-      }
-
-      # Will bleaching occur this year?:
-      bleaching <- FALSE
-      if ((bleaching_frequency == 1 && i %% 4 == 0)
-       || (bleaching_frequency == 2 && i %% 2 == 0)
-       || (bleaching_frequency == 5)) {
-          # If so, kill colonies before growth if bleaching occurs
-          # Apply species-specific dieoff proportion to the colony count:
-          bleaching <- TRUE
-          last_bleach_year <- i
-          run_colony_count <- round(run_colony_count * (1 - sp_dhw_loss * sp_dhw_mortality))
-      }
-
-      # Calculate post-bleaching growth reduction
-      years_since_last_bleach <- i - last_bleach_year
-      if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
-          # Apply post-bleaching production losses
-          reduction <- pbr[years_since_last_bleach]
-      } else {
-          reduction <- 0
-      }
-
-      # Grow the surviving colonies
-      # Apply post-bleaching growth reduction to planar growth rate
-      new_size <- new_size + sp_growth_rate * (1 - reduction)
-      new_area <- (new_size / 2) ^ 2 * pi * run_colony_count
-
-      # If bleaching, apply the remaining bleaching stress that did not cause mortality
-      # as a reduction to the new_area created this year:
-      if (bleaching) {
-        new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
-      }
-
-      # Incorporate generalized bioerosion:
-      be_micro_effect    <- new_area * be_micro
-      # Region/habitat-specific rate:
-      be_nonmicro_effect <- new_area * be_nonmicro
-
-      # Calculate the carbonate budget contribution for this year
-      contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
-      contrib <- contrib - be_micro_effect - be_nonmicro_effect
-      budget  <- contrib / site_area
-      # Populate the output dataframe with total values as of this year:
-      out_df[i, "area"]       <- new_area # Calcifier area
-      out_df[i, "calc_total"] <- contrib # Site-wide calcite contribution (kg CaCO3 / yr)
-      out_df[i, "calc_budg"]  <- budget # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
-      out_df[i, "RAP"]        <- budget / 2.9 / (1 - por) # Reef accretion potential
-      out_df[i, "pct_cvr"]    <- new_area / site_area * 100 # Calcifier percent cover
-    }
-
-    list(df = out_df, final_count = run_colony_count, final_area = new_area)
-  }
 
   # Accumulate the summed budget across species
   budget_df <- data.frame()
@@ -422,30 +407,22 @@ run_restoration_model <- function(habitat, subregion, site_area,
     species        <- target_cover_df$taxon[row_i]
     target_sp_pct  <- target_cover_df$target_cvr_pct[row_i]
     current_sp_pct <- target_cover_df$current_cvr_pct[row_i]
-    genus          <- stringr::str_split(species, " ")[[1]][1]
 
     # Iterate per species:
     sp_to_grow_pct <- target_sp_pct - current_sp_pct
     if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
 
-    # Species-specific cover loss per DHW
-    sp_dhw_slope     <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
-    if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.50 # generic fallback
-    sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100 # Convert from % to proportion
-    sp_dhw_mortality <- 0.25 # Assume 25% of the cover loss is applied as whole-colony mortality
-
     current_sp_m <- site_area * (current_sp_pct / 100)  # 1 m^2
     target_sp_m  <- site_area * (target_sp_pct / 100)   # 8 m^2
     sp_to_grow_m <- target_sp_m - current_sp_m          # 7 m^2
 
-    sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
-    # ^ 20.25 mm = 0.02025 m/yr
-    if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
-
-    # Approximate the original number of colonies
+    # Colony-count seeding needs the species diameter (also used by the sim)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
     # ^ 0.2 m
     if (length(sp_diam) == 0 || is.na(sp_diam)) next
+    # Skip species with no growth-rate record (sim would produce NA)
+    sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
+    if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
 
     sp_area <- (sp_diam / 2) ^ 2 * pi
     orig_colonies <- round(current_sp_m / sp_area)
@@ -453,15 +430,16 @@ run_restoration_model <- function(habitat, subregion, site_area,
 
     # Start with originals, assuming they have grown regularly for the FULL
     # simulation duration (they are the graphed baseline contribution).
-    orig_list <- simulate_growth(group = "original",
-                                        species = species,
-                                        colony_count = orig_colonies,
-                                        colony_diam = sp_diam,
-                                        duration = sim_duration + 1)
+    orig_list <- simulate_growth(group = "original", species = species,
+                                 colony_count = orig_colonies, colony_diam = sp_diam,
+                                 duration = sim_duration + 1,
+                                 site_area = site_area, por = por,
+                                 be_micro = be_micro, be_nonmicro = be_nonmicro,
+                                 bleaching_severity = bleaching_severity,
+                                 bleaching_frequency = bleaching_frequency)
 
-    orig_df       <- orig_list[[1]]
-    orig_colonies <- orig_list[[2]]
-    orig_area     <- orig_list[[3]]
+    orig_df   <- orig_list[[1]]
+    orig_area <- orig_list[[3]]
 
     colnames(orig_df) <- c("area_orig", "calc_total_orig", "calc_budg_orig", "RAP_orig", "pct_cvr_orig")
 
@@ -486,15 +464,14 @@ run_restoration_model <- function(habitat, subregion, site_area,
       starting_outplant_area <- outplant_guess * (outplant_diam / 2) ^ 2 * pi
       needed_outplant_growth <- sp_to_grow_m - starting_outplant_area
 
-      new_size  <- outplant_diam
-      run_colony_count <- outplant_guess # working colony count for this pass
-
       # Search runs ONLY to the restoration horizon
-      search_list <- simulate_growth(group = "outplant",
-                                     species = species,
-                                     colony_count = run_colony_count,
-                                     colony_diam = new_size,
-                                     duration = rest_horizon + 1)
+      search_list <- simulate_growth(group = "outplant", species = species,
+                                     colony_count = outplant_guess, colony_diam = outplant_diam,
+                                     duration = rest_horizon + 1,
+                                     site_area = site_area, por = por,
+                                     be_micro = be_micro, be_nonmicro = be_nonmicro,
+                                     bleaching_severity = bleaching_severity,
+                                     bleaching_frequency = bleaching_frequency)
 
       new_area <- search_list[[3]] # area at the horizon year
 
@@ -514,14 +491,15 @@ run_restoration_model <- function(habitat, subregion, site_area,
     # -----------------------------------------------------------------------
     # PHASE 2: run the solved outplant count for the FULL simulation duration
     # -----------------------------------------------------------------------
-    new_list <- simulate_growth(group = "outplant",
-                                   species = species,
-                                   colony_count = outplant_guess,
-                                   colony_diam = outplant_diam,
-                                   duration = sim_duration + 1)
+    new_list <- simulate_growth(group = "outplant", species = species,
+                                colony_count = outplant_guess, colony_diam = outplant_diam,
+                                duration = sim_duration + 1,
+                                site_area = site_area, por = por,
+                                be_micro = be_micro, be_nonmicro = be_nonmicro,
+                                bleaching_severity = bleaching_severity,
+                                bleaching_frequency = bleaching_frequency)
 
-    new_df   <- new_list[[1]]
-    new_area <- new_list[[3]]
+    new_df <- new_list[[1]]
 
     colnames(new_df) <- c("area_new", "calc_total_new", "calc_budg_new", "RAP_new", "pct_cvr_new")
     sp_budget_df <- cbind(orig_df, new_df)
