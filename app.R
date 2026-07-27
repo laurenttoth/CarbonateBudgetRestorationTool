@@ -52,11 +52,11 @@ porosity     <- read.csv(here("data", "Porosity.csv"))
 # Species-specific growth rates
 growth_rates <- read.csv(here("data", "growth_rates_ReefBudget_NCRMP.csv"))
 # Species-specific calcification rates (same file as calc_rates, kept explicit)
-calc_rates   <- read.csv(here("data", "Travis_rates.csv"))
+calc_rates   <- read.csv(here("data", "Travis_Calcification_Rates.csv"))
 # Species-specific average colony diameters
-diams        <- read.csv(here("data", "NCRMP_colony_dia_Florida.csv"))
+diams        <- read.csv(here("data", "NCRMP_Colony_Diam_Florida.csv"))
 # Region- and habitat-specific bioerosion rates
-bioerosion   <- read.csv(here("data", "Bioerosion.csv"))
+bioerosion   <- read.csv(here("data", "Bioerosion_Rates_Regional.csv"))
 
 # Ingest NCRMP carbonate budget data
 df <- read.csv(here("data", "NCRMP_CarbonateBudgets_2014_to_2024.csv"))
@@ -79,8 +79,8 @@ region_pal <- colorFactor(pastel_colors, domain = region_levels)
 
 
 # Ingest baseline cover data template to retrieve list of taxa
-base_cover_df <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
-taxa <- read_excel(here("data", "Baseline_cover_TEMPLATE.xlsx"), sheet = "Taxa")
+base_cover_df <- read_excel(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
+taxa <- read_excel(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
 # Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)

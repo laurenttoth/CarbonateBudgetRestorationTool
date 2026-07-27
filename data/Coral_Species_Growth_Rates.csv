@@ -1,7 +1,7 @@
 Taxon,Morphology,Mean_extension_rate,CI,planar
 Acropora spp.,branching,7.882,0.245,15.76487302
 Acropora cervicornis,branching,11.573,0.194,23.14666667
-Acropora palmata,branching,6.690,0.065,13.38095238
+Acropora palmata,branching,6.69,0.065,13.38095238
 Acropora prolifera,branching,5.384,0.475,10.767
 Agaricia spp.,encrusting/sub-massive,0.306,0.011,0.260365625
 Agaricia agaricites,encrusting/sub-massive,0.306,0.011,0.260365625
@@ -15,20 +15,20 @@ Crustose coralline algae,CCA,0.024,0.008,0.019977391
 Cladocora arbuscula,branching,1.931,0.163,1.64175375
 Colpophyllia natans,massive,0.635,0.011,0.540127778
 Dendrogyra cylindrus,columnar,1.341,0.069,1.13953125
-Dichocoenia stokesi,massive,0.200,0.000,0.17
+Dichocoenia stokesi,massive,0.2,0,0.17
 Diploria labyrinthiformis,massive,0.408,0.005,0.3468
-Eusmilia fastigiata,branching,0.700,0.000,0.595
-Favia fragum,submassive,0.500,0.000,0.425
+Eusmilia fastigiata,branching,0.7,0,0.595
+Favia fragum,submassive,0.5,0,0.425
 Hard coral (branching),branching,1.931,0.814,1.64175375
 Hard coral (encrusting),encrusting,0.306,0.011,0.260365625
 Hard coral (foliose),plating,0.483,0.007,0.410833333
 Hard coral (massive),massive,0.507,0.024,0.430525977
 Helioseris cucullata,plating,0.483,0.007,0.410833333
-Isophyllia spp.,,0.388,0.000,0.329375
-Isophyllia rigida,massive,0.275,0.000,0.23375
-Isophyllia sinuosa,massive,0.500,0.000,0.425
+Isophyllia spp.,,0.388,0,0.329375
+Isophyllia rigida,massive,0.275,0,0.23375
+Isophyllia sinuosa,massive,0.5,0,0.425
 Madracis spp.,branching,1.931,0.163,1.64175375
-Madracis auretenra,branching,1.510,0.060,1.2835
+Madracis auretenra,branching,1.51,0.06,1.2835
 Madracis carmabi,branching,1.931,0.163,1.64175375
 Madracis decactis,encrusting/sub-massive,0.306,0.011,0.260365625
 Madracis formosa,branching,1.931,0.163,1.64175375
@@ -38,10 +38,10 @@ Manicina areolata,freeliving,0.842,0.015,0.715983333
 Meandrina spp.,freeliving,0.115,0.001,0.09741
 Meandrina meandrites,massive,0.115,0.001,0.09741
 Millepora spp.,,1.221,0.055,1.037472222
-Millepora alcicornis,branching,0.515,0.000,0.43775
+Millepora alcicornis,branching,0.515,0,0.43775
 Millepora complanata,branching,1.573,0.082,1.337333333
 Millepora squarrosa,encrusting,1.573,0.082,1.337333333
-Montastraea cavernosa,massive,0.379,0.010,0.32215
+Montastraea cavernosa,massive,0.379,0.01,0.32215
 Mussa angulosa,submassive,0.507,0.024,0.430525977
 Mycetophyllia spp.,plating,0.483,0.007,0.410833333
 Mycetophyllia aliciae,plating,0.483,0.007,0.410833333
@@ -50,11 +50,11 @@ Mycetophyllia lamarckiana,submassive,0.507,0.024,0.430525977
 Oculina diffusa,branching,1.766,0.097,1.500675
 Orbicella spp.,,0.727,0.009,0.618024526
 Orbicella annularis,massive,0.918,0.008,0.78044875
-Orbicella faveolata,massive,0.930,0.009,0.790594444
+Orbicella faveolata,massive,0.93,0.009,0.790594444
 Orbicella franksi,massive,0.333,0.011,0.283030385
 Porites spp.,,1.186,0.041,1.008240191
-Porites astreoides,submassive,0.452,0.010,0.384160156
-Porites branneri,encrusting/sub-massive,0.452,0.010,0.384160156
+Porites astreoides,submassive,0.452,0.01,0.384160156
+Porites branneri,encrusting/sub-massive,0.452,0.01,0.384160156
 Porites colonensis,plating,0.483,0.011,0.410833333
 Porites divaricata,branching,1.748,0.061,1.48569375
 Porites furcata,branching,2.234,0.093,1.8989
@@ -68,9 +68,9 @@ Scolymia lacera,freeliving,0.306,0.011,0.260365625
 Siderastrea spp.,,0.368,0.008,0.312473077
 Siderastrea radians,encrusting/sub-massive,0.368,0.008,0.312473077
 Siderastrea siderea,massive,0.368,0.008,0.312473077
-Solenastrea spp.,,0.578,0.000,0.491583333
-Solenastrea bournoni,massive,0.890,0.000,0.7565
+Solenastrea spp.,,0.578,0,0.491583333
+Solenastrea bournoni,massive,0.89,0,0.7565
 Solenastrea hyades,submassive,0.267,0.023,0.226666667
-Stephanocoenia intersepta,submassive,0.340,0.031,0.289
+Stephanocoenia intersepta,submassive,0.34,0.031,0.289
 Stylaster roseus,branching,1.931,0.163,1.64175375
 Tubastraea coccinea,branching,1.931,0.163,1.64175375
