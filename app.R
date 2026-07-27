@@ -142,6 +142,19 @@ build_slr_timeline <- function(start_year, n_years = 10) {
   do.call(rbind, out[!vapply(out, is.null, logical(1))])
 }
 
+# SSP245 annual SLR RATE (mm/yr) at a specific calendar year. Computed as the
+# year-over-year difference of the interpolated cumulative SLR, matching the
+# rate convention used by build_slr_timeline. Used for the Scenario Comparison
+# RAP barplot reference lines (2030 / 2050 / 2100).
+ssp245_rate_at <- function(cal_year) {
+  vec <- slr_by_scenario[["ssp245"]]
+  if (is.null(vec)) return(NA_real_)
+  ax <- as.integer(names(vec))
+  if (length(ax) < 2) return(NA_real_)
+  fit <- approxfun(ax, as.numeric(vec), rule = 2)   # cumulative SLR (m) vs year
+  (fit(cal_year) - fit(cal_year - 1)) * 1000        # m/yr -> mm/yr
+}
+
 # Calculate reef accretion potential
 df$rap <- df$net_G / 2.9 / (1 - 0.6265)
 df$current_state <- ifelse(df$rap > 0.5, "Growth", ifelse(df$rap < -0.5, "Erosion", "Stasis"))
@@ -174,6 +187,20 @@ if (!dir.exists(scenario_dir)) dir.create(scenario_dir, showWarnings = FALSE)
 cache_dir <- here("cache")
 if (!dir.exists(cache_dir)) dir.create(cache_dir, showWarnings = FALSE)
 cached_baseline_path <- file.path(cache_dir, "last_baseline.xlsx")
+
+# Cache paths for the Monitoring-tab uploads (auto-reload on launch) ----
+# Extensions are resolved at load time (either .csv or .xlsx may be present).
+cached_cover_stub      <- file.path(cache_dir, "last_monitoring_cover")
+cached_bioerosion_stub <- file.path(cache_dir, "last_monitoring_bioerosion")
+
+# Find an existing cached file for a stub, trying .xlsx then .csv.
+find_cached <- function(stub) {
+  for (ext in c("xlsx", "csv")) {
+    p <- paste0(stub, ".", ext)
+    if (file.exists(p)) return(p)
+  }
+  NULL
+}
 
 # Canonical field order for saved scenarios (used to sanitize read + write) ----
 scenario_fields <- c(
@@ -245,6 +272,14 @@ species_label_2line <- function(s) {
   parts <- stringr::str_split(s, " ")[[1]]
   if (length(parts) < 2) return(HTML(s))
   HTML(paste0(parts[1], "<br>", paste(parts[-1], collapse = " ")))
+}
+
+# Shared y-axis floor rule ----
+# If the data minimum sits above -2, pin the lower limit to -2 so the yellow /
+# red status bands are always visible; otherwise expand to the data minimum.
+rap_axis_min <- function(data_min) {
+  if (!is.finite(data_min)) return(-2)
+  if (data_min > -2) -2 else data_min
 }
 
 # Bleaching lookup ----
@@ -739,14 +774,30 @@ mix_massive_species <- c(
 
 weedy_species <- c("Porites astreoides", "Porites porites")
 
+# Pastel palette generator for scenarios ----
+# Assigns a unique pastel color to each scenario (by name) at render time.
+scenario_palette <- function(scenario_names) {
+  n <- length(scenario_names)
+  if (n == 0) return(character(0))
+  base_pastels <- RColorBrewer::brewer.pal(max(3, min(9, n)), "Pastel1")
+  cols <- colorRampPalette(base_pastels)(n)
+  setNames(cols, scenario_names)
+}
+
 # Shared impact-summary HTML builder ----
 # Reused by the Monitoring tab and the Scenario Comparison tab. Takes baseline
-# and restored scalars and renders the same three-delta summary.
+# and restored scalars and renders the same three-delta summary, now including
+# a percentile delta (recomputed against the current df RAP distribution).
 build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
                                  b_rap, r_rap) {
   d_cover  <- r_cover - b_cover
   d_budget <- r_budget - b_budget
   d_rap    <- r_rap - b_rap
+
+  b_pct <- rap_percentile(b_rap)
+  r_pct <- rap_percentile(r_rap)
+  d_pct <- if (is.na(b_pct) || is.na(r_pct)) NA_real_ else r_pct - b_pct
+
   arrow <- function(x) if (is.na(x)) "\u2013" else if (x > 0) "\u25B2" else if (x < 0) "\u25BC" else "\u2013"
   HTML(paste0(
     "<p><b>", label, "</b></p>",
@@ -756,11 +807,21 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
     sprintf("%+.2f", d_budget), " kg/m\u00b2/yr</b></p>",
     "<p>", arrow(d_rap), " Reef accretion change: <b>",
     sprintf("%+.2f", d_rap), " mm/yr</b></p>",
+    "<p>", arrow(d_pct), " RAP percentile change: <b>",
+    if (is.na(d_pct)) "\u2013" else sprintf("%+.0f", d_pct), " points</b>",
+    if (!is.na(b_pct) && !is.na(r_pct))
+      paste0(" <span style='color:#777;'>(", round(b_pct), "% \u2192 ", round(r_pct), "%)</span>")
+    else "",
+    "</p>",
     "<hr>",
-    "<p>", if (!is.na(r_rap) && r_rap >= 4) {
-      "Restored accretion keeps pace with sea-level rise."
+    "<p>", if (!is.na(r_rap) && r_rap >= 6.3 && r_rap < 8) {
+      "Sea-level rise will exceed restored accretion by 2050."
+    } else if (!is.na(r_rap) && r_rap >= 8 && r_rap < 9.2) {
+      "Sea-level rise will exceed restored accretion by 2100"
+    } else if (!is.na(r_rap) && r_rap >= 9.2) {
+      "Restored accretion exceeds sea-level rise."
     } else {
-      "Restored accretion still falls short of sea-level rise."
+      "Sea-level rise will exceed restored accretion."
     }, "</p>"
   ))
 }
@@ -798,7 +859,7 @@ sidebar <- dashboardSidebar(
     menuItem("Restoration Planning", tabName = "restoration", icon = icon("seedling")),
     menuItem("Scenario Comparison", tabName = "scenarios", icon = icon("scale-balanced")),
     menuItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column")),
-    menuItem("About this Site", tabName = "about", icon = icon("circle-info"))
+    menuItem("About this App", tabName = "about", icon = icon("circle-info"))
   )
 )
 
@@ -880,6 +941,7 @@ body <- dashboardBody(
       .mix-fieldset .control-label { font-style: italic; line-height: 1.1; }
       /* Tighten gutters between the three top-row boxes (~1/3 spacing) */
       .restoration-toprow > [class*='col-'] { padding-left: 5px; padding-right: 5px; }
+
       /* Outplant parameter inputs: Inline label + narrow box*/
       .param-inline-row {
         display: flex; align-items: center; justify-content: space-between;
@@ -895,6 +957,7 @@ body <- dashboardBody(
       .param-inline-row .param-unit {
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
+
       /* Red warning under the sim-duration slider */
       .sim-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 2px; }
 
@@ -1214,22 +1277,6 @@ body <- dashboardBody(
                 )
               )
             )
-          ),
-
-            # "Save Scenario" box
-          shinydashboard::box(
-            title = "Save Scenario", width = 12, solidHeader = TRUE, status = "primary",
-            column(width = 5,
-                textInput("scenario_project", "Project name", value = "")
-            ),
-            column(width = 5,
-                textInput("scenario_name", "Scenario name", value = "")
-            ),
-            column(width = 2,
-              fluidRow(
-                actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
-              )
-            )
           )
         )
       ),
@@ -1255,35 +1302,36 @@ body <- dashboardBody(
             ),
             plotly::plotlyOutput("restoration_timeline", height = "320px")
           )
-        ),
+        )
+      ),
 
-        # "Save Scenario" box
-        # column(
-        #   width = 3,
-        #   shinydashboard::box(
-        #     title = "Save Scenario", width = 12, solidHeader = TRUE, status = "primary",
-        #     column(width = 1),
-        #     column(width = 10,
-        #       fluidRow(
-        #         textInput("scenario_project", "Project name", value = ""),
-        #         textInput("scenario_name", "Scenario name", value = ""),
-        #         column(width = 6),
-        #         column(width = 5,
-        #           actionButton("save_scenario", "Save scenario", icon = icon("floppy-disk"))
-        #         ),
-        #         column(width = 1)
-        #       )
-        #     ),
-        #     column(width = 1)
-        #   )
-        # )
+      fluidRow(
+        column(width = 8),
+        column(width = 4,
+          # "Save Scenario" box
+          shinydashboard::box(
+            title = "Save Scenario", width = 12, solidHeader = TRUE, status = "primary",
+            column(width = 5,
+                textInput("scenario_project", "Project name", value = "")
+            ),
+            column(width = 5,
+                textInput("scenario_name", "Scenario name", value = "")
+            ),
+            column(width = 2,
+              fluidRow(
+                tags$h1(), # Used to keep the button aligned
+                actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
+              )
+            )
+          )
+        )
       )
     ),
 
     # Scenario Comparison Tab ----
     # Sidebar: project (single select), scenario (multi select from saved .json),
     #          download report (.csv), + collapsible per-scenario Impact Summary
-    # Main:    "Year 10 Outcome Summary" -> cost bar, ROI bar, RAP/Elev scatter
+    # Main:    cost bar, ROI bar, per-scenario RAP bar
     tabItem(
       tabName = "scenarios",
       fluidRow(
@@ -1299,9 +1347,10 @@ body <- dashboardBody(
             br(), br(),
             downloadButton("sc_download_csv", "Download report (.csv)")
           ),
-          # Collapsible per-scenario Impact Summary (below Scenario Selection)
+          # Collapsible per-scenario Impact Summary (below Scenario Selection).
+          # Each scenario is a nested collapsible panel within this box.
           shinydashboard::box(
-            title = "Impact Summary: Year 10", width = 12,
+            title = HTML("Impact Summary at<br/>Restoration Horizon"), width = 12,
             status = "info", solidHeader = TRUE,
             collapsible = TRUE,
             uiOutput("sc_impact_summaries")
@@ -1310,9 +1359,6 @@ body <- dashboardBody(
         # Main content (right)
         column(
           width = 9,
-          tags$h2("Outcome Summary: Year 10",
-            style = "text-align:center; color:black; font-weight:bold;"
-          ),
           fluidRow(
             column(
               width = 6,
@@ -1335,9 +1381,9 @@ body <- dashboardBody(
             column(
               width = 12,
               shinydashboard::box(
-                title = "Carbonate Budget: RAP & Elevation Gain", width = 12,
+                title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
                 status = "success", solidHeader = TRUE,
-                plotOutput("sc_scatter", height = "350px")
+                plotOutput("sc_rap_bar", height = "350px")
               )
             )
           )
@@ -1368,7 +1414,12 @@ body <- dashboardBody(
               options = list(placeholder = "Select a site...")
             ),
             br(),
-            downloadButton("cc_download_report", "Download report")
+            # Download + Clear cache side-by-side
+            tags$div(
+              style = "display:flex; gap:8px; align-items:center;",
+              downloadButton("cc_download_report", "Download report"),
+              actionButton("cc_clear_cache", "Clear cache", icon = icon("trash"))
+            )
           )
         ),
         # Main content (right)
@@ -1422,34 +1473,78 @@ body <- dashboardBody(
         width = 12, status = "primary", solidHeader = FALSE,
         tags$div(
           tags$h4("Aim"),
-          "The aim of this site is to provide a predictive tool for decision makers to assess regional responses under future climate change
-            and to evaluate the potential impact of local initiatives to mitigate effects of ocean acidification and warming.The modelling
-            approach that is used to built projections in this interactive tool is described in ",
-          tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "an article,"), "published in Scientific reports.",
-          tags$br(), tags$br(), tags$h4("Background"),
-          "For reef framework to persist, constructional processes by corals and other calcifers need
-           to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and
-           dynamic and is currently threatened by the effects of ocean warming and acidifcation.
+          HTML("The aim of this application is to provide a predictive tool for decision makers to assess reef restoration efforts under future climate change 
+            and bleaching scenarios. The modelling approach that is used to build projections in this interactive tool is described in a forthcoming journal publication."), tags$br(),
+          tags$br(),
+          tags$h4("Background"),
+          HTML("For reef framework to persist, constructional processes by corals and other calcifers need 
+           to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and 
+           dynamic and is currently threatened by the effects of sea-level rise, ocean warming, and ocean acidifcation.
+           
+           Although the protection and recovery of ecosystem functions are at the center of most restoration 
+           and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
+           habitat persistence under different emission and bleaching scenarios."),
+          tags$br(),
+          tags$br(),
+          HTML("The Carbonate Budget Restoration Tool will enable decision makers to evaluate the impact of reef restoration decisions 
+                in the context of climate change and a variety of bleaching scenarios."), tags$br(),
+          tags$br(),
+          tags$h4("Code"),
+          "Code and input data used to generate this Shiny app are available on ", tags$a(href = "https://github.com/laurenttoth/CarbonateBudgetRestorationTool", "Github."), tags$br(),
+          tags$br(),
+          tags$h4("Sources"),
+          "NASA sea-level rise data: ", tags$br(),
+          "Coral morphologies: ", tags$br(),
+          tags$br(),
+          tags$h4("Authors"),
+          "Connor M. Jenkins, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
+          "Dr. Lauren T. Toth, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
+          "Dr. John Morris, Atlantic Oceanographic and Meteorological Laboratory, NOAA, Miami, Florida, USA", tags$br(),
+          tags$br(),
+          tags$h4("Contact"),
+          "Lauren Toth: ", tags$a(href = "mailto:ltoth@usgs.gov", "ltoth@usgs.gov"), tags$br(),
+          tags$br(),
+          tags$br(),
+          tags$h4("Acknowledgments"),
+          "A special thanks to Dr. Alice Webb and her team, who originally developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "Reef Persistence Tool"),
+          ", which was the inspiration for this project:", tags$br(),
+          tags$br(),
+          "Dr Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
+          tags$p("Geography, College of Life and Environmental Sciences, University of Exeter, UK", style = "text-indent: 40px"),
+          "Patrick Kiel, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
+          tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
+          "Mike Jankulak, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
+          tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
+          "Dr Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
+          tags$br(),
+          "The paper describing the original Reef Persistence Tool is published in ", tags$a(href="https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
 
-           Although the protection and recovery of ecosystem functions are at the center of most restoration
-           and conservation programs, decision makers are limited by the lack of predictive tools to forecast
-           habitat persistence under diferent emission scenarios.",
-          tags$br(), tags$br(),
-          "The Carbonate Budget Restoration Tool will enable decision makers to evaluate impact of local restoraton initiatives on reef habitat persistence in the context of climate change.",
-          tags$br(), tags$br(), tags$h4("Code"),
-          "Code and input data used to generate this Shiny mapping tool are available on Github.",
-          tags$br(), tags$br(), tags$h4("Sources"),
-          tags$br(), tags$br(), tags$h4("Authors"),
-          "Dr Alice Webb,Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
-          "Geography, College of Life and Environmental Sciences, University of Exeter, UK", tags$br(),
-          "Patrick Kiel, Atlantic Oceanographic andMeteorological Laboratory, Ocean Chemistry and Ecosystem Division,NOAA, Miami, Florida, USA;", tags$br(),
-          "Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", tags$br(),
-          "Mike Jankulak, Atlantic Oceanographic andMeteorological Laboratory, Ocean Chemistry and Ecosystem Division,NOAA, Miami, Florida, USA;", tags$br(),
-          "Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", tags$br(),
-          "Dr Ian Enochs, Atlantic Oceanographic andMeteorological Laboratory, Ocean Chemistry and Ecosystem Division,NOAA, USA", tags$br(),
-          tags$br(), tags$br(), tags$h4("Contact"),
-          "alice.webb@noaa.gov", tags$br(), tags$br(),
-          tags$img(src = "noaaLogo.png", width = "150px", height = "150px")
+          # Add logo panel
+          absolutePanel(
+            id = "absPanel",
+            top = "62%",
+            left = "72.5%",
+            width = "30%",
+            fixed = TRUE,
+            fluidRow(
+              column(width = 5),
+              column(width = 4,
+                tags$img(src = "noaaLogo.png", width = "200px", height = "200px")
+              ),
+              column(width = 3),
+              tags$br(),
+              tags$br(),
+              tags$br(),
+              tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
+            )
+          )
+          # column(width = 2,
+          #   tags$img(src = "noaaLogo.png", width = "150px", height = "150px")
+          #   ),
+          # column(width = 5,
+          #   tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
+          #   ),
+          # column(width = 5)
         )
       )
     )
@@ -2330,6 +2425,8 @@ server <- function(input, output, session) {
     plot_bg  <- if (dark) "#232a33" else "white"
     font_col <- if (dark) "#e6e6e6" else "#333333"
     orig_col <- if (dark) "#cfcfcf" else "gray30"  # lighten Baseline/Original line
+    # Axis breaks lighter gray in dark mode
+    grid_col <- if (dark) "#5a6472" else "#d9d9d9"
     # Dark-mode-aware Year-0 annotation background/border/text
     ann_bg     <- if (dark) "#2c353f" else "white"
     ann_border <- if (dark) "#8fb8d8" else "steelblue"
@@ -2365,17 +2462,21 @@ server <- function(input, output, session) {
         d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
         p <- ggplot(d0, aes(Year, RAP)) +
           scale_x_continuous(breaks = x_breaks) +
-          scale_y_continuous(limits = c(-1, 8)) +
+          scale_y_continuous(limits = c(rap_axis_min(-1), 8)) +
           labs(x = "Year", y = "RAP (mm/yr)") +
           theme_minimal(base_size = 14)
         y0_rap <- b$rap
       } else {
+        y_lo <- rap_axis_min(min(bg$RAP_orig, na.rm = TRUE))
+        y_hi <- max(max(slr_tl$SLR), max(bg$RAP_orig, na.rm = TRUE))
         p <- ggplot(bg, aes(x = Year)) +
           annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
                    fill = "red", alpha = 0.10) +
           annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
                    fill = "yellow", alpha = 0.10) +
-          # Baseline (original) growth line; hover carries cover + budget
+          # Baseline (original) growth line; hover carries cover + budget.
+          # `text` is passed via aes() (not as a bare arg) to avoid the
+          # "Ignoring unknown aesthetics: text" console warnings under ggplotly.
           geom_line(aes(y = RAP_orig, group = 1,
                         text = paste0("Baseline growth",
                                       "<br>Year ", Year,
@@ -2384,7 +2485,7 @@ server <- function(input, output, session) {
                                       "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
                     color = orig_col, linewidth = 1.1) +
           scale_x_continuous(breaks = x_breaks) +
-          scale_y_continuous(limits = c(min(-1, min(bg$RAP_orig, na.rm = TRUE)), max(max(slr_tl$SLR), max(bg$RAP_orig, na.rm = TRUE)))) +
+          scale_y_continuous(limits = c(y_lo, y_hi)) +
           labs(x = "Year", y = "RAP (mm/yr)") +
           theme_minimal(base_size = 14)
         y0_rap <- bg$RAP_orig[1]
@@ -2403,6 +2504,9 @@ server <- function(input, output, session) {
       )
 
       pips <- d[d$Year %in% c(1, 5, 10, 20, 50, 100, dur), ]
+
+      y_lo <- rap_axis_min(min(d$RAP_orig, na.rm = TRUE))
+      y_hi <- max(max(slr_tl$SLR), max(d$RAP_total, na.rm = TRUE))
 
       p <- ggplot(d, aes(x = Year)) +
         annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
@@ -2438,7 +2542,7 @@ server <- function(input, output, session) {
           size = 4, color = "darkgreen"
         ) +
         scale_x_continuous(breaks = x_breaks) +
-        scale_y_continuous(limits = c(min(-1, min(d$RAP_orig, na.rm = TRUE)), max(max(slr_tl$SLR), max(d$RAP_total, na.rm = TRUE)))) +
+        scale_y_continuous(limits = c(y_lo, y_hi)) +
         labs(x = "Year", y = "RAP (mm/yr)") +
         theme_minimal(base_size = 14)
       y0_rap <- d$RAP_orig[1]
@@ -2497,8 +2601,8 @@ server <- function(input, output, session) {
         paper_bgcolor = paper_bg,
         plot_bgcolor  = plot_bg,
         font = list(color = font_col),
-        xaxis = list(color = font_col),
-        yaxis = list(color = font_col)
+        xaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
+        yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col)
       )
 
 
@@ -2515,7 +2619,7 @@ server <- function(input, output, session) {
       ) |>
       plotly::add_annotations(
         x = 0.92, y = 3.1, xref = "paper", yref = "y",
-        text = "Geologic baseline: 3.1 mm/yr",
+        text = "Geologic baseline RAP: 3.1 mm/yr",
         showarrow = FALSE, yshift = 9,
         font = list(color = "#b8860b", size = 11),
         bgcolor = paper_bg, opacity = 0.9
@@ -2543,6 +2647,8 @@ server <- function(input, output, session) {
     cost <- if (!is.null(mr)) mr$cost else added_cover * .safe_num(input$outplant_cost) * 100
     outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
     elev_gain_10yr <- restored_rap * 10 # mm over 10 years
+    # Legacy ROI field retained for backward compatibility; the Scenario
+    # Comparison plot now recomputes ROI from net kg CaCO3 / cost at render.
     roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
 
     # Build the scenario, forcing every field to a length-1 scalar
@@ -2593,24 +2699,47 @@ server <- function(input, output, session) {
   ## Restoration Monitoring tab ----
   ## ---------------------------------------------------------------------------
 
-  # Uploaded coral-cover data (overrides df when present). Accepts .csv or .xlsx.
-  uploaded_monitoring_cover <- reactive({
-    f <- input$upload_cover
-    if (is.null(f)) {
-      return(NULL)
-    }
-    ext <- tolower(tools::file_ext(f$name))
+  # Shared reader: dispatch on extension (.xlsx vs .csv).
+  read_monitoring_file <- function(path, name) {
+    ext <- tolower(tools::file_ext(name))
     tryCatch(
       if (ext == "xlsx") {
-        readxl::read_excel(f$datapath)
+        readxl::read_excel(path)
       } else {
-        read.csv(f$datapath, stringsAsFactors = FALSE)
+        read.csv(path, stringsAsFactors = FALSE)
       },
       error = function(e) {
-        showNotification(paste("Could not read cover file:", e$message), type = "error")
+        showNotification(paste("Could not read file:", e$message), type = "error")
         NULL
       }
     )
+  }
+
+  # Cache buster: bumped when the user clears the cache so the reactives below
+  # re-evaluate and drop any auto-loaded cached data.
+  monitoring_cache_token <- reactiveVal(0)
+
+  # Uploaded coral-cover data (overrides df when present). Accepts .csv or .xlsx.
+  # Falls back to the cached file (auto-restored on launch) when no fresh upload.
+  uploaded_monitoring_cover <- reactive({
+    monitoring_cache_token()  # take a dependency so Clear-cache re-evaluates
+    f <- input$upload_cover
+    if (!is.null(f)) {
+      up <- read_monitoring_file(f$datapath, f$name)
+      # Cache a copy for auto-reload on next launch (preserve extension)
+      if (!is.null(up)) {
+        ext <- tolower(tools::file_ext(f$name))
+        tryCatch(
+          file.copy(f$datapath, paste0(cached_cover_stub, ".", ext), overwrite = TRUE),
+          error = function(e) NULL
+        )
+      }
+      return(up)
+    }
+    # No fresh upload: try the cached file
+    cp <- find_cached(cached_cover_stub)
+    if (!is.null(cp)) return(read_monitoring_file(cp, cp))
+    NULL
   })
 
   # Wire the monitoring "Select site" dropdown to the uploaded cover file
@@ -2628,23 +2757,40 @@ server <- function(input, output, session) {
     )
   })
 
-  # Uploaded bioerosion data (overrides bioerosion when present)
+  # Uploaded bioerosion data (overrides bioerosion when present).
+  # Falls back to the cached file (auto-restored on launch).
   uploaded_monitoring_bioerosion <- reactive({
+    monitoring_cache_token()  # take a dependency so Clear-cache re-evaluates
     f <- input$upload_bioerosion
-    if (is.null(f)) {
-      return(NULL)
-    }
-    ext <- tolower(tools::file_ext(f$name))
-    tryCatch(
-      if (ext == "xlsx") {
-        readxl::read_excel(f$datapath)
-      } else {
-        read.csv(f$datapath, stringsAsFactors = FALSE)
-      },
-      error = function(e) {
-        showNotification(paste("Could not read bioerosion file:", e$message), type = "error")
-        NULL
+    if (!is.null(f)) {
+      up <- read_monitoring_file(f$datapath, f$name)
+      if (!is.null(up)) {
+        ext <- tolower(tools::file_ext(f$name))
+        tryCatch(
+          file.copy(f$datapath, paste0(cached_bioerosion_stub, ".", ext), overwrite = TRUE),
+          error = function(e) NULL
+        )
       }
+      return(up)
+    }
+    cp <- find_cached(cached_bioerosion_stub)
+    if (!is.null(cp)) return(read_monitoring_file(cp, cp))
+    NULL
+  })
+
+  # Clear cache: delete cached cover + bioerosion files and re-evaluate.
+  observeEvent(input$cc_clear_cache, {
+    removed <- 0
+    for (stub in c(cached_cover_stub, cached_bioerosion_stub)) {
+      cp <- find_cached(stub)
+      if (!is.null(cp) && file.exists(cp)) {
+        if (isTRUE(file.remove(cp))) removed <- removed + 1
+      }
+    }
+    monitoring_cache_token(monitoring_cache_token() + 1)
+    showNotification(
+      paste0("Cleared ", removed, " cached monitoring file(s)."),
+      type = "message"
     )
   })
 
@@ -2670,14 +2816,15 @@ server <- function(input, output, session) {
   # Helper: restored metrics.
   #  - Coral-cover file uploaded  -> use the planning-tab restored RAP (if any),
   #    else fall back to baseline (no map projection when a file is loaded).
-  #  - No upload (map-driven)     -> simulate the selected NCRMP site's restored
-  #    metrics with the Home-tab linear model + the map's target-cover slider.
+  #  - No upload (map-driven)     -> project the SELECTED SITE's own baseline
+  #    with the Home-tab linear model + the map's target-cover slider (so the
+  #    Baseline/Restored map to the map site, not the Planning baseline).
   cc_restored_vals <- reactive({
     base <- cc_baseline_vals()
     up   <- uploaded_monitoring_cover()
 
     if (is.null(up)) {
-      # Map-derived: Home-tab linear projection for the selected site
+      # Map-derived: Home-tab linear projection for the selected site's baseline
       inc <- if (is.null(input$target_cover_increase)) 0 else input$target_cover_increase
       restored_rap    <- base$rap + cover_rap_slope * inc
       restored_cover  <- base$cover + inc
@@ -2747,46 +2894,144 @@ server <- function(input, output, session) {
     )
   })
 
-  # Timeline: RAP over the simulation duration with SLR reference lines (plotly)
+  # Timeline: RAP over the simulation duration with SLR reference lines (plotly).
+  # When map-driven (no coral-cover upload), draw a smooth interpolated line
+  # between the site's Baseline (Y0) and Restored (Y10) metrics. Reference lines
+  # + y-axis floor mirror the Scenario Comparison RAP bar. Dark-mode aware.
   output$cc_timeline <- plotly::renderPlotly({
     b <- cc_baseline_vals()
     r <- cc_restored_vals()
-    b <- baseline_metrics()
-    dur <- b$sim_duration
+    up <- uploaded_monitoring_cover()
+
+    dark <- isTRUE(input$dark_mode)
+    paper_bg <- if (dark) "#232a33" else "white"
+    plot_bg  <- if (dark) "#232a33" else "white"
+    font_col <- if (dark) "#e6e6e6" else "#333333"
+    grid_col <- if (dark) "#5a6472" else "#d9d9d9"
+
+    dur <- 10
     years <- 0:dur
 
-    tl <- data.frame(
-      Year = rep(years, 2),
-      RAP  = c(rep(b$rap, length(years)), rep(r$rap, length(years))),
-      Scenario = rep(c("Baseline", "Restored"), each = length(years))
+    # SSP245 reference rates (mm/yr) at 2030 / 2050 / 2100
+    slr_refs <- c(
+      "SSP245 @2030" = ssp245_rate_at(2030),
+      "SSP245 @2050" = ssp245_rate_at(2050),
+      "SSP245 @2100" = ssp245_rate_at(2100)
     )
+    geo_baseline <- 3.1
 
-    p <- ggplot(tl, aes(Year, RAP, color = Scenario,
-                        group = Scenario,
-                        text = paste0(
-                          Scenario, "<br>Year: ", Year,
-                          "<br>RAP: ", round(RAP, 2), " mm/yr"
-                        ))) +
-      geom_line(linewidth = 1.2) +
-      geom_hline(yintercept = 4, linetype = "dashed", color = "deepskyblue3") +
-      geom_hline(yintercept = 40, linetype = "dashed", color = "#0b3d91") +
-      scale_color_manual(values = c("Baseline" = "lightgreen", "Restored" = "forestgreen")) +
-      labs(x = "Year", y = "RAP (mm/yr)", color = NULL) +
-      theme_minimal(base_size = 14) +
-      theme(legend.position = "top")
-
-    plotly::ggplotly(p, tooltip = "text") |>
-      plotly::layout(
-        legend = list(orientation = "h", x = 0, y = 1.1),
-        annotations = list(
-          list(x = 0.5, y = 4, text = "Current SLR (4 mm/yr)",
-               showarrow = FALSE, xanchor = "left", yshift = 10,
-               font = list(color = "deepskyblue3")),
-          list(x = 0.5, y = 40, text = "Future SLR (40 mm/yr)",
-               showarrow = FALSE, xanchor = "left", yshift = 10,
-               font = list(color = "#0b3d91"))
-        )
+    if (is.null(up)) {
+      # Map-driven: smooth interpolation from Baseline (Y0) to Restored (Y10)
+      rap_series <- b$rap + (r$rap - b$rap) * (years / dur)
+      tl <- data.frame(
+        Year = years,
+        RAP  = rap_series,
+        stringsAsFactors = FALSE
       )
+
+      data_min <- min(c(tl$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      y_lo <- rap_axis_min(data_min)
+      y_hi <- max(c(tl$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+
+      p <- ggplot(tl, aes(x = Year)) +
+        # Yellow (stasis) + red (erosion) status bands (mirror Planning timeline)
+        annotate("rect", xmin = 0, xmax = dur, ymin = -10, ymax = -0.5,
+                 fill = "red", alpha = 0.30) +
+        annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
+                 fill = "yellow", alpha = 0.30) +
+        geom_line(aes(y = RAP, group = 1,
+                      text = paste0("RAP",
+                                    "<br>Year ", Year,
+                                    "<br>RAP: ", round(RAP, 2), " mm/yr")),
+                  color = "forestgreen", linewidth = 1.4) +
+        scale_x_continuous(breaks = years) +
+        scale_y_continuous(limits = c(y_lo, y_hi)) +
+        labs(x = "Year", y = "RAP (mm/yr)") +
+        theme_minimal(base_size = 14)
+    } else {
+      # File-driven: flat Baseline vs Restored lines
+      tl <- data.frame(
+        Year = rep(years, 2),
+        RAP  = c(rep(b$rap, length(years)), rep(r$rap, length(years))),
+        Scenario = rep(c("Baseline", "Restored"), each = length(years))
+      )
+
+      data_min <- min(c(tl$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      y_lo <- rap_axis_min(data_min)
+      y_hi <- max(c(tl$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+
+      p <- ggplot(tl, aes(x = Year)) +
+        annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
+                 fill = "red", alpha = 0.10) +
+        annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
+                 fill = "yellow", alpha = 0.10) +
+        geom_line(aes(y = RAP, color = Scenario, group = Scenario,
+                      text = paste0(Scenario,
+                                    "<br>Year: ", Year,
+                                    "<br>RAP: ", round(RAP, 2), " mm/yr")),
+                  linewidth = 1.2) +
+        scale_color_manual(values = c("Baseline" = "lightgreen", "Restored" = "forestgreen")) +
+        scale_x_continuous(breaks = years) +
+        scale_y_continuous(limits = c(y_lo, y_hi)) +
+        labs(x = "Year", y = "RAP (mm/yr)", color = NULL) +
+        theme_minimal(base_size = 14) +
+        theme(legend.position = "top")
+    }
+
+    # Reference lines: geologic baseline + SSP245 rates (as data-space traces so
+    # they render reliably under ggplotly)
+    gp <- plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(
+        paper_bgcolor = paper_bg,
+        plot_bgcolor  = plot_bg,
+        font = list(color = font_col),
+        xaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
+        yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
+        legend = list(orientation = "h", x = 0, y = 1.1)
+      )
+
+    # Geologic baseline (gold dashed)
+    gp <- gp |>
+      plotly::add_trace(
+        x = c(0, dur), y = c(geo_baseline, geo_baseline),
+        type = "scatter", mode = "lines",
+        line = list(color = "gold", width = 2, dash = "dash"),
+        showlegend = FALSE, inherit = FALSE,
+        hoverinfo = "text",
+        text = paste0("Geologic baseline RAP: ", geo_baseline, " mm/yr")
+      ) |>
+      plotly::add_annotations(
+        x = 0.98, y = geo_baseline, xref = "paper", yref = "y",
+        text = paste0("Geologic baseline RAP: ", geo_baseline, " mm/yr"),
+        showarrow = FALSE, yshift = 9, xanchor = "right",
+        font = list(color = "#b8860b", size = 11),
+        bgcolor = paper_bg, opacity = 0.9
+      )
+
+    # SSP245 reference rates (blue dashed) at 2030 / 2050 / 2100
+    slr_ann_col <- "#1f6fd6"
+    for (nm in names(slr_refs)) {
+      yv <- slr_refs[[nm]]
+      if (is.na(yv)) next
+      gp <- gp |>
+        plotly::add_trace(
+          x = c(0, dur), y = c(yv, yv),
+          type = "scatter", mode = "lines",
+          line = list(color = slr_ann_col, width = 1.5, dash = "dash"),
+          showlegend = FALSE, inherit = FALSE,
+          hoverinfo = "text",
+          text = paste0(nm, ": ", round(yv, 2), " mm/yr")
+        ) |>
+        plotly::add_annotations(
+          x = 0.02, y = yv, xref = "paper", yref = "y",
+          text = paste0(nm, ": ", round(yv, 2), " mm/yr"),
+          showarrow = FALSE, yshift = 9, xanchor = "left",
+          font = list(color = slr_ann_col, size = 10),
+          bgcolor = paper_bg, opacity = 0.85
+        )
+    }
+
+    gp
   })
 
   # Download report for the Restoration Monitoring tab
@@ -2836,12 +3081,14 @@ server <- function(input, output, session) {
     updateSelectInput(session, "sc_project", choices = projects)
   })
 
-  # Populate the scenario multi-select based on chosen project
+  # Populate the scenario multi-select based on chosen project.
+  # All scenarios within the selected project are ENABLED (selected) by default.
   observe({
     sc <- all_scenarios()
     req(input$sc_project)
     scen <- if (nrow(sc)) sort(unique(sc$scenario[sc$project == input$sc_project])) else character(0)
-    updateCheckboxGroupInput(session, "sc_scenarios", choices = scen)
+    updateCheckboxGroupInput(session, "sc_scenarios",
+                             choices = scen, selected = scen)
   })
 
   # Filtered scenarios for plotting (coerce numeric cols used by the plots)
@@ -2851,76 +3098,168 @@ server <- function(input, output, session) {
     d <- sc[sc$project == input$sc_project & sc$scenario %in% input$sc_scenarios, ]
     num_cols <- c("cost", "roi", "restored_rap", "elev_gain_10yr",
                   "baseline_cover", "restored_cover", "baseline_budget",
-                  "restored_budget", "baseline_rap")
+                  "restored_budget", "baseline_rap", "site_area_m2")
     for (col in num_cols) {
       if (col %in% names(d)) d[[col]] <- as.numeric(d[[col]])
     }
+    # Net kg CaCO3 (added product of restoration at the horizon):
+    #   (restored_budget - baseline_budget) * site_area_m2  [no sim_duration]
+    d$net_kg <- (d$restored_budget - d$baseline_budget) * d$site_area_m2
+    # ROI redefined as net kg CaCO3 per dollar
+    d$roi_kg_per_dollar <- ifelse(d$cost > 0, d$net_kg / d$cost, NA_real_)
     d
   })
 
-  # Collapsible per-scenario Impact Summary (reuses the shared builder)
+  # Stable-per-render pastel color mapping for the selected scenarios.
+  sc_colors <- reactive({
+    d <- sc_selected()
+    if (nrow(d) == 0) return(character(0))
+    scenario_palette(sort(unique(d$scenario)))
+  })
+
+  # Shared ggplot dark-mode theme add-on for the Scenario Comparison plots.
+  sc_theme <- reactive({
+    dark <- isTRUE(input$dark_mode)
+    font_col <- if (dark) "#e6e6e6" else "#333333"
+    grid_col <- if (dark) "#5a6472" else "#d9d9d9"
+    plot_bg  <- if (dark) "#232a33" else "white"
+    list(
+      theme_minimal(base_size = 14) +
+        theme(
+          plot.background   = element_rect(fill = plot_bg, color = NA),
+          panel.background  = element_rect(fill = plot_bg, color = NA),
+          panel.grid.major  = element_line(color = grid_col),
+          panel.grid.minor  = element_line(color = grid_col),
+          text        = element_text(color = font_col),
+          axis.text   = element_text(color = font_col),
+          axis.title  = element_text(color = font_col),
+          legend.text = element_text(color = font_col),
+          legend.title = element_text(color = font_col)
+        )
+    )
+  })
+
+  # Collapsible per-scenario Impact Summary (reuses the shared builder).
+  # Each scenario is a nested collapsible panel; its border uses the scenario's
+  # assigned pastel color.
   output$sc_impact_summaries <- renderUI({
     d <- sc_selected()
     if (nrow(d) == 0) {
       return(tags$em("Select one or more scenarios."))
     }
+    cols <- sc_colors()
     panels <- lapply(seq_len(nrow(d)), function(i) {
       row <- d[i, ]
+      col <- if (row$scenario %in% names(cols)) cols[[row$scenario]] else "#ddd"
       summary_html <- build_impact_summary(
         label = paste0("Scenario: ", row$scenario),
         b_cover = row$baseline_cover, r_cover = row$restored_cover,
         b_budget = row$baseline_budget, r_budget = row$restored_budget,
         b_rap = row$baseline_rap, r_rap = row$restored_rap
       )
+      panel_id <- paste0("sc_panel_", gsub("[^A-Za-z0-9]", "_", row$scenario))
       tags$div(
-        class = "impact-summary-box",
-        style = "background:#f7f7f7; border:1px solid #ddd; border-radius:6px;
-                 padding:10px; margin-bottom:8px;",
-        summary_html
+        style = paste0("border:2px solid ", col, "; border-radius:6px; margin-bottom:8px;"),
+        tags$div(
+          style = paste0("cursor:pointer; padding:6px 10px; font-weight:bold; ",
+                         "background:", col, "33; border-radius:4px 4px 0 0;"),
+          onclick = paste0("var b=document.getElementById('", panel_id,
+                           "'); b.style.display=(b.style.display==='none')?'block':'none';"),
+          tags$span(row$scenario),
+          tags$span(icon("chevron-down"), style = "float:right;")
+        ),
+        tags$div(
+          id = panel_id,
+          class = "impact-summary-box",
+          style = "display:block; background:#f7f7f7; padding:10px;",
+          summary_html
+        )
       )
     })
     tagList(panels)
   })
 
-  # Project cost bar
+  # Project cost bar (pastel per scenario, dark-mode aware)
   output$sc_cost_bar <- renderPlot({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
+    cols <- sc_colors()
     ggplot(d, aes(x = scenario, y = cost, fill = scenario)) +
       geom_col() +
       labs(x = NULL, y = "Project cost ($)") +
-      scale_fill_brewer(palette = "Blues") +
-      theme_minimal(base_size = 14) +
+      scale_fill_manual(values = cols) +
+      sc_theme()[[1]] +
       theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
-  })
+  }, bg = "transparent")
 
-  # ROI bar
+  # ROI bar: net kg CaCO3 per dollar (pastel per scenario, dark-mode aware)
   output$sc_roi_bar <- renderPlot({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
-    ggplot(d, aes(x = scenario, y = roi, fill = scenario)) +
+    cols <- sc_colors()
+    ggplot(d, aes(x = scenario, y = roi_kg_per_dollar, fill = scenario)) +
       geom_col() +
-      labs(x = NULL, y = "ROI (mm elevation per $1k)") +
-      scale_fill_brewer(palette = "Greens") +
-      theme_minimal(base_size = 14) +
+      labs(x = NULL, y = "ROI (net kg CaCO\u2083 per $)") +
+      scale_fill_manual(values = cols) +
+      sc_theme()[[1]] +
       theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
-  })
+  }, bg = "transparent")
 
-  # RAP & elevation-gain scatter
-  output$sc_scatter <- renderPlot({
+  # Per-scenario RAP bar with reference lines + status bands.
+  # Replaces the old RAP/Elevation scatter.
+  output$sc_rap_bar <- renderPlot({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
-    ggplot(d, aes(x = restored_rap, y = elev_gain_10yr, color = scenario)) +
-      geom_point(size = 4) +
-      geom_text(aes(label = scenario), show.legend = FALSE, vjust = -1) +
-      geom_vline(xintercept = 4, linetype = "dashed", color = "deepskyblue3") +
-      labs(
-        x = "Restored reef accretion (mm/yr)",
-        y = "Elevation gain over 10 yr (mm)",
-        color = NULL
-      ) +
-      theme_minimal(base_size = 14)
-  })
+    cols <- sc_colors()
+
+    geo_baseline <- 3.1
+    slr_refs <- c(
+      "SSP245 @2030" = ssp245_rate_at(2030),
+      "SSP245 @2050" = ssp245_rate_at(2050),
+      "SSP245 @2100" = ssp245_rate_at(2100)
+    )
+
+    # y-axis floor: -2 if data minimum sits above it, else the data minimum
+    data_min <- min(c(d$restored_rap, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+    y_lo <- rap_axis_min(data_min)
+    y_hi <- max(c(d$restored_rap, geo_baseline, slr_refs), na.rm = TRUE) + 1
+
+    # Reference-line data frame (geologic baseline + 3 SSP245 rates)
+    ref_df <- data.frame(
+      label = c("Geologic baseline", names(slr_refs)),
+      yval  = c(geo_baseline, unname(slr_refs)),
+      col   = c("#b8860b", rep("#1f6fd6", length(slr_refs))),
+      stringsAsFactors = FALSE
+    )
+    ref_df <- ref_df[is.finite(ref_df$yval), ]
+
+    dark <- isTRUE(input$dark_mode)
+    n_sc <- nrow(d)
+
+    p <- ggplot(d, aes(x = scenario, y = restored_rap, fill = scenario)) +
+      # Yellow (stasis) + red (erosion) status bands mirroring the timeline
+      annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = -0.5,
+               fill = "red", alpha = 0.10) +
+      annotate("rect", xmin = -Inf, xmax = Inf, ymin = -0.5, ymax = 0.5,
+               fill = "yellow", alpha = 0.10) +
+      geom_col() +
+      scale_fill_manual(values = cols) +
+      scale_y_continuous(limits = c(y_lo, y_hi)) +
+      labs(x = NULL, y = "Restored RAP (mm/yr)") +
+      sc_theme()[[1]] +
+      theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+
+    # Add dashed reference lines + right-aligned annotations
+    for (k in seq_len(nrow(ref_df))) {
+      p <- p +
+        geom_hline(yintercept = ref_df$yval[k], linetype = "dashed",
+                   color = ref_df$col[k], linewidth = 0.7) +
+        annotate("text", x = n_sc + 0.5, y = ref_df$yval[k],
+                 label = paste0(ref_df$label[k], ": ", round(ref_df$yval[k], 2), " mm/yr"),
+                 hjust = 1, vjust = -0.4, size = 3.4, color = ref_df$col[k])
+    }
+    p
+  }, bg = "transparent")
 
   # Download the selected scenarios as a .csv report
   output$sc_download_csv <- downloadHandler(
