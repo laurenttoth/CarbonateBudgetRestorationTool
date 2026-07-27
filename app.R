@@ -1538,13 +1538,6 @@ body <- dashboardBody(
               tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
             )
           )
-          # column(width = 2,
-          #   tags$img(src = "noaaLogo.png", width = "150px", height = "150px")
-          #   ),
-          # column(width = 5,
-          #   tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
-          #   ),
-          # column(width = 5)
         )
       )
     )
