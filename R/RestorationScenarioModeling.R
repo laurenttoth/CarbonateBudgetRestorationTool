@@ -64,8 +64,8 @@ micro_year0 <- (year0_substrate / 100) * 0.24
 
 # Other Bioerosion data from Bioerosion.csv dataset
 # Bioerosion is specific to Habitat and Subregion (which are included in Baseline_cover_TEMPLATE.csv)
-# NOTE that these values will not change from year to year in the model but Microbioerosion will be
-# recalculated at each time step
+# NOTE: these values will not change from year to year in the model,
+# but Microbioerosion will be recalculated at each time step.
 # This variabile should actually be calculated in the DataInput module
 site_bioerosion <- sum(bioerosion$ave_parrotfish, bioerosion$ave_urchins, bioerosion$ave_macrobioerosion)
 
@@ -101,7 +101,7 @@ year1_taxa$baseline_cover_start <- baseline$percent_cover * (1 - x_mortality)
 
 # Calculate growth of colonies
 # Site_Area from user input
-# calculate total area occupied by each coral taxa within the plot in m2
+# calculate total area occupied by each coral taxon within the plot in m2
 year1_taxa$baseline_coral_area <- site_area * (baseline$percent_cover / 100)
 
 # Join NCRMP_colony_dia_Florida.csv
@@ -113,14 +113,14 @@ florida_colony_dia <- read.csv("NCRMP_colony_dia_Florida.csv", header = TRUE)
 # diameters are in cm so need to be divided by 10000
 # use equation for area of a circle to convert diameters in m2 to area
 year1_taxa$baseline_ncolonies <- round(
-  year1_taxa$baseline_coral_area / ((((florida_colony_dia / 10000) / 2)^2) * pi)
+year1_taxa$baseline_coral_area / ((((florida_colony_dia / 10000) / 2)^2) * pi)
 )
 
 # Calculate individual colony diameters for each taxon based on the rounded estimate of colony number
 # this step is necessary because the outcome of the previous calculation is rounded to a whole number
 # Convert area to diameter in m
 year1_taxa$baseline_coral_dia <- sqrt(
-  (year1_taxa$baseline_coral_area / year1_taxa$baseline_ncolonies) / pi
+(year1_taxa$baseline_coral_area / year1_taxa$baseline_ncolonies) / pi
 ) * 2
 
 # growth_rates_ReefBudget_NCRMP.csv has species-specific coral growth rates (vertical extension and
@@ -131,14 +131,14 @@ year1_taxa$baseline_coral_dia <- sqrt(
 # growth rate in cm
 coral_growth <- read.csv("growth_rates_ReefBudget_NCRMP.csv", header = TRUE)
 # dividing by 100 converts cm rates to m which is units for coral area
-year1_taxa$year1_coral_dia <- baseline_coral_dia + (coral_growth$planar_mean / 100)  # invalid: baseline_coral_dia undefined (missing year1_taxa$)
+year1_taxa$year1_coral_dia <- baseline_coral_dia + (coral_growth$planar_mean / 100)# invalid: baseline_coral_dia undefined (missing year1_taxa$)
 
 # calculate new species-specific area assuming each colony is a circle
 # area in m2
-year1_taxa$year1_coral_area <- (((year1_coral_dia / 2)^2) * pi) * year1_taxa$baseline_ncolonies  # invalid: year1_coral_dia undefined (missing year1_taxa$)
+year1_taxa$year1_coral_area <- (((year1_coral_dia / 2)^2) * pi) * year1_taxa$baseline_ncolonies# invalid: year1_coral_dia undefined (missing year1_taxa$)
 
 # calculate new species-specific coral cover
-year1_taxa$baseline_cover_end <- (year1_coral_area / site_area) * 100  # invalid: year1_coral_area undefined (missing year1_taxa$)
+year1_taxa$baseline_cover_end <- (year1_coral_area / site_area) * 100# invalid: year1_coral_area undefined (missing year1_taxa$)
 
 # New outplants have high mortality rates so this extra step is applied for the first year post outplanting
 # mortality will also be scaled by outplant_size input, but haven't totally figured out how yet
@@ -164,17 +164,17 @@ year1_taxa$restored_ncolonies <- round(year1_taxa$restored_area_start / (outplan
 
 # Calculate individual colony diameters in m for each taxon based on the rounded estimate of colony number
 year1_taxa$restored_coral_dia_start <- sqrt(
-  (year1_taxa$restored_area_start / year1_taxa$restored_ncolonies) / pi
+(year1_taxa$restored_area_start / year1_taxa$restored_ncolonies) / pi
 ) * 2
 
 # Grow the diameter of the colonies
 # coral_growth is taxon specific
 year1_taxa$year1_coral_dia_end <- year1_taxa$restored_coral_dia_start +
-  (coral_growth$planar_mean / 100)
+(coral_growth$planar_mean / 100)
 
 # calculate new species-specific area
 year1_taxa$restored_area_end <- (((year1_taxa$year1_coral_dia_end / 2)^2) * pi) *
-  year1_taxa$restored_ncolonies
+year1_taxa$restored_ncolonies
 
 # calculate new species-specific coral cover
 year1_taxa$restored_cover_end <- (year1_taxa$restored_area_end / site_area) * 100
@@ -183,7 +183,7 @@ year1_taxa$restored_cover_end <- (year1_taxa$restored_area_end / site_area) * 10
 year1_taxa$total_cover <- year1_taxa$baseline_cover + year1_taxa$restored_cover
 
 # Calcuate gross production by taxon
-year1_taxa$gp <- (year1_taxa$total_cover / 100) * travis_rates  # taxon-specific calcification rates
+year1_taxa$gp <- (year1_taxa$total_cover / 100) * travis_rates# taxon-specific calcification rates
 
 # sum to get site-level gross production
 year1_site$gp <- sum(year1_taxa$gp)
@@ -236,30 +236,30 @@ bleaching_frequency <- 0  # can equal 1, 2, or annual (=4 or 5)
 year5_taxa$post_bleaching_restored_cover_1 <- year1_taxa$restored_cover_end + (dhw_mortality * 0.25)
 year5_taxa$post_bleaching_restored_area_1 <- site_area * (year5_taxa$post_bleaching_restored_cover_1 / 100)
 year5_taxa$post_bleaching_restored_ncolonies <- year1_taxa$restored_ncolonies -
-  year5_taxa$post_bleaching_restored_area_1 / (((year1$restored_coral_dia_end / 2)^2) * pi)
+year5_taxa$post_bleaching_restored_area_1 / (((year1$restored_coral_dia_end / 2)^2) * pi)
 
 # NColonies needs to be an integer for calculations below
 year5_taxa$post_bleaching_restored_ncolonies_integer <- as.integer(
-  year5_taxa$post_bleaching_restored_ncolonies
+year5_taxa$post_bleaching_restored_ncolonies
 )
 
 # Calculate new cover based on colonies that were lost
 year5_taxa$coral_area_post_colony_mortality <- (year5_taxa$post_bleaching_restored_ncolonies_integer) *
-  (((year1_taxa$restored_coral_dia_end / 2)^2) * pi)
+(((year1_taxa$restored_coral_dia_end / 2)^2) * pi)
 year5_taxa$coral_cover_post_colony_mortality <- site_area *
-  (year5_taxa$coral_area_post_colony_mortality / 100)
+(year5_taxa$coral_area_post_colony_mortality / 100)
 
 # Residual (decimal) from above, back into partial mortality calculation
 year5_taxa$total_dhw_residual <- year5_taxa$post_bleaching_restored_ncolonies -
-  year5_taxa$post_bleaching_restored_ncolonies_integer
+year5_taxa$post_bleaching_restored_ncolonies_integer
 year5_taxa$total_dhw_residual_area <- year5_taxa$total_dhw_residual *
-  (((year1$restored_coral_dia_end / 2)^2) * pi)
+(((year1$restored_coral_dia_end / 2)^2) * pi)
 year5_taxa$total_dhw_residual_cover_decline <- year5_taxa$total_dhw_residual_area / site_area
 
 # Add residual cover decline to 75% of total scenario mortality
 # baseline partial mortality also gets added in here
 year5_taxa$restored_cover_post_mortality <- year5_taxa$coral_cover_post_colony_mortality +
-  ((dhw_mortality * 0.75 - year5_taxa$total_dhw_residual_cover_decline) * (1 - x_mortality))
+((dhw_mortality * 0.75 - year5_taxa$total_dhw_residual_cover_decline) * (1 - x_mortality))
 
 # calculate growth of corals that didn't die
 # Site_Area from user input
@@ -267,20 +267,20 @@ year5_taxa$restored_cover_post_mortality <- year5_taxa$coral_cover_post_colony_m
 year5_taxa$restored_area_start <- site_area * (year5_taxa$restored_cover_post_mortality / 100)
 
 year5_taxa$restored_coral_dia_start <- sqrt(
-  (year5_taxa$restored_area_start / year5_taxa$post_bleaching_restored_ncolonies_integer) / pi
+(year5_taxa$restored_area_start / year5_taxa$post_bleaching_restored_ncolonies_integer) / pi
 ) * 2
 
 # Grow the diameter of the colonies
 # coral_growth is taxon specific
 # see bottom of DHW.R there are penalties for coral growth after bleaching
-year5_taxa$year5_coral_dia_end <- restored_coral_dia_start +  # invalid: restored_coral_dia_start undefined (missing year5_taxa$)
-  (coral_growth$planar_mean / 100 * bleach_severe_reduction_yearx)
+year5_taxa$year5_coral_dia_end <- restored_coral_dia_start +# invalid: restored_coral_dia_start undefined (missing year5_taxa$)
+(coral_growth$planar_mean / 100 * bleach_severe_reduction_yearx)
 
 # calculate new species-specific area
-year5_taxa$restored_area_end <- (((restored_coral_dia_end / 2)^2) * pi) * post_bleaching_restored_ncolonies_integer  # invalid: undefined vars (missing year5_taxa$ prefixes)
+year5_taxa$restored_area_end <- (((restored_coral_dia_end / 2)^2) * pi) * post_bleaching_restored_ncolonies_integer# invalid: undefined vars (missing year5_taxa$ prefixes)
 
 # calculate new species-specific coral cover
-year5_taxa$restored_cover_end <- (restored_area_end / site_area) * 100  # invalid: restored_area_end undefined (missing year5_taxa$)
+year5_taxa$restored_cover_end <- (restored_area_end / site_area) * 100# invalid: restored_area_end undefined (missing year5_taxa$)
 
 # Repeat L196-232 for Baseline coral assemblage
 # because dia of colonies is different so they need to be kept separate throughout
@@ -289,25 +289,25 @@ year5_taxa$restored_cover_end <- (restored_area_end / site_area) * 100  # invali
 # Remaining 75% decline is partial mortality that reduces effective colony mortality
 year5_taxa$post_bleaching_baseline_cover_1 <- year1_taxa$baseline_cover_end + (dhw_mortality * 0.25)
 year5_taxa$post_bleaching_baseline_area_1 <- site_area * (year5_taxa$post_bleaching_baseline_cover_1 / 100)
-year5_taxa$post_bleaching_baseline_ncolonies <- ear1_taxa$baseline_ncolonies -  # invalid: "ear1_taxa" typo for "year1_taxa"
-  year5_taxa$post_bleaching_baseline_area_1 / (((year1$baseline_coral_dia_end / 2)^2) * pi)
+year5_taxa$post_bleaching_baseline_ncolonies <- ear1_taxa$baseline_ncolonies -# invalid: "ear1_taxa" typo for "year1_taxa"
+year5_taxa$post_bleaching_baseline_area_1 / (((year1$baseline_coral_dia_end / 2)^2) * pi)
 
 # NColonies needs to be an integer for calculations below
 year5_taxa$post_bleaching_baseline_ncolonies_integer <- as.integer(
-  year5_taxa$post_bleaching_baseline_ncolonies
+year5_taxa$post_bleaching_baseline_ncolonies
 )
 
 # Calculate new cover based on colonies that were lost
 year5_taxa$coral_area_post_colony_mortality <- (year5_taxa$post_bleaching_baseline_ncolonies_integer) *
-  (((year1_taxa$baseline_coral_dia_end / 2)^2) * pi)
+(((year1_taxa$baseline_coral_dia_end / 2)^2) * pi)
 year5_taxa$coral_cover_post_colony_mortality <- site_area *
-  (year5_taxa$coral_area_post_colony_mortality / 100)
+(year5_taxa$coral_area_post_colony_mortality / 100)
 
 # Residual (decimal) from above, back into partial mortality calculation
 year5_taxa$total_dhw_residual <- year5_taxa$post_bleaching_baseline_ncolonies -
-  year5_taxa$post_bleaching_baseline_ncolonies_integer
+year5_taxa$post_bleaching_baseline_ncolonies_integer
 year5_taxa$total_dhw_residual_area <- year5_taxa$total_dhw_residual *
-  (((year1$baseline_coral_dia_end / 2)^2) * pi)
+(((year1$baseline_coral_dia_end / 2)^2) * pi)
 year5_taxa$total_dhw_residual_cover_decline <- (year5_taxa$total_dhw_residual_area / site_area) * 100
 
 # Add residual cover decline to 75% of total scenario mortality
@@ -315,8 +315,8 @@ year5_taxa$total_dhw_residual_cover_decline <- (year5_taxa$total_dhw_residual_ar
 # DHW mortality and the residual coral cover decline are both in % cover
 # residual decline subtracted because it is positive but DHW is negative
 year5_taxa$baseline_cover_post_mortality <- (
-  year5_taxa$coral_cover_post_colony_mortality +
-    ((dhw_mortality * 0.57) - year5_taxa$total_dhw_residual_cover_decline)
+year5_taxa$coral_cover_post_colony_mortality +
+((dhw_mortality * 0.57) - year5_taxa$total_dhw_residual_cover_decline)
 ) * (1 - x_mortality)
 
 # calculate growth of corals that didn't die
@@ -325,26 +325,26 @@ year5_taxa$baseline_cover_post_mortality <- (
 year5_taxa$baseline_area_start <- site_area * (year5_taxa$baseline_cover_post_mortality / 100)
 
 year5_taxa$baseline_coral_dia_start <- sqrt(
-  (year5_taxa$baseline_area_start / year5_taxa$post_bleaching_baseline_ncolonies_integer) / pi
+(year5_taxa$baseline_area_start / year5_taxa$post_bleaching_baseline_ncolonies_integer) / pi
 ) * 2
 
 # Grow the diameter of the colonies
 # coral_growth is taxon specific
 # see bottom of DHW.R there are penalties for coral growth after bleaching
-year5_taxa$year5_coral_dia_end <- baseline_coral_dia_start +  # invalid: baseline_coral_dia_start undefined (missing year5_taxa$)
-  (coral_growth$planar_mean / 100 * bleach_severe_reduction_yearx)
+year5_taxa$year5_coral_dia_end <- baseline_coral_dia_start +# invalid: baseline_coral_dia_start undefined (missing year5_taxa$)
+(coral_growth$planar_mean / 100 * bleach_severe_reduction_yearx)
 
 # calculate new species-specific area
-year5_taxa$baseline_area_end <- (((baseline_coral_dia_end / 2)^2) * pi) * post_bleaching_baseline_ncolonies_integer  # invalid: undefined vars (missing year5_taxa$ prefixes)
+year5_taxa$baseline_area_end <- (((baseline_coral_dia_end / 2)^2) * pi) * post_bleaching_baseline_ncolonies_integer# invalid: undefined vars (missing year5_taxa$ prefixes)
 
 # calculate new species-specific coral cover
-year5_taxa$baseline_cover_end <- (baseline_area_end / site_area) * 100  # invalid: baseline_area_end undefined (missing year5_taxa$)
+year5_taxa$baseline_cover_end <- (baseline_area_end / site_area) * 100# invalid: baseline_area_end undefined (missing year5_taxa$)
 
 # Total Year_X coral cover
 year5_taxa$total_cover <- year5_taxa$baseline_cover_end + year5_taxa$restored_cover_end
 
 # Calculate gross production
-year5_taxa$gp <- (year5_taxa$coral_cover / 100) * travis_rates  # taxon-specific calcification rates
+year5_taxa$gp <- (year5_taxa$coral_cover / 100) * travis_rates# taxon-specific calcification rates
 
 # sum to get site-level gross production
 year5_site$gp <- sum(year5_taxa$gp)
@@ -389,30 +389,30 @@ year5_site$rap <- year5_site$np / 2.9 / (1 - porosity)
 year10_taxa$post_bleaching_restored_cover_1 <- year5_taxa$restored_cover_end + (dhw_mortality * 0.25)
 year10_taxa$post_bleaching_restored_area_1 <- site_area * (year10_taxa$post_bleaching_restored_cover_1 / 100)
 year10_taxa$post_bleaching_restored_ncolonies <- year5_taxa$restored_ncolonies -
-  year10_taxa$post_bleaching_restored_area_1 / (((year1$restored_coral_dia_end / 2)^2) * pi)
+year10_taxa$post_bleaching_restored_area_1 / (((year1$restored_coral_dia_end / 2)^2) * pi)
 
 # NColonies needs to be an integer for calculations below
 year10_taxa$post_bleaching_restored_ncolonies_integer <- as.integer(
-  year10_taxa$post_bleaching_restored_ncolonies
+year10_taxa$post_bleaching_restored_ncolonies
 )
 
 # Calculate new cover based on colonies that were lost
 year10_taxa$coral_area_post_colony_mortality <- (year10_taxa$post_bleaching_restored_ncolonies_integer) *
-  (((year5_taxa$restored_coral_dia_end / 2)^2) * pi)
+(((year5_taxa$restored_coral_dia_end / 2)^2) * pi)
 year10_taxa$coral_cover_post_colony_mortality <- site_area *
-  (year10_taxa$coral_area_post_colony_mortality / 100)
+(year10_taxa$coral_area_post_colony_mortality / 100)
 
 # Residual (decimal) from above, back into partial mortality calculation
 year10_taxa$total_dhw_residual <- year10_taxa$post_bleaching_restored_ncolonies -
-  year10_taxa$post_bleaching_restored_ncolonies_integer
+year10_taxa$post_bleaching_restored_ncolonies_integer
 year10_taxa$total_dhw_residual_area <- year10_taxa$total_dhw_residual *
-  (((year1$restored_coral_dia_end / 2)^2) * pi)
+(((year1$restored_coral_dia_end / 2)^2) * pi)
 year10_taxa$total_dhw_residual_cover_decline <- year10_taxa$total_dhw_residual_area / site_area
 
 # Add residual cover decline to 75% of total scenario mortality
 # baseline partial mortality also gets added in here
 year10_taxa$restored_cover_post_mortality <- year10_taxa$coral_cover_post_colony_mortality +
-  ((dhw_mortality * 0.57 - year10_taxa$total_dhw_residual_cover_decline) * (1 - x_mortality))
+((dhw_mortality * 0.57 - year10_taxa$total_dhw_residual_cover_decline) * (1 - x_mortality))
 
 # calculate growth of corals that didn't die
 # Site_Area from user input
@@ -420,20 +420,20 @@ year10_taxa$restored_cover_post_mortality <- year10_taxa$coral_cover_post_colony
 year10_taxa$restored_area_start <- site_area * (year10_taxa$restored_cover_post_mortality / 100)
 
 year10_taxa$restored_coral_dia_start <- sqrt(
-  (year10_taxa$restored_area_start / year10_taxa$post_bleaching_restored_ncolonies_integer) / pi
+(year10_taxa$restored_area_start / year10_taxa$post_bleaching_restored_ncolonies_integer) / pi
 ) * 2
 
 # Grow the diameter of the colonies
 # coral_growth is taxon specific
 # see bottom of DHW.R there are penalties for coral growth after bleaching
-year10_taxa$year10_coral_dia_end <- restored_coral_dia_start +  # invalid: restored_coral_dia_start undefined (missing year10_taxa$)
-  (coral_growth$planar_mean / 100 * bleach_severe_reduction_yearx)
+year10_taxa$year10_coral_dia_end <- restored_coral_dia_start +# invalid: restored_coral_dia_start undefined (missing year10_taxa$)
+(coral_growth$planar_mean / 100 * bleach_severe_reduction_yearx)
 
 # calculate new species-specific area
-year10_taxa$restored_area_end <- (((restored_coral_dia_end / 2)^2) * pi) * post_bleaching_restored_ncolonies_integer  # invalid: undefined vars (missing year10_taxa$ prefixes)
+year10_taxa$restored_area_end <- (((restored_coral_dia_end / 2)^2) * pi) * post_bleaching_restored_ncolonies_integer# invalid: undefined vars (missing year10_taxa$ prefixes)
 
 # calculate new species-specific coral cover
-year10_taxa$restored_cover_end <- (restored_area_end / site_area) * 100  # invalid: restored_area_end undefined (missing year10_taxa$)
+year10_taxa$restored_cover_end <- (restored_area_end / site_area) * 100# invalid: restored_area_end undefined (missing year10_taxa$)
 
 # Repeat L196-232 for Baseline coral assemblage
 # because dia of colonies is different so they need to be kept separate throughout
@@ -443,24 +443,24 @@ year10_taxa$restored_cover_end <- (restored_area_end / site_area) * 100  # inval
 year10_taxa$post_bleaching_baseline_cover_1 <- year5_taxa$baseline_cover_end + (dhw_mortality * 0.25)
 year10_taxa$post_bleaching_baseline_area_1 <- site_area * (year10_taxa$post_bleaching_baseline_cover_1 / 100)
 year10_taxa$post_bleaching_baseline_ncolonies <- year5_taxa$restored_ncolonies -
-  year10_taxa$post_bleaching_baseline_area_1 / (((year1$baseline_coral_dia_end / 2)^2) * pi)
+year10_taxa$post_bleaching_baseline_area_1 / (((year1$baseline_coral_dia_end / 2)^2) * pi)
 
 # NColonies needs to be an integer for calculations below
 year10_taxa$post_bleaching_baseline_ncolonies_integer <- as.integer(
-  year10_taxa$post_bleaching_baseline_ncolonies
+year10_taxa$post_bleaching_baseline_ncolonies
 )
 
 # Calculate new cover based on colonies that were lost
 year10_taxa$coral_area_post_colony_mortality <- (year10_taxa$post_bleaching_baseline_ncolonies_integer) *
-  (((year5_taxa$baseline_coral_dia_end / 2)^2) * pi)
+(((year5_taxa$baseline_coral_dia_end / 2)^2) * pi)
 year10_taxa$coral_cover_post_colony_mortality <- site_area *
-  (year10_taxa$coral_area_post_colony_mortality / 100)
+(year10_taxa$coral_area_post_colony_mortality / 100)
 
 # Residual (decimal) from above, back into partial mortality calculation
 year10_taxa$total_dhw_residual <- year10_taxa$post_bleaching_baseline_ncolonies -
-  year10_taxa$post_bleaching_baseline_ncolonies_integer
+year10_taxa$post_bleaching_baseline_ncolonies_integer
 year10_taxa$total_dhw_residual_area <- year10_taxa$total_dhw_residual *
-  (((year1$baseline_coral_dia_end / 2)^2) * pi)
+(((year1$baseline_coral_dia_end / 2)^2) * pi)
 year10_taxa$total_dhw_residual_cover_decline <- (year10_taxa$total_dhw_residual_area / site_area) * 100
 
 # Add residual cover decline to 75% of total scenario mortality
@@ -468,8 +468,8 @@ year10_taxa$total_dhw_residual_cover_decline <- (year10_taxa$total_dhw_residual_
 # DHW mortality and the residual coral cover decline are both in % cover
 # residual decline subtracted because it is positive but DHW is negative
 year10_taxa$baseline_cover_post_mortality <- (
-  year10_taxa$coral_cover_post_colony_mortality +
-    ((dhw_mortality * 0.57) - year10_taxa$total_dhw_residual_cover_decline)
+year10_taxa$coral_cover_post_colony_mortality +
+((dhw_mortality * 0.57) - year10_taxa$total_dhw_residual_cover_decline)
 ) * (1 - x_mortality)
 
 # calculate growth of corals that didn't die
@@ -478,26 +478,26 @@ year10_taxa$baseline_cover_post_mortality <- (
 year10_taxa$baseline_area_start <- site_area * (year10_taxa$baseline_cover_post_mortality / 100)
 
 year10_taxa$baseline_coral_dia_start <- sqrt(
-  (year10_taxa$baseline_area_start / year10_taxa$post_bleaching_baseline_ncolonies_integer) / pi
+(year10_taxa$baseline_area_start / year10_taxa$post_bleaching_baseline_ncolonies_integer) / pi
 ) * 2
 
 # Grow the diameter of the colonies
 # coral_growth is taxon specific
 # see bottom of DHW.R there are penalties for coral growth after bleaching
-year10_taxa$year10_coral_dia_end <- baseline_coral_dia_start +  # invalid: baseline_coral_dia_start undefined (missing year10_taxa$)
-  (coral_growth$planar_mean / 100 * bleach_severe_reduction_year0)
+year10_taxa$year10_coral_dia_end <- baseline_coral_dia_start +# invalid: baseline_coral_dia_start undefined (missing year10_taxa$)
+(coral_growth$planar_mean / 100 * bleach_severe_reduction_year0)
 
 # calculate new species-specific area
-year10_taxa$baseline_area_end <- (((baseline_coral_dia_end / 2)^2) * pi) * post_bleaching_baseline_ncolonies_integer  # invalid: undefined vars (missing year10_taxa$ prefixes)
+year10_taxa$baseline_area_end <- (((baseline_coral_dia_end / 2)^2) * pi) * post_bleaching_baseline_ncolonies_integer# invalid: undefined vars (missing year10_taxa$ prefixes)
 
 # calculate new species-specific coral cover
-year10_taxa$baseline_cover_end <- (baseline_area_end / site_area) * 100  # invalid: baseline_area_end undefined (missing year10_taxa$)
+year10_taxa$baseline_cover_end <- (baseline_area_end / site_area) * 100# invalid: baseline_area_end undefined (missing year10_taxa$)
 
 # Total Year_X coral cover
 year10_taxa$total_cover <- year10_taxa$baseline_cover_end + year5_taxa$restored_cover_end
 
 # Calculate gross production
-year10_taxa$gp <- (year10_taxa$coral_cover / 100) * travis_rates  # taxon-specific calcification rates
+year10_taxa$gp <- (year10_taxa$coral_cover / 100) * travis_rates# taxon-specific calcification rates
 
 # sum to get site-level gross production
 year10_site$gp <- sum(year10_taxa$gp)
@@ -533,35 +533,33 @@ year10_site$rap <- year10_site$np / 2.9 / (1 - porosity)
 
 # Need matrix of estimated outplant height by species or at least morphology
 # ??? Sara Williams can probably provide this ???#
-initial_outplant_height <- 2  # cm
+initial_outplant_height <- 2# cm
 
 # For time 0
 # species-specific cover should be multiplied by species-specific average outplant height
-year0_taxa$elevation <- year0_taxa$restored_cover * initial_outplant_size  # invalid: initial_outplant_size undefined (defined above as initial_outplant_height)
+year0_taxa$elevation <- year0_taxa$restored_cover * initial_outplant_size# invalid: initial_outplant_size undefined (defined above as initial_outplant_height)
 year0_site$elevation <- sum(year0_taxa$elevation) * (sum(year0_taxa$restored_cover) / 100)
 # I think this math works
 
 # For each time point 1, 5, and 10 years after outplanting
-year_x_taxa$elevation <- (year(x - 1)_taxa$restored_cover * coral_growth$mean_extension_rate)  # invalid: "year(x - 1)_taxa" is not valid R syntax
-year_x_site$elevation <- year(x - 1)$elevation +  # invalid: "year(x - 1)" is not valid R syntax
-  (sum(year_x_taxa$elevation) * (sum(year_x_taxa$restored_cover) / 100))
+year_x_taxa$elevation <- (year(x - 1)_taxa$restored_cover * coral_growth$mean_extension_rate)# invalid: "year(x - 1)_taxa" is not valid R syntax
+year_x_site$elevation <- year(x - 1)$elevation +# invalid: "year(x - 1)" is not valid R syntax
+(sum(year_x_taxa$elevation) * (sum(year_x_taxa$restored_cover) / 100))
 
 ### Ranking of Reef-Accretion Potential ###
 # Needs to be reported in the context of what this actually means for whether the reef is growing
 # and how fast
-baseline_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < baseline_rap) /  # invalid: missing closing bracket before closing paren
-  length(baseline_budgets$rap) * 100
-year_x_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < year_x_site$rap]) /
-  length(baseline_budgets$rap) * 100
+baseline_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < baseline_rap]) / length(baseline_budgets$rap) * 100
+year_x_percentile <- length(baseline_budgets$rap[baseline_budgets$rap < year_x_site$rap]) / length(baseline_budgets$rap) * 100
 
 library(tidyr)
 library(dplyr)
 # Determine relationship between RAP increase and Ranking increase
 ranking_summary <- tibble(rap = baseline_budgets$rap) |>
-  crossing(threshold = seq(-1, 1, 0.05)) |>
-  group_by(threshold) |>
-  summarise(pct_below = mean(rap < threshold, na.rm = TRUE) * 100) |>
-  as.data.frame()
+crossing(threshold = seq(-1, 1, 0.05)) |>
+group_by(threshold) |>
+summarise(pct_below = mean(rap < threshold, na.rm = TRUE) * 100) |>
+as.data.frame()
 
 ## Calculate ROI ----
 # ????John????
