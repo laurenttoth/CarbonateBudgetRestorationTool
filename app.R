@@ -40,6 +40,16 @@ library(dashboardthemes) # (optional to use dark theme)
 # Enable automatic reloading of the app when code changes are detected
 options(shiny.autoreload = TRUE)
 
+# Quiet Excel reader ----
+# readxl auto-repairs blank/duplicate headers and prints "New names: `` -> `...2`"
+# to the console. .name_repair = "unique_quiet" suppresses that for every read.
+read_excel_quiet <- function(path, ...) {
+  readxl::read_excel(path, .name_repair = "unique_quiet", ...)
+}
+
+# Ingest data ----
+
+# call data for world map
 # Ingest data ----
 
 # call data for world map
@@ -57,6 +67,22 @@ calc_rates   <- read.csv(here("data", "Travis_Calcification_Rates.csv"))
 diams        <- read.csv(here("data", "NCRMP_Colony_Diam_Florida.csv"))
 # Region- and habitat-specific bioerosion rates
 bioerosion   <- read.csv(here("data", "Bioerosion_Rates_Regional.csv"))
+
+# Species-specific bioerosion rate lookups (Monitoring tab) ----
+# Three sheets: "Parrotfish", "Urchins", "Sponges". Read at startup so the
+# observed-bioerosion pipeline can join per-taxon rates. Missing file / sheet
+# is tolerated (returns NULL and the pipeline falls back to regional rates).
+read_sheet_safe <- function(path, sheet) {
+  tryCatch(
+    read_excel_quiet(path, sheet = sheet),
+    error = function(e) NULL
+  )
+}
+
+species_bioerosion_path <- here("data", "Bioerosion_Rates_Species.xlsx")
+sp_erosion_parrotfish <- read_sheet_safe(species_bioerosion_path, "Parrotfish")
+sp_erosion_urchins    <- read_sheet_safe(species_bioerosion_path, "Urchins")
+sp_erosion_sponges    <- read_sheet_safe(species_bioerosion_path, "Sponges")
 
 # Ingest NCRMP carbonate budget data
 df <- read.csv(here("data", "NCRMP_CarbonateBudgets_2014_to_2024.csv"))
@@ -79,12 +105,12 @@ region_pal <- colorFactor(pastel_colors, domain = region_levels)
 
 
 # Ingest baseline cover data template to retrieve list of taxa
-base_cover_df <- read_excel(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
-taxa <- read_excel(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
+base_cover_df <- read_excel_quiet(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
+taxa <- read_excel_quiet(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
 # Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)
-slr_raw <- readxl::read_excel(
+slr_raw <- read_excel_quiet(
   here("data", "ipcc_ar6_sea_level_projection_psmsl_id_363.xlsx"),
   sheet = "Total"
 )
@@ -275,13 +301,45 @@ species_label_2line <- function(s) {
 }
 
 # Shared y-axis floor rule ----
-# If the data minimum sits above -2, pin the lower limit to -2 so the yellow /
-# red status bands are always visible; otherwise expand to the data minimum.
+# If the data minimum sits above -2, pin the lower limit to -1 (the default
+# floor) so the yellow / red status bands are always visible; otherwise expand
+# to the data minimum.
 rap_axis_min <- function(data_min) {
-  if (!is.finite(data_min)) return(-2)
-  if (data_min > -2) -2 else data_min
+  if (!is.finite(data_min)) return(-1)
+  if (data_min > -2) -1 else data_min
 }
 
+# Shared y-axis break rule ----
+# Breaks are even numbers upward. When the floor is the -1 default, -1 is forced
+# as the FIRST break (odd, special-cased) followed by evens: -1, 0, 2, 4, ...
+# When the floor is <= -2 (data-driven), the -1 tick is unnecessary and omitted;
+# breaks are pure evens from the nearest even at/below the floor up to the top.
+rap_axis_breaks <- function(y_lo, y_hi) {
+  hi_even <- ceiling(y_hi / 2) * 2
+  if (y_lo <= -2) {
+    lo_even <- floor(y_lo / 2) * 2
+    seq(lo_even, hi_even, by = 2)
+  } else {
+    c(-1, seq(0, hi_even, by = 2))
+  }
+}
+
+# Status-band data frame builder ----
+# Two-row df (Erosion + Stasis) carrying a `label` column that rides through
+# ggplotly's tooltip="text" channel, so bands hover as "Erosion"/"Stasis"
+# instead of "trace 0"/"trace 1". Drawn with geom_rect (annotate() can't carry
+# a tooltip aesthetic).
+status_bands_df <- function(xmin, xmax, y_lo) {
+  data.frame(
+    xmin = c(xmin, xmin), xmax = c(xmax, xmax),
+    ymin = c(y_lo, -0.5),  ymax = c(-0.5, 0.5),
+    fill = c("red", "yellow"), label = c("Erosion", "Stasis"),
+    stringsAsFactors = FALSE
+  )
+}
+
+# Bleaching lookup ----
+# Percent reduction in cover per degree-heating week
 # Bleaching lookup ----
 # Percent reduction in cover per degree-heating week
 # (from acer_model_mockup.R)
@@ -478,6 +536,23 @@ resolve_bioerosion <- function(subregion, habitat) {
   be_macro  <- if (nrow(be_hab)) be_hab$AVG_MACROBIOEROSION[1] else 0
   sum(be_pfish, be_urchin, be_macro, na.rm = TRUE)
 }
+
+# Resolve habitat-specific bioerosion, split by taxon type ----
+# Returns a named list (parrotfish / urchin / sponge) so the Monitoring pipeline
+# can fall back per-taxon-type when a given observed sheet is empty. Sponge maps
+# to the regional macrobioerosion term.
+resolve_bioerosion_split <- function(subregion, habitat) {
+  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
+  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
+  list(
+    parrotfish = if (nrow(be_hab)) .safe0(be_hab$AVG_PARROTFISH[1]) else 0,
+    urchin     = if (nrow(be_hab)) .safe0(be_hab$AVG_URCHIN[1]) else 0,
+    sponge     = if (nrow(be_hab)) .safe0(be_hab$AVG_MACROBIOEROSION[1]) else 0
+  )
+}
+
+# Small NA/NULL -> 0 helper (module scope; server has its own .safe_num)
+.safe0 <- function(x) if (is.null(x) || length(x) == 0 || is.na(x)) 0 else as.numeric(x)
 
 # Generalized Caribbean microbioerosion rate: 0.24 kg CaCO3/m2/yr
 be_micro_rate <- 0.24
@@ -710,6 +785,104 @@ run_restoration_model <- function(habitat, subregion, site_area,
   )
 }
 
+# ============================================================================
+# Observed-bioerosion metabolism (Restoration Monitoring tab) ----
+# Converts the three observed sheets (Parrotfish / Urchins / Sponges) into a
+# total bioerosion rate (kg CaCO3/m2/yr) per Years_Post_Restoration, joined to
+# the species-specific rate lookups read at startup. Per-taxon-type fallback to
+# regional rates when a given observed sheet is empty (headers only).
+# ============================================================================
+
+# Detect "headers only" (a data frame with zero rows).
+sheet_is_empty <- function(x) is.null(x) || nrow(x) == 0
+
+# Urchin test-diameter string class -> urchin-rate df Test_Size value.
+# String-based, exhaustive classes.
+urchin_test_size <- function(diam_str) {
+  switch(as.character(diam_str),
+    "0-20"   = 10,
+    "20-40"  = 30,
+    "40-60"  = 50,
+    "60-80"  = 70,
+    "80-100" = 90,
+    NA_real_
+  )
+}
+
+# Sponge bioerosion (kg CaCO3/m2/yr) for one year's rows.
+#   area_m2 = Area_cm2 / 1e4; contribution = area_m2 * rate / Survey_Area_Sponges_m2
+compute_sponge_erosion <- function(rows, rate_df) {
+  if (sheet_is_empty(rows) || is.null(rate_df)) return(0)
+  total <- 0
+  for (i in seq_len(nrow(rows))) {
+    tx   <- rows$Taxon[i]
+    rate <- rate_df$Bioerosion_Rate[rate_df$Taxon == tx]
+    if (length(rate) == 0 || is.na(rate[1])) next
+    area_m2   <- .safe0(rows$Area_cm2[i]) / 1e4
+    survey_m2 <- .safe0(rows$Survey_Area_Sponges_m2[i])
+    if (survey_m2 <= 0) next
+    total <- total + (area_m2 * rate[1]) / survey_m2
+  }
+  total
+}
+
+# Urchin bioerosion (kg CaCO3/m2/yr) for one year's rows.
+#   rate is g CaCO3/urchin/day -> /1000 * Count / Survey_Area_Urchins_m2 * 365
+compute_urchin_erosion <- function(rows, rate_df) {
+  if (sheet_is_empty(rows) || is.null(rate_df)) return(0)
+  total <- 0
+  for (i in seq_len(nrow(rows))) {
+    tx    <- rows$Taxon[i]
+    tsize <- urchin_test_size(rows$Test_Diameter_mm[i])
+    if (is.na(tsize)) next
+    rate <- rate_df$Bioerosion_Rate[rate_df$Taxon == tx & rate_df$Test_Size == tsize]
+    if (length(rate) == 0 || is.na(rate[1])) next
+    count     <- .safe0(rows$Count[i])
+    survey_m2 <- .safe0(rows$Survey_Area_Urchins_m2[i])
+    if (survey_m2 <= 0) next
+    total <- total + ((rate[1] / 1000) * count / survey_m2) * 365
+  }
+  total
+}
+
+# Parrotfish bioerosion (kg CaCO3/m2/yr) for one year's rows.
+#   phase_size = paste0(Life_phase, gsub("-","_",Fork_length_cm)); this maps to
+#   a column name in the parrotfish rate df. Rate is kg CaCO3/fish/year.
+#   Returns list(total, unobserved) where `unobserved` is a character vector of
+#   "G. species XX-XX cm" strings for rows whose rate lookup returned NA.
+compute_parrotfish_erosion <- function(rows, rate_df) {
+  if (sheet_is_empty(rows) || is.null(rate_df)) {
+    return(list(total = 0, unobserved = character(0)))
+  }
+  total <- 0
+  unobserved <- character(0)
+  for (i in seq_len(nrow(rows))) {
+    tx        <- rows$Taxon[i]
+    life      <- as.character(rows$Life_phase[i])
+    fork      <- as.character(rows$Fork_length_cm[i])
+    phase_col <- paste0(life, gsub("-", "_", fork), "cm")
+
+    rate_row <- rate_df[rate_df$Taxon == tx, , drop = FALSE]
+    rate_val <- if (nrow(rate_row) && phase_col %in% names(rate_row)) {
+      suppressWarnings(as.numeric(rate_row[[phase_col]][1]))
+    } else {
+      NA_real_
+    }
+
+    if (is.na(rate_val)) {
+      unobserved <- c(unobserved, paste0(abbrev_species(tx), " ", fork, " cm"))
+      next
+    }
+
+    count     <- .safe0(rows$Count[i])
+    survey_m2 <- .safe0(rows$Survey_Area_Parrotfish_m2[i])
+    if (survey_m2 <= 0) next
+    total <- total + (rate_val * count) / survey_m2
+  }
+  list(total = total, unobserved = unobserved)
+}
+
+# Filter parplor description end.
 
 # Filter choices for the Home-tab map controls ----
 year_choices <- sort(unique(df$YEAR))
@@ -743,12 +916,10 @@ colors <- c("darkred", "red", "orangered", "orange", "yellow", "white", "#0099FF
 num_pal <- colorNumeric(colors, domain = at)
 
 pal_rap        <- num_pal
-pal_parrotfish <- make_wr_pal("parrotfish_G")
 pal_gross      <- make_wr_pal("grossE_G")
 
 # Reversed palettes for legend displays
 num_pal_rev        <- colorNumeric(colors, domain = at, reverse = TRUE)
-pal_parrotfish_rev <- make_wr_pal("parrotfish_G", rev = TRUE)
 pal_gross_rev      <- make_wr_pal("grossE_G", rev = TRUE)
 
 # Reef State: original Blue / Yellow / Orange status colors
@@ -774,14 +945,31 @@ mix_massive_species <- c(
 
 weedy_species <- c("Porites astreoides", "Porites porites")
 
-# Pastel palette generator for scenarios ----
-# Assigns a unique pastel color to each scenario (by name) at render time.
+# Pastel palette pool for scenarios ----
+# Strong reds and greens are excluded so bar colors don't carry connotative
+# (good/bad) meaning; the pool is blues/purples/oranges/teals/pinks/neutrals.
+# Session-persistent assignment lives in the server (sc_color_map) so toggling
+# a scenario does not reshuffle the colors.
+scenario_pastel_pool <- c(
+  "#AEC7E8", # light blue
+  "#C5B0D5", # light purple
+  "#FFBB78", # light orange
+  "#9EDAE5", # light teal
+  "#F7B6D2", # light pink
+  "#C7C7C7", # light gray
+  "#DBDB8D", # khaki (muted yellow-green, not a "growth" green)
+  "#BCBD9A", # sage
+  "#D5A6BD", # mauve
+  "#A9CCE3"  # steel blue
+)
+
+# Fallback generator (used only for names not yet in the session color map).
 scenario_palette <- function(scenario_names) {
   n <- length(scenario_names)
   if (n == 0) return(character(0))
-  base_pastels <- RColorBrewer::brewer.pal(max(3, min(9, n)), "Pastel1")
-  cols <- colorRampPalette(base_pastels)(n)
-  setNames(cols, scenario_names)
+  pool <- scenario_pastel_pool
+  if (n > length(pool)) pool <- colorRampPalette(pool)(n)
+  setNames(pool[seq_len(n)], scenario_names)
 }
 
 # Shared impact-summary HTML builder ----
@@ -814,14 +1002,17 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
     else "",
     "</p>",
     "<hr>",
-    "<p>", if (!is.na(r_rap) && r_rap >= 6.3 && r_rap < 8) {
-      "Sea-level rise will exceed restored accretion by 2050."
+    "<p>", 
+    if (!is.na(r_rap) && r_rap >= 3.1 && r_rap < 6.3) {
+      "<span style='color:orangered;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2030.</span>"
+    } else if (!is.na(r_rap) && r_rap >= 6.3 && r_rap < 8) {
+      "<span style='color:orange;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2050.</span>"
     } else if (!is.na(r_rap) && r_rap >= 8 && r_rap < 9.2) {
-      "Sea-level rise will exceed restored accretion by 2100"
+      "<span style='color:yellow;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2100.</span>"
     } else if (!is.na(r_rap) && r_rap >= 9.2) {
-      "Restored accretion exceeds sea-level rise."
+      "<span style='color:green;'>Restored accretion exceeds the geologic baseline and will exceed sea-level rise at least until 2100.</span>"
     } else {
-      "Sea-level rise will exceed restored accretion."
+      "<span style='color:red;'>Restored accretion is still exceeded by the geological baseline and sea-level rise.</span>"
     }, "</p>"
   ))
 }
@@ -886,7 +1077,7 @@ body <- dashboardBody(
       }
       /* Map Controls floating panel */
       .map-controls-panel {
-        position: absolute; top: 160px; right: 10px; z-index: 1000;
+        position: absolute; top: 175px; right: 10px; z-index: 1000;
         width: 280px; background: rgba(255,255,255,0.92);
         border-radius: 8px; box-shadow: 0 1px 6px rgba(0,0,0,0.3);
       }
@@ -960,6 +1151,8 @@ body <- dashboardBody(
 
       /* Red warning under the sim-duration slider */
       .sim-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 2px; }
+      /* Red warning under the bioerosion upload widget */
+      .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 4px; }
 
       /* ---------------- DARK MODE (CSS-class toggle on <body>) ---------------- */
       body.dark-mode .content-wrapper,
@@ -1038,10 +1231,10 @@ body <- dashboardBody(
         # USGS & NOAA logos
         tags$div(
           style = "position: absolute; top: 90px; right: 10px;
-                   z-index: 1000; display: flex; gap: 8px;",
+                   z-index: 1000; display: flex; gap: 10px;",
 
-          tags$img(src = "usgsLogo.png", style = "height: 60px;"),
-          tags$img(src = "noaaLogo.png", style = "height: 60px;")
+          tags$img(src = "usgsLogo.png", style = "height: 75px;"),
+          tags$img(src = "noaaLogo.png", style = "height: 75px;")
         ),
 
         # Map Controls: vertically-collapsible box below the logos
@@ -1063,22 +1256,24 @@ body <- dashboardBody(
             ),
 
             # Filter group: Year + Habitat dropdown checkboxes
-            tags$strong("Filter"),
-            shinyWidgets::dropdownButton(
-              inputId = "filter_year_dd",
-              label = "Year",
-              circle = FALSE, width = "100%", status = "default",
-              checkboxGroupInput("filter_year", NULL,
-                choices = year_choices, selected = year_choices
-              )
-            ),
-            tags$div(style = "height:6px;"),
-            shinyWidgets::dropdownButton(
-              inputId = "filter_habitat_dd",
-              label = "Habitat",
-              circle = FALSE, width = "100%", status = "default",
-              checkboxGroupInput("filter_habitat", NULL,
-                choices = habitat_choices, selected = habitat_choices
+            tags$div(
+              style = "display:flex; gap:8px; align-items:center;",
+              tags$strong("Filter by:"),
+              shinyWidgets::dropdownButton(
+                inputId = "filter_habitat_dd",
+                label = "Habitat",
+                circle = FALSE, width = "100%", status = "default",
+                checkboxGroupInput("filter_habitat", NULL,
+                  choices = habitat_choices, selected = habitat_choices
+                )
+              ),
+              shinyWidgets::dropdownButton(
+                inputId = "filter_year_dd",
+                label = "Year",
+                circle = FALSE, width = "100%", status = "default",
+                checkboxGroupInput("filter_year", NULL,
+                  choices = year_choices, selected = year_choices
+                )
               )
             ),
 
@@ -1089,7 +1284,6 @@ body <- dashboardBody(
               choices = c(
                 "Reef Accretion Potential (RAP)" = "rap",
                 "Reef State"                     = "current_state",
-                "Parrotfish Bioerosion"          = "parrotfish_G",
                 "Gross Bioerosion"               = "grossE_G"
               ),
               selected = "rap"
@@ -1343,10 +1537,13 @@ body <- dashboardBody(
             status = "primary", solidHeader = TRUE,
             selectInput("sc_project", "Project name", choices = NULL),
             checkboxGroupInput("sc_scenarios", "Scenarios", choices = NULL),
-            actionButton("sc_refresh", "Refresh list", icon = icon("rotate")),
-            br(), br(),
-            downloadButton("sc_download_csv", "Download report (.csv)")
+            tags$div(
+              style = "display:flex; gap:8px; align-items:center;",
+              actionButton("sc_refresh", "Refresh list", icon = icon("rotate")),
+              downloadButton("sc_download_csv", "Download report (.csv)")
+            )
           ),
+
           # Collapsible per-scenario Impact Summary (below Scenario Selection).
           # Each scenario is a nested collapsible panel within this box.
           shinydashboard::box(
@@ -1383,7 +1580,7 @@ body <- dashboardBody(
               shinydashboard::box(
                 title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
                 status = "success", solidHeader = TRUE,
-                plotOutput("sc_rap_bar", height = "350px")
+                plotly::plotlyOutput("sc_rap_bar", height = "350px")
               )
             )
           )
@@ -1409,6 +1606,8 @@ body <- dashboardBody(
             fileInput("upload_bioerosion", "Upload bioerosion data",
               accept = c(".csv", ".xlsx")
             ),
+            # Red warning for unobserved parrotfish size classes
+            uiOutput("bioerosion_parrotfish_warning"),
             selectizeInput("monitoring_selected_site", "Select site",
               choices = NULL,
               options = list(placeholder = "Select a site...")
@@ -1483,7 +1682,7 @@ body <- dashboardBody(
            
            Although the protection and recovery of ecosystem functions are at the center of most restoration 
            and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
-           habitat persistence under different emission and bleaching scenarios."),
+           reef accretion under different emission and bleaching scenarios."),
           tags$br(),
           tags$br(),
           HTML("The Carbonate Budget Restoration Tool will enable decision makers to evaluate the impact of reef restoration decisions 
@@ -1654,7 +1853,7 @@ server <- function(input, output, session) {
       addProviderTiles(providers$Esri.WorldImagery,
         options = providerTileOptions(attribution = 'Map data &copy; <a href="https://www.esri.com/">Esri</a>')
       ) |>
-      setView(lng = -80.6097, lat = 25, zoom = 8) |>
+      setView(lng = -81, lat = 25.5, zoom = 8) |>
 
       # Region polygons, pastel fill at 75% transparency
       addPolygons(
@@ -1707,7 +1906,6 @@ server <- function(input, output, session) {
       fill_cols <- num_pal(d$rap)
     } else {
       pal <- switch(field,
-        "parrotfish_G" = pal_parrotfish,
         "grossE_G" = pal_gross
       )
       fill_cols <- pal(pmax(0, d[[field]]))
@@ -1812,11 +2010,9 @@ server <- function(input, output, session) {
         )
     } else {
       pal <- switch(field,
-        "parrotfish_G" = pal_parrotfish_rev,
         "grossE_G" = pal_gross_rev
       )
       ttl <- switch(field,
-        "parrotfish_G" = "Parrotfish<br/>bioerosion<br/>(kg CaCO\u00b3/yr)",
         "grossE_G" = "Gross<br/>bioerosion<br/>(kg CaCO\u00b3/yr)"
       )
       proxy <- proxy |>
@@ -1898,7 +2094,7 @@ server <- function(input, output, session) {
   # two paths behave identically. `path` points to an .xlsx on disk.
   ingest_baseline_file <- function(path) {
     up <- tryCatch(
-      readxl::read_excel(path, sheet = "Coral Cover input"),
+      read_excel_quiet(path, sheet = "Coral Cover input"),
       error = function(e) {
         showNotification(paste("Could not read sheet:", e$message), type = "error")
         NULL
@@ -2452,21 +2648,29 @@ server <- function(input, output, session) {
       # No restoration target yet: show baseline growth (gray) if available.
       bg <- baseline_growth()
       if (is.null(bg)) {
+        y_lo <- rap_axis_min(-1); y_hi <- 8
+        bands <- status_bands_df(0, dur, y_lo)
         d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
         p <- ggplot(d0, aes(Year, RAP)) +
+          geom_rect(data = bands, inherit.aes = FALSE,
+                    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                        fill = fill, text = label), alpha = 0.30) +
+          scale_fill_identity() +
           scale_x_continuous(breaks = x_breaks) +
-          scale_y_continuous(limits = c(rap_axis_min(-1), 8)) +
+          scale_y_continuous(limits = c(y_lo, y_hi),
+                             breaks = rap_axis_breaks(y_lo, y_hi)) +
           labs(x = "Year", y = "RAP (mm/yr)") +
           theme_minimal(base_size = 14)
         y0_rap <- b$rap
       } else {
         y_lo <- rap_axis_min(min(bg$RAP_orig, na.rm = TRUE))
         y_hi <- max(max(slr_tl$SLR), max(bg$RAP_orig, na.rm = TRUE))
+        bands <- status_bands_df(0, dur, y_lo)
         p <- ggplot(bg, aes(x = Year)) +
-          annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
-                   fill = "red", alpha = 0.10) +
-          annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
-                   fill = "yellow", alpha = 0.10) +
+          geom_rect(data = bands, inherit.aes = FALSE,
+                    aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                        fill = fill, text = label), alpha = 0.30) +
+          scale_fill_identity() +
           # Baseline (original) growth line; hover carries cover + budget.
           # `text` is passed via aes() (not as a bare arg) to avoid the
           # "Ignoring unknown aesthetics: text" console warnings under ggplotly.
@@ -2478,7 +2682,8 @@ server <- function(input, output, session) {
                                       "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
                     color = orig_col, linewidth = 1.1) +
           scale_x_continuous(breaks = x_breaks) +
-          scale_y_continuous(limits = c(y_lo, y_hi)) +
+          scale_y_continuous(limits = c(y_lo, y_hi),
+                             breaks = rap_axis_breaks(y_lo, y_hi)) +
           labs(x = "Year", y = "RAP (mm/yr)") +
           theme_minimal(base_size = 14)
         y0_rap <- bg$RAP_orig[1]
@@ -2500,12 +2705,13 @@ server <- function(input, output, session) {
 
       y_lo <- rap_axis_min(min(d$RAP_orig, na.rm = TRUE))
       y_hi <- max(max(slr_tl$SLR), max(d$RAP_total, na.rm = TRUE))
+      bands <- status_bands_df(0, dur, y_lo)
 
       p <- ggplot(d, aes(x = Year)) +
-        annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
-                 fill = "red", alpha = 0.10) +
-        annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
-                 fill = "yellow", alpha = 0.10) +
+        geom_rect(data = bands, inherit.aes = FALSE,
+                  aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                      fill = fill, text = label), alpha = 0.30) +
+        scale_fill_identity() +
         geom_ribbon(aes(ymin = RAP_orig, ymax = RAP_total),
                     fill = "green", alpha = 0.20) +
         # Original RAP contribution (all baseline species' originals)
@@ -2535,7 +2741,8 @@ server <- function(input, output, session) {
           size = 4, color = "darkgreen"
         ) +
         scale_x_continuous(breaks = x_breaks) +
-        scale_y_continuous(limits = c(y_lo, y_hi)) +
+        scale_y_continuous(limits = c(y_lo, y_hi),
+                           breaks = rap_axis_breaks(y_lo, y_hi)) +
         labs(x = "Year", y = "RAP (mm/yr)") +
         theme_minimal(base_size = 14)
       y0_rap <- d$RAP_orig[1]
@@ -2697,7 +2904,7 @@ server <- function(input, output, session) {
     ext <- tolower(tools::file_ext(name))
     tryCatch(
       if (ext == "xlsx") {
-        readxl::read_excel(path)
+        read_excel_quiet(path, sheet = 'Coral Cover input')
       } else {
         read.csv(path, stringsAsFactors = FALSE)
       },
@@ -2712,63 +2919,92 @@ server <- function(input, output, session) {
   # re-evaluate and drop any auto-loaded cached data.
   monitoring_cache_token <- reactiveVal(0)
 
-  # Uploaded coral-cover data (overrides df when present). Accepts .csv or .xlsx.
-  # Falls back to the cached file (auto-restored on launch) when no fresh upload.
-  uploaded_monitoring_cover <- reactive({
-    monitoring_cache_token()  # take a dependency so Clear-cache re-evaluates
+  # ---- Uploaded coral-cover .xlsx (Monitoring) ----
+  # Keep the raw datapath to read multiple sheets. Coral cover comes
+  # from the default/first sheet; the pipeline reads Years_Post_Restoration +
+  # per-Taxon Percent_Cover + Site_Area_m2. Falls back to the cached file.
+  monitoring_cover_path <- reactive({
+    monitoring_cache_token()
     f <- input$upload_cover
     if (!is.null(f)) {
-      up <- read_monitoring_file(f$datapath, f$name)
-      # Cache a copy for auto-reload on next launch (preserve extension)
-      if (!is.null(up)) {
-        ext <- tolower(tools::file_ext(f$name))
-        tryCatch(
-          file.copy(f$datapath, paste0(cached_cover_stub, ".", ext), overwrite = TRUE),
-          error = function(e) NULL
-        )
-      }
-      return(up)
+      ext <- tolower(tools::file_ext(f$name))
+      # Cache a copy (preserve extension) for auto-reload next launch
+      tryCatch(
+        file.copy(f$datapath, paste0(cached_cover_stub, ".", ext), overwrite = TRUE),
+        error = function(e) NULL
+      )
+      return(list(path = f$datapath, ext = ext))
     }
-    # No fresh upload: try the cached file
     cp <- find_cached(cached_cover_stub)
-    if (!is.null(cp)) return(read_monitoring_file(cp, cp))
+    if (!is.null(cp)) return(list(path = cp, ext = tolower(tools::file_ext(cp))))
     NULL
   })
 
-  # Wire the monitoring "Select site" dropdown to the uploaded cover file
-  # (mirrors the planning-tab baseline behavior). Falls back to df$site_id, in
-  # which case a map marker click can drive the selection (see marker_click).
+  # Parsed coral-cover data (first sheet). Only .xlsx drives the monitoring
+  # pipeline; a .csv is still read for the site dropdown / legacy display.
+  uploaded_monitoring_cover <- reactive({
+    info <- monitoring_cover_path()
+    if (is.null(info)) return(NULL)
+    if (info$ext == "xlsx") {
+      tryCatch(read_excel_quiet(info$path, sheet = 'Coral Cover input'), error = function(e) {
+        showNotification(paste("Could not read cover file:", e$message), type = "error")
+        NULL
+      })
+    } else {
+      tryCatch(read.csv(info$path, stringsAsFactors = FALSE), error = function(e) {
+        showNotification(paste("Could not read cover file:", e$message), type = "error")
+        NULL
+      })
+    }
+  })
+
+  # Wire the monitoring "Select site" dropdown.
+  #  - Cover file loaded -> populated EXCLUSIVELY from the file's Unique_Site_ID
+  #    (first value auto-selected so the pipeline fires immediately).
+  #  - No file -> NCRMP df$site_id list (marker clicks can drive selection).
   observe({
     up <- uploaded_monitoring_cover()
-    choices <- if (!is.null(up) && "site_id" %in% names(up)) {
-      unique(as.character(up$site_id[!is.na(up$site_id)]))
+    if (!is.null(up) && "Unique_Site_ID" %in% names(up)) {
+      site_ids <- unique(as.character(up$Unique_Site_ID[!is.na(up$Unique_Site_ID)]))
+      current  <- isolate(input$monitoring_selected_site)
+      sel <- if (!is.null(current) && current %in% site_ids) current
+             else if (length(site_ids)) site_ids[1] else ""
+      updateSelectizeInput(session, "monitoring_selected_site",
+        choices = site_ids, selected = sel, server = TRUE)
     } else {
-      unique(df$site_id)
+      updateSelectizeInput(session, "monitoring_selected_site",
+        choices = unique(df$site_id), server = TRUE)
     }
-    updateSelectizeInput(session, "monitoring_selected_site",
-      choices = choices, server = TRUE
-    )
   })
 
-  # Uploaded bioerosion data (overrides bioerosion when present).
-  # Falls back to the cached file (auto-restored on launch).
-  uploaded_monitoring_bioerosion <- reactive({
-    monitoring_cache_token()  # take a dependency so Clear-cache re-evaluates
+  # ---- Uploaded observed-bioerosion .xlsx (Monitoring) ----
+  # Three sheets: Parrotfish / Urchins / Sponges. Keep the path so all three
+  # can be read. Falls back to the cached file.
+  monitoring_bioerosion_path <- reactive({
+    monitoring_cache_token()
     f <- input$upload_bioerosion
     if (!is.null(f)) {
-      up <- read_monitoring_file(f$datapath, f$name)
-      if (!is.null(up)) {
-        ext <- tolower(tools::file_ext(f$name))
-        tryCatch(
-          file.copy(f$datapath, paste0(cached_bioerosion_stub, ".", ext), overwrite = TRUE),
-          error = function(e) NULL
-        )
-      }
-      return(up)
+      ext <- tolower(tools::file_ext(f$name))
+      tryCatch(
+        file.copy(f$datapath, paste0(cached_bioerosion_stub, ".", ext), overwrite = TRUE),
+        error = function(e) NULL
+      )
+      return(list(path = f$datapath, ext = ext))
     }
     cp <- find_cached(cached_bioerosion_stub)
-    if (!is.null(cp)) return(read_monitoring_file(cp, cp))
+    if (!is.null(cp)) return(list(path = cp, ext = tolower(tools::file_ext(cp))))
     NULL
+  })
+
+  # Parsed observed-bioerosion sheets (list of three data frames or NULLs).
+  uploaded_monitoring_bioerosion <- reactive({
+    info <- monitoring_bioerosion_path()
+    if (is.null(info) || info$ext != "xlsx") return(NULL)
+    list(
+      Parrotfish = read_sheet_safe(info$path, "Parrotfish"),
+      Urchins    = read_sheet_safe(info$path, "Urchins"),
+      Sponges    = read_sheet_safe(info$path, "Sponges")
+    )
   })
 
   # Clear cache: delete cached cover + bioerosion files and re-evaluate.
@@ -2787,18 +3023,178 @@ server <- function(input, output, session) {
     )
   })
 
-  # Helper: baseline metrics for the selected NCRMP site (upload overrides df)
-  cc_baseline_vals <- reactive({
-    req(input$monitoring_selected_site)
+  # ---- Observed bioerosion per Years_Post_Restoration ----
+  # Returns list(by_year = named numeric [year -> kg/m2/yr], unobserved = chr).
+  # Per-taxon-type fallback to regional rates when a sheet is empty. NULL when
+  # no observed-bioerosion file is present (caller then uses regional rates).
+  monitoring_bioerosion_by_year <- reactive({
+    sheets <- uploaded_monitoring_bioerosion()
+    if (is.null(sheets)) return(NULL)
 
-    up <- uploaded_monitoring_cover()
-    if (!is.null(up) && "site_id" %in% names(up) &&
-        input$monitoring_selected_site %in% up$site_id) {
-      dat <- up[up$site_id == input$monitoring_selected_site, , drop = FALSE][1, ]
-    } else {
-      dat <- df |> filter(site_id == input$monitoring_selected_site) |> slice(1)
+    # Regional split for per-taxon-type fallback
+    subregion_lbl <- input$subregion_choice
+    subregion <- if (subregion_lbl %in% names(subregion_codes)) subregion_codes[[subregion_lbl]] else subregion_lbl
+    reg <- resolve_bioerosion_split(subregion, input$habitat_choice)
+
+    site <- input$monitoring_selected_site
+    req(!is.null(site), nzchar(site))
+    subset_site <- function(x) {
+      if (sheet_is_empty(x)) return(x)
+      if ("Unique_Site_ID" %in% names(x))
+        x[as.character(x$Unique_Site_ID) == site, , drop = FALSE] else x
+    }
+    pf <- subset_site(sheets$Parrotfish)
+    ur <- subset_site(sheets$Urchins)
+    sp <- subset_site(sheets$Sponges)
+
+    # Union of all Years_Post_Restoration values across non-empty sheets
+    yr_of <- function(x) if (sheet_is_empty(x) || !("Years_Post_Restoration" %in% names(x))) numeric(0) else unique(x$Years_Post_Restoration)
+    all_years <- sort(unique(c(yr_of(pf), yr_of(ur), yr_of(sp))))
+    if (length(all_years) == 0) return(NULL)
+
+    unobserved_all <- character(0)
+    by_year <- setNames(numeric(length(all_years)), as.character(all_years))
+
+    for (yr in all_years) {
+      # Parrotfish
+      if (!sheet_is_empty(pf)) {
+        rows <- pf[pf$Years_Post_Restoration == yr & pf$Life_phase != "JU", , drop = FALSE]
+        pfr <- compute_parrotfish_erosion(rows, sp_erosion_parrotfish)
+        pfr <- compute_parrotfish_erosion(rows, sp_erosion_parrotfish)
+        pf_val <- pfr$total
+        unobserved_all <- c(unobserved_all, pfr$unobserved)
+      } else {
+        pf_val <- reg$parrotfish
+      }
+      # Urchins
+      ur_val <- if (!sheet_is_empty(ur)) {
+        compute_urchin_erosion(ur[ur$Years_Post_Restoration == yr, , drop = FALSE], sp_erosion_urchins)
+      } else reg$urchin
+      # Sponges
+      sp_val <- if (!sheet_is_empty(sp)) {
+        compute_sponge_erosion(sp[sp$Years_Post_Restoration == yr, , drop = FALSE], sp_erosion_sponges)
+      } else reg$sponge
+
+      by_year[as.character(yr)] <- .safe0(pf_val) + .safe0(ur_val) + .safe0(sp_val)
     }
 
+    list(by_year = by_year, unobserved = unique(unobserved_all))
+  })
+
+  # Red warning for any unobserved parrotfish size classes
+  output$bioerosion_parrotfish_warning <- renderUI({
+    bio <- monitoring_bioerosion_by_year()
+    if (is.null(bio) || length(bio$unobserved) == 0) return(NULL)
+    msgs <- vapply(bio$unobserved, function(u) {
+      paste0("An unobserved parrotfish size class has been entered: ", u,
+             ". Ensure parrotfish bioerosion data has been entered accurately.")
+    }, character(1))
+    tags$div(class = "bioerosion-warning",
+      lapply(msgs, function(m) tags$div(m))
+    )
+  })
+
+  # Nearest-year bioerosion substitution: for a requested year, return the
+  # observed total from the closest Years_Post_Restoration (ties -> past).
+  nearest_bioerosion <- function(bio, target_year) {
+    if (is.null(bio) || length(bio$by_year) == 0) return(NA_real_)
+    ys <- as.numeric(names(bio$by_year))
+    if (target_year %in% ys) return(unname(bio$by_year[as.character(target_year)]))
+    d <- abs(ys - target_year)
+    # Prefer past (smaller year) on ties: order by distance, then by year asc
+    idx <- order(d, ys)[1]
+    unname(bio$by_year[idx])
+  }
+
+  # ---- Monitoring per-year RAP series (file-driven) ----
+  # Fires only when a coral-cover .xlsx is present. Iterates each
+  # Years_Post_Restoration, computes the carbonate budget from that year's
+  # per-Taxon Percent_Cover (area-occupied method), subtracts generalized
+  # microbioerosion + bioerosion (observed if present, else regional), and
+  # derives RAP with assemblage-based porosity. -1 == Baseline.
+  monitoring_series <- reactive({
+    info <- monitoring_cover_path()
+    if (is.null(info) || info$ext != "xlsx") return(NULL)
+
+    cover <- uploaded_monitoring_cover()
+    if (is.null(cover)) return(NULL)
+
+    needed <- c("Years_Post_Restoration", "Taxon", "Percent_Cover", "Unique_Site_ID")
+    if (!all(needed %in% names(cover))) return(NULL)
+
+    site <- input$monitoring_selected_site
+    req(!is.null(site), nzchar(site))
+    cover <- cover[as.character(cover$Unique_Site_ID) == site, , drop = FALSE]
+    if (nrow(cover) == 0) return(NULL)
+
+    # Site area from the cover .xlsx (Site_Area_m2); default 100
+    site_area <- if ("Site_Area_m2" %in% names(cover) && any(!is.na(cover$Site_Area_m2))) {
+      .safe0(cover$Site_Area_m2[!is.na(cover$Site_Area_m2)][1])
+    } else 100
+    if (site_area <= 0) site_area <- 100
+
+    bio <- monitoring_bioerosion_by_year()  # NULL -> regional fallback below
+
+    # Regional (per-m2) bioerosion for the no-observed-file case
+    subregion_lbl <- input$subregion_choice
+    subregion <- if (subregion_lbl %in% names(subregion_codes)) subregion_codes[[subregion_lbl]] else subregion_lbl
+    reg_total <- resolve_bioerosion(subregion, input$habitat_choice)
+
+    years <- sort(unique(cover$Years_Post_Restoration))
+    out <- data.frame()
+
+    for (yr in years) {
+      rows <- cover[cover$Years_Post_Restoration == yr, , drop = FALSE]
+
+      # Per-taxon cover df for porosity + budget
+      cover_df <- data.frame(
+        taxon = as.character(rows$Taxon),
+        cvr   = as.numeric(rows$Percent_Cover),
+        stringsAsFactors = FALSE
+      )
+      cover_df$cvr[is.na(cover_df$cvr)] <- 0
+
+      por <- assemblage_porosity(cover_df, "cvr")
+
+      # Area-occupied patch calcification flux (kg CaCO3/yr), then per-m2
+      patch_budget <- 0
+      for (i in seq_len(nrow(cover_df))) {
+        s   <- cover_df$taxon[i]
+        cvr <- cover_df$cvr[i]
+        rate <- calc_rates$rate[calc_rates$Taxon == s]
+        if (length(rate) == 0 || is.na(rate[1])) next
+        patch_budget <- patch_budget + site_area * (cvr / 100) * rate[1]
+      }
+      gross_budget <- patch_budget / site_area
+
+      # Bioerosion for this year: observed (nearest-year substitution) or regional
+      bio_year <- if (!is.null(bio)) nearest_bioerosion(bio, yr) else reg_total
+      if (is.na(bio_year)) bio_year <- reg_total
+
+      # Net budget = gross - generalized micro - (observed/regional) macro
+      net_budget <- gross_budget - be_micro_rate - .safe0(bio_year)
+      rap <- net_budget / 2.9 / (1 - por)
+      total_cover <- sum(cover_df$cvr, na.rm = TRUE)
+
+      out <- rbind(out, data.frame(
+        Year = yr, RAP = rap, budget = net_budget, cover = total_cover,
+        stringsAsFactors = FALSE
+      ))
+    }
+    out[order(out$Year), ]
+  })
+
+  # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
+  # When the monitoring pipeline is active, "Baseline" is the -1 row.
+  cc_baseline_vals <- reactive({
+    ms <- monitoring_series()
+    if (!is.null(ms) && any(ms$Year == -1)) {
+      r <- ms[ms$Year == -1, ][1, ]
+      return(list(cover = r$cover, budget = r$budget, rap = r$RAP))
+    }
+
+    req(input$monitoring_selected_site)
+    dat <- df |> filter(site_id == input$monitoring_selected_site) |> slice(1)
     list(
       cover  = dat$hardCoral_PrctCvr,
       budget = dat$net_G,
@@ -2807,33 +3203,21 @@ server <- function(input, output, session) {
   })
 
   # Helper: restored metrics.
-  #  - Coral-cover file uploaded  -> use the planning-tab restored RAP (if any),
-  #    else fall back to baseline (no map projection when a file is loaded).
-  #  - No upload (map-driven)     -> project the SELECTED SITE's own baseline
-  #    with the Home-tab linear model + the map's target-cover slider (so the
-  #    Baseline/Restored map to the map site, not the Planning baseline).
+  #  - Monitoring pipeline active -> the LAST (max year) row is "Restored".
+  #  - No cover upload (map-driven) -> project the SELECTED SITE's own baseline
+  #    with the Home-tab linear model + the map's target-cover slider.
   cc_restored_vals <- reactive({
+    ms <- monitoring_series()
+    if (!is.null(ms) && nrow(ms) > 0) {
+      r <- ms[which.max(ms$Year), ]
+      return(list(cover = r$cover, budget = r$budget, rap = r$RAP))
+    }
+
     base <- cc_baseline_vals()
-    up   <- uploaded_monitoring_cover()
-
-    if (is.null(up)) {
-      # Map-derived: Home-tab linear projection for the selected site's baseline
-      inc <- if (is.null(input$target_cover_increase)) 0 else input$target_cover_increase
-      restored_rap    <- base$rap + cover_rap_slope * inc
-      restored_cover  <- base$cover + inc
-      restored_budget <- restored_rap * 2.9 * (1 - 0.6265)
-      return(list(cover = restored_cover, budget = restored_budget, rap = restored_rap))
-    }
-
-    # File uploaded: reuse the planning-tab restored values if present
-    restored_rap <- if (!is.null(rap_values$restored)) rap_values$restored else base$rap
-    restored_budget <- if (!is.null(rap_values$restored)) {
-      restored_rap * 2.9 * (1 - 0.6265)
-    } else {
-      base$budget
-    }
-    r <- restored_metrics()
-    restored_cover <- if (!is.null(r$cover) && r$cover > 0) r$cover else base$cover
+    inc <- if (is.null(input$target_cover_increase)) 0 else input$target_cover_increase
+    restored_rap    <- base$rap + cover_rap_slope * inc
+    restored_cover  <- base$cover + inc
+    restored_budget <- restored_rap * 2.9 * (1 - 0.6265)
     list(cover = restored_cover, budget = restored_budget, rap = restored_rap)
   })
 
@@ -2888,22 +3272,17 @@ server <- function(input, output, session) {
   })
 
   # Timeline: RAP over the simulation duration with SLR reference lines (plotly).
-  # When map-driven (no coral-cover upload), draw a smooth interpolated line
-  # between the site's Baseline (Y0) and Restored (Y10) metrics. Reference lines
-  # + y-axis floor mirror the Scenario Comparison RAP bar. Dark-mode aware.
+  #  - Cover .xlsx uploaded  -> real per-year RAP series (Baseline at x=-1).
+  #  - No upload (map-driven) -> smooth interpolation Baseline (Y0) -> Restored (Y10).
+  # Reference lines (geologic + SSP245 rates) + y-axis floor + dark-mode shared.
   output$cc_timeline <- plotly::renderPlotly({
-    b <- cc_baseline_vals()
-    r <- cc_restored_vals()
-    up <- uploaded_monitoring_cover()
+    ms <- monitoring_series()
 
     dark <- isTRUE(input$dark_mode)
     paper_bg <- if (dark) "#232a33" else "white"
     plot_bg  <- if (dark) "#232a33" else "white"
     font_col <- if (dark) "#e6e6e6" else "#333333"
     grid_col <- if (dark) "#5a6472" else "#d9d9d9"
-
-    dur <- 10
-    years <- 0:dur
 
     # SSP245 reference rates (mm/yr) at 2030 / 2050 / 2100
     slr_refs <- c(
@@ -2913,66 +3292,70 @@ server <- function(input, output, session) {
     )
     geo_baseline <- 3.1
 
-    if (is.null(up)) {
-      # Map-driven: smooth interpolation from Baseline (Y0) to Restored (Y10)
+    if (!is.null(ms) && nrow(ms) > 0) {
+      # ---- File-driven: real per-year RAP series (Baseline at x = -1) ----
+      x_min <- min(ms$Year); x_max <- max(ms$Year)
+      # x breaks: label -1 as "Baseline", then integer years
+      x_vals   <- sort(unique(ms$Year))
+      x_labels <- ifelse(x_vals == -1, "Baseline", as.character(x_vals))
+
+      data_min <- min(c(ms$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      y_lo <- rap_axis_min(data_min)
+      y_hi <- max(c(ms$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+      bands <- status_bands_df(x_min, x_max, y_lo)
+
+      p <- ggplot(ms, aes(x = Year)) +
+        geom_rect(data = bands, inherit.aes = FALSE,
+                  aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                      fill = fill, text = label), alpha = 0.30) +
+        scale_fill_identity() +
+        geom_line(aes(y = RAP, group = 1,
+                      text = paste0(ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
+                                    "<br>RAP: ", round(RAP, 2), " mm/yr",
+                                    "<br>Cover: ", round(cover, 1), " %",
+                                    "<br>Budget: ", round(budget, 2), " kg/m\u00b2/yr")),
+                  color = "forestgreen", linewidth = 1.4) +
+        geom_point(aes(y = RAP, text = paste0(
+                        ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
+                        "<br>RAP: ", round(RAP, 2), " mm/yr")),
+                   color = "forestgreen", size = 3) +
+        scale_x_continuous(breaks = x_vals, labels = x_labels) +
+        scale_y_continuous(limits = c(y_lo, y_hi),
+                           breaks = rap_axis_breaks(y_lo, y_hi)) +
+        labs(x = "Years post-restoration", y = "RAP (mm/yr)") +
+        theme_minimal(base_size = 14)
+
+      band_x <- c(x_min, x_max)
+    } else {
+      # ---- Map-driven: smooth interpolation Baseline (Y0) -> Restored (Y10) ----
+      b <- cc_baseline_vals(); r <- cc_restored_vals()
+      dur <- 10; years <- 0:dur
       rap_series <- b$rap + (r$rap - b$rap) * (years / dur)
-      tl <- data.frame(
-        Year = years,
-        RAP  = rap_series,
-        stringsAsFactors = FALSE
-      )
+      tl <- data.frame(Year = years, RAP = rap_series, stringsAsFactors = FALSE)
 
       data_min <- min(c(tl$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
       y_lo <- rap_axis_min(data_min)
       y_hi <- max(c(tl$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+      bands <- status_bands_df(0, dur, y_lo)
 
       p <- ggplot(tl, aes(x = Year)) +
-        # Yellow (stasis) + red (erosion) status bands (mirror Planning timeline)
-        annotate("rect", xmin = 0, xmax = dur, ymin = -10, ymax = -0.5,
-                 fill = "red", alpha = 0.30) +
-        annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
-                 fill = "yellow", alpha = 0.30) +
+        geom_rect(data = bands, inherit.aes = FALSE,
+                  aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                      fill = fill, text = label), alpha = 0.30) +
+        scale_fill_identity() +
         geom_line(aes(y = RAP, group = 1,
-                      text = paste0("RAP",
-                                    "<br>Year ", Year,
+                      text = paste0("Year ", Year,
                                     "<br>RAP: ", round(RAP, 2), " mm/yr")),
                   color = "forestgreen", linewidth = 1.4) +
         scale_x_continuous(breaks = years) +
-        scale_y_continuous(limits = c(y_lo, y_hi)) +
+        scale_y_continuous(limits = c(y_lo, y_hi),
+                           breaks = rap_axis_breaks(y_lo, y_hi)) +
         labs(x = "Year", y = "RAP (mm/yr)") +
         theme_minimal(base_size = 14)
-    } else {
-      # File-driven: flat Baseline vs Restored lines
-      tl <- data.frame(
-        Year = rep(years, 2),
-        RAP  = c(rep(b$rap, length(years)), rep(r$rap, length(years))),
-        Scenario = rep(c("Baseline", "Restored"), each = length(years))
-      )
 
-      data_min <- min(c(tl$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
-      y_lo <- rap_axis_min(data_min)
-      y_hi <- max(c(tl$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
-
-      p <- ggplot(tl, aes(x = Year)) +
-        annotate("rect", xmin = 0, xmax = dur, ymin = -Inf, ymax = -0.5,
-                 fill = "red", alpha = 0.10) +
-        annotate("rect", xmin = 0, xmax = dur, ymin = -0.5, ymax = 0.5,
-                 fill = "yellow", alpha = 0.10) +
-        geom_line(aes(y = RAP, color = Scenario, group = Scenario,
-                      text = paste0(Scenario,
-                                    "<br>Year: ", Year,
-                                    "<br>RAP: ", round(RAP, 2), " mm/yr")),
-                  linewidth = 1.2) +
-        scale_color_manual(values = c("Baseline" = "lightgreen", "Restored" = "forestgreen")) +
-        scale_x_continuous(breaks = years) +
-        scale_y_continuous(limits = c(y_lo, y_hi)) +
-        labs(x = "Year", y = "RAP (mm/yr)", color = NULL) +
-        theme_minimal(base_size = 14) +
-        theme(legend.position = "top")
+      band_x <- c(0, dur)
     }
 
-    # Reference lines: geologic baseline + SSP245 rates (as data-space traces so
-    # they render reliably under ggplotly)
     gp <- plotly::ggplotly(p, tooltip = "text") |>
       plotly::layout(
         paper_bgcolor = paper_bg,
@@ -2986,7 +3369,7 @@ server <- function(input, output, session) {
     # Geologic baseline (gold dashed)
     gp <- gp |>
       plotly::add_trace(
-        x = c(0, dur), y = c(geo_baseline, geo_baseline),
+        x = band_x, y = c(geo_baseline, geo_baseline),
         type = "scatter", mode = "lines",
         line = list(color = "gold", width = 2, dash = "dash"),
         showlegend = FALSE, inherit = FALSE,
@@ -3008,7 +3391,7 @@ server <- function(input, output, session) {
       if (is.na(yv)) next
       gp <- gp |>
         plotly::add_trace(
-          x = c(0, dur), y = c(yv, yv),
+          x = band_x, y = c(yv, yv),
           type = "scatter", mode = "lines",
           line = list(color = slr_ann_col, width = 1.5, dash = "dash"),
           showlegend = FALSE, inherit = FALSE,
@@ -3033,16 +3416,27 @@ server <- function(input, output, session) {
       paste0("carbonate_report_", input$monitoring_selected_site, "_", Sys.Date(), ".csv")
     },
     content = function(file) {
-      b <- cc_baseline_vals()
-      r <- cc_restored_vals()
-      out <- data.frame(
-        Site = input$monitoring_selected_site,
-        Metric = c("Coral cover (%)", "Carbonate budget (kg/m2/yr)", "Reef accretion (mm/yr)"),
-        Baseline = c(b$cover, b$budget, b$rap),
-        Restored = c(r$cover, r$budget, r$rap)
-      )
-      out$Change <- out$Restored - out$Baseline
-      write.csv(out, file, row.names = FALSE)
+      ms <- monitoring_series()
+      if (!is.null(ms) && nrow(ms) > 0) {
+        out <- data.frame(
+          Years_Post_Restoration = ms$Year,
+          Total_Cover_pct = ms$cover,
+          Net_Budget_kg_m2_yr = ms$budget,
+          RAP_mm_yr = ms$RAP
+        )
+        write.csv(out, file, row.names = FALSE)
+      } else {
+        b <- cc_baseline_vals()
+        r <- cc_restored_vals()
+        out <- data.frame(
+          Site = input$monitoring_selected_site,
+          Metric = c("Coral cover (%)", "Carbonate budget (kg/m2/yr)", "Reef accretion (mm/yr)"),
+          Baseline = c(b$cover, b$budget, b$rap),
+          Restored = c(r$cover, r$budget, r$rap)
+        )
+        out$Change <- out$Restored - out$Baseline
+        write.csv(out, file, row.names = FALSE)
+      }
     }
   )
 
@@ -3076,12 +3470,38 @@ server <- function(input, output, session) {
 
   # Populate the scenario multi-select based on chosen project.
   # All scenarios within the selected project are ENABLED (selected) by default.
+  # Populate the scenario multi-select based on chosen project.
+  # All scenarios within the selected project are ENABLED (selected) by default.
   observe({
     sc <- all_scenarios()
     req(input$sc_project)
     scen <- if (nrow(sc)) sort(unique(sc$scenario[sc$project == input$sc_project])) else character(0)
     updateCheckboxGroupInput(session, "sc_scenarios",
                              choices = scen, selected = scen)
+  })
+
+  # ---- Session-persistent scenario color map ----
+  # Colors are assigned by scenario name once and retained for the session, so
+  # toggling a scenario on/off never reshuffles the palette. New names get the
+  # next unused color from the (red/green-excluded) pastel pool.
+  sc_color_map <- reactiveVal(setNames(character(0), character(0)))
+
+  observe({
+    sc <- all_scenarios()
+    if (!nrow(sc)) return()
+    all_names <- sort(unique(sc$scenario))
+    cmap <- sc_color_map()
+    missing <- setdiff(all_names, names(cmap))
+    if (length(missing) == 0) return()
+
+    used  <- unname(cmap)
+    avail <- setdiff(scenario_pastel_pool, used)
+    if (length(avail) < length(missing)) {
+      # Extend by interpolation if we run out of distinct swatches
+      avail <- setdiff(colorRampPalette(scenario_pastel_pool)(length(cmap) + length(missing)), used)
+    }
+    new_cols <- setNames(avail[seq_along(missing)], missing)
+    sc_color_map(c(cmap, new_cols))
   })
 
   # Filtered scenarios for plotting (coerce numeric cols used by the plots)
@@ -3103,11 +3523,18 @@ server <- function(input, output, session) {
     d
   })
 
-  # Stable-per-render pastel color mapping for the selected scenarios.
+  # Session-persistent pastel color mapping for the selected scenarios.
+  # Reads from sc_color_map so colors never shift when a scenario is toggled.
   sc_colors <- reactive({
     d <- sc_selected()
     if (nrow(d) == 0) return(character(0))
-    scenario_palette(sort(unique(d$scenario)))
+    cmap <- sc_color_map()
+    nm   <- sort(unique(d$scenario))
+    have <- nm[nm %in% names(cmap)]
+    miss <- setdiff(nm, names(cmap))
+    out  <- cmap[have]
+    if (length(miss)) out <- c(out, setNames(scenario_palette(miss), miss))
+    out
   })
 
   # Shared ggplot dark-mode theme add-on for the Scenario Comparison plots.
@@ -3199,11 +3626,16 @@ server <- function(input, output, session) {
   }, bg = "transparent")
 
   # Per-scenario RAP bar with reference lines + status bands.
-  # Replaces the old RAP/Elevation scatter.
-  output$sc_rap_bar <- renderPlot({
+  # Bands ride through tooltip="text" as "Erosion"/"Stasis".
+  output$sc_rap_bar <- plotly::renderPlotly({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     cols <- sc_colors()
+
+    dark <- isTRUE(input$dark_mode)
+    paper_bg <- if (dark) "#232a33" else "white"
+    font_col <- if (dark) "#e6e6e6" else "#333333"
+    grid_col <- if (dark) "#5a6472" else "#d9d9d9"
 
     geo_baseline <- 3.1
     slr_refs <- c(
@@ -3212,12 +3644,35 @@ server <- function(input, output, session) {
       "SSP245 @2100" = ssp245_rate_at(2100)
     )
 
-    # y-axis floor: -2 if data minimum sits above it, else the data minimum
     data_min <- min(c(d$restored_rap, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
     y_lo <- rap_axis_min(data_min)
     y_hi <- max(c(d$restored_rap, geo_baseline, slr_refs), na.rm = TRUE) + 1
 
-    # Reference-line data frame (geologic baseline + 3 SSP245 rates)
+    d$scenario <- factor(d$scenario, levels = d$scenario)
+    n_sc <- nrow(d)
+    # geom_rect status bands spanning the full categorical width
+    bands <- status_bands_df(0.4, n_sc + 0.6, y_lo)
+
+    p <- ggplot(d, aes(x = scenario, y = restored_rap, fill = scenario), alpha = 1) +
+      geom_rect(data = bands, inherit.aes = FALSE,
+                aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                    fill = fill, text = label), alpha = 0.30) +
+      geom_col(aes(text = paste0(scenario,
+                                 "<br>Restored RAP: ", round(restored_rap, 2), " mm/yr"))) +
+      scale_fill_manual(values = c(cols, setNames(c("red","yellow"), c("red","yellow")))) +
+      scale_y_continuous(limits = c(y_lo, y_hi), breaks = rap_axis_breaks(y_lo, y_hi)) +
+      labs(x = NULL, y = "Restored RAP (mm/yr)") +
+      sc_theme()[[1]] +
+      theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+
+    gp <- plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(
+        paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
+        font = list(color = font_col),
+        xaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
+        yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col)
+      )
+
     ref_df <- data.frame(
       label = c("Geologic baseline", names(slr_refs)),
       yval  = c(geo_baseline, unname(slr_refs)),
@@ -3225,35 +3680,18 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     ref_df <- ref_df[is.finite(ref_df$yval), ]
-
-    dark <- isTRUE(input$dark_mode)
-    n_sc <- nrow(d)
-
-    p <- ggplot(d, aes(x = scenario, y = restored_rap, fill = scenario)) +
-      # Yellow (stasis) + red (erosion) status bands mirroring the timeline
-      annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = -0.5,
-               fill = "red", alpha = 0.10) +
-      annotate("rect", xmin = -Inf, xmax = Inf, ymin = -0.5, ymax = 0.5,
-               fill = "yellow", alpha = 0.10) +
-      geom_col() +
-      scale_fill_manual(values = cols) +
-      scale_y_continuous(limits = c(y_lo, y_hi)) +
-      labs(x = NULL, y = "Restored RAP (mm/yr)") +
-      sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
-
-    # Add dashed reference lines + right-aligned annotations
     for (k in seq_len(nrow(ref_df))) {
-      p <- p +
-        geom_hline(yintercept = ref_df$yval[k], linetype = "dashed",
-                   color = ref_df$col[k], linewidth = 0.7) +
-        annotate("text", x = n_sc + 0.5, y = ref_df$yval[k],
-                 label = paste0(ref_df$label[k], ": ", round(ref_df$yval[k], 2), " mm/yr"),
-                 hjust = 1, vjust = -0.4, size = 3.4, color = ref_df$col[k])
+      gp <- gp |>
+        plotly::add_trace(
+          x = c(0.4, n_sc + 0.6), y = c(ref_df$yval[k], ref_df$yval[k]),
+          type = "scatter", mode = "lines",
+          line = list(color = ref_df$col[k], width = 1.4, dash = "dash"),
+          showlegend = FALSE, inherit = FALSE, hoverinfo = "text",
+          text = paste0(ref_df$label[k], ": ", round(ref_df$yval[k], 2), " mm/yr")
+        )
     }
-    p
-  }, bg = "transparent")
-
+    gp
+  })
   # Download the selected scenarios as a .csv report
   output$sc_download_csv <- downloadHandler(
     filename = function() {
