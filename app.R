@@ -1150,8 +1150,20 @@ body <- dashboardBody(
       .mix-massive   > legend { color: #6f6f6f; }
       .mix-weedy     { border: 2px solid #7bc043; }   /* lime */
       .mix-weedy     > legend { color: #5a9130; }
+      
       /* Two-line, italic slider labels in the mix sub-boxes */
-      .mix-fieldset .control-label { font-style: italic; line-height: 1.1; }
+      .mix-fieldset .control-label { font-style: italic; line-height: 1.2; }
+      /* Stacked species name above its numeric input in the Restoration Mix */
+      .mix-species-stacked { margin-bottom: 12px; }
+      .mix-species-stacked .mix-species-label {
+        font-style: italic; font-size: 13px; line-height: 1.1;
+        white-space: normal; margin-bottom: 3px; margin-top: 3px;
+      }
+      .mix-species-stacked .shiny-input-container { width: auto; margin-bottom: 0; }
+      .mix-species-stacked input {
+        width: 8ch; min-width: 8ch; padding: 4px 6px; text-align: right;
+      }
+
       /* Tighten gutters between the three top-row boxes (~1/3 spacing) */
       .restoration-toprow > [class*='col-'] { padding-left: 5px; padding-right: 5px; }
 
@@ -2329,14 +2341,11 @@ server <- function(input, output, session) {
       nid <- paste0("outplants_", gsub("[^A-Za-z0-9]", "_", s))
       tagList(
         tags$div(
-          class = "baseline-species-row",
-          tags$span(class = "baseline-species-name", title = s,
-                    HTML(species_label_2line(s))),
-          tags$div(
-            class = "baseline-species-input",
-            numericInput(id, label = NULL, value = 0,
-                         min = 0, max = 100, step = 0.5)
-          )
+          class = "mix-species-stacked",
+          tags$div(class = "baseline-species-name mix-species-label",
+                   title = s, HTML(species_label_2line(s))),
+          numericInput(id, label = NULL, value = 0,
+                       min = 0, max = 100, step = 0.5)
         ),
         tags$div(class = "rest-outplant-note", textOutput(nid, inline = TRUE))
       )
