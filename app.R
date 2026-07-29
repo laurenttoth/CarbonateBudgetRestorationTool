@@ -2323,13 +2323,21 @@ server <- function(input, output, session) {
   # (resetting every slider to 0) whenever the model reruns. Per-species
   # outplant counts render in separate, independent outputs below.
   # step = 0.5 (accept half-percent), ticks hidden; two-line italic labels.
-  make_mix_sliders <- function(species_vec) {
+  make_mix_inputs <- function(species_vec) {
     lapply(species_vec, function(s) {
-      id  <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
+      id  <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
       nid <- paste0("outplants_", gsub("[^A-Za-z0-9]", "_", s))
       tagList(
-        sliderInput(id, label = species_label_2line(s), min = 0, max = 20,
-                    value = 0, step = 0.5, post = "%", ticks = FALSE),
+        tags$div(
+          class = "baseline-species-row",
+          tags$span(class = "baseline-species-name", title = s,
+                    HTML(species_label_2line(s))),
+          tags$div(
+            class = "baseline-species-input",
+            numericInput(id, label = NULL, value = 0,
+                         min = 0, max = 100, step = 0.5)
+          )
+        ),
         tags$div(class = "rest-outplant-note", textOutput(nid, inline = TRUE))
       )
     })
@@ -2337,7 +2345,7 @@ server <- function(input, output, session) {
 
   # Branching sub-box: two columns
   output$mix_branching <- renderUI({
-    sl <- make_mix_sliders(branching_species)
+    sl <- make_mix_inputs(branching_species)
     half <- ceiling(length(sl) / 2)
     fluidRow(
       column(6, tagList(sl[1:half])),
@@ -2347,7 +2355,7 @@ server <- function(input, output, session) {
 
   # Weedy / Other sub-box: two columns
   output$mix_weedy <- renderUI({
-    sl <- make_mix_sliders(weedy_species)
+    sl <- make_mix_inputs(weedy_species)
     half <- ceiling(length(sl) / 2)
     fluidRow(
       column(6, tagList(sl[1:half])),
@@ -2357,7 +2365,7 @@ server <- function(input, output, session) {
 
   # Massive sub-box: four columns
   output$mix_massive <- renderUI({
-    sl <- make_mix_sliders(mix_massive_species)
+    sl <- make_mix_inputs(mix_massive_species)
     n <- length(sl)
     per <- ceiling(n / 4)
     col_idx <- function(k) {
@@ -2404,14 +2412,19 @@ server <- function(input, output, session) {
     },
     {
       sel <- baseline_species_list()
-      # brief defer so the dynamic base_ inputs exist before we read them
+      # brief defer so the dynamic base_ inputs exist before they are read
       later::later(function() {
         for (s in restoration_species) {
+          rest_id <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
           if (s %in% sel) {
             base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-            rest_id <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
             isolate({
-              updateSliderInput(session, rest_id, value = .safe_num(input[[base_id]]))
+              updateNumericInput(session, rest_id, value = .safe_num(input[[base_id]]))
+            })
+          } else {
+            # Species not in the active site: clear any leftover target value
+            isolate({
+              updateNumericInput(session, rest_id, value = 0)
             })
           }
         }
@@ -2511,7 +2524,7 @@ server <- function(input, output, session) {
   # graph + saved values use the full model at the horizon instead).
   restored_metrics <- reactive({
     b <- baseline_metrics()
-    slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
+    slider_ids <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", restoration_species))
     rest_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
     rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Species)])
     net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
@@ -2571,7 +2584,7 @@ server <- function(input, output, session) {
     )
     for (s in all_sp) {
       base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-      rest_id <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
+      rest_id <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
       current_sp_pct <- .safe_num(input[[base_id]])
       target_sp_pct  <- .safe_num(input[[rest_id]])
       target_cover_df[nrow(target_cover_df) + 1, ] <- list(s, current_sp_pct, target_sp_pct)
@@ -2643,7 +2656,7 @@ server <- function(input, output, session) {
 
   # Warn (red) when total target cover exceeds 100% (model refuses to run)
   output$target_cover_warning <- renderUI({
-    slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
+    slider_ids <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", restoration_species))
     tot <- sum(vapply(slider_ids, function(id) .safe_num(input[[id]]), numeric(1)), na.rm = TRUE)
     if (tot > 100) {
       tags$div(class = "sim-warning",
@@ -2651,7 +2664,7 @@ server <- function(input, output, session) {
                "%) exceeds 100%. Reduce the mix to run the model."))
     }
   })
-  
+
   # Baseline RAP percentile (gray) + restored RAP percentile at horizon (colored)
   output$rap_pctile_baseline <- renderUI({
     pct <- ingested_baseline_pctile()
@@ -2773,8 +2786,6 @@ server <- function(input, output, session) {
       # budget_df rows 1..(dur+1) map to Years 0..dur
       bd <- mr$budget_df
 
-      print(bd)
-
       d <- data.frame(
         Year      = 0:dur,
         RAP_orig  = bg_df$RAP_orig,
@@ -2784,8 +2795,6 @@ server <- function(input, output, session) {
         calc_budg_orig  = bg_df$calc_budg_orig,
         calc_budg_total = bd$calc_budg_total
       )
-
-      print(d)
 
       pips <- d[d$Year %in% c(1, 5, 10, 20, 50, 100, dur), ]
 
@@ -3295,7 +3304,7 @@ server <- function(input, output, session) {
   # Helper: restored metrics.
   #  - Monitoring pipeline active -> the LAST (max year) row is "Restored".
   #  - No cover upload (map-driven) -> project the SELECTED SITE's own baseline
-  #    with the Home-tab linear model + the map's target-cover slider.
+  #    with the Home-tab linear model + the map's target-cover inputs.
   cc_restored_vals <- reactive({
     ms <- monitoring_series()
     if (!is.null(ms) && nrow(ms) > 0) {
