@@ -614,6 +614,16 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                   bleaching_severity, bleaching_frequency,
                                   target_cover_df) {
 
+  # Guard: refuse if total target cover exceeds 100% of the site.
+  total_target_pct <- sum(target_cover_df$target_cvr_pct, na.rm = TRUE)
+  if (is.finite(total_target_pct) && total_target_pct > 100) {
+    return(list(budget_df = data.frame(),
+                outplants_by_species = c(),
+                outplants = 0, cost = 0,
+                error = paste0("Total target cover (", round(total_target_pct, 1),
+                               "%) exceeds 100%.")))
+  }
+
   # Subregion/habitat-specific non-microbioerosion + generalized microerosion
   be_macro_effect <- resolve_regional_bioerosion(subregion, habitat)
   be_micro_rate   <- 0.24 # kg CaCO3/m2/yr
@@ -1180,7 +1190,7 @@ body <- dashboardBody(
       @media (max-width: 800px) { body { zoom: 0.50; } }
       @media (max-width: 700px) { body { zoom: 0.45; } }
       @media (max-width: 600px) { body { zoom: 0.40; } }
-      
+
       /* ---------------- DARK MODE (CSS-class toggle on <body>) ---------------- */
       body.dark-mode .content-wrapper,
       body.dark-mode .right-side { background-color: #1b2027 !important; }
@@ -1521,6 +1531,7 @@ body <- dashboardBody(
                 textOutput("model_final_cost", inline = TRUE)
               )
             ),
+            uiOutput("target_cover_warning"),
             plotly::plotlyOutput("restoration_timeline", height = "320px")
           )
         )
@@ -2630,6 +2641,17 @@ server <- function(input, output, session) {
     paste0("Final cost: $", format(round(mr$cost), big.mark = ","))
   })
 
+  # Warn (red) when total target cover exceeds 100% (model refuses to run)
+  output$target_cover_warning <- renderUI({
+    slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
+    tot <- sum(vapply(slider_ids, function(id) .safe_num(input[[id]]), numeric(1)), na.rm = TRUE)
+    if (tot > 100) {
+      tags$div(class = "sim-warning",
+        paste0("Total target cover (", round(tot, 1),
+               "%) exceeds 100%. Reduce the mix to run the model."))
+    }
+  })
+  
   # Baseline RAP percentile (gray) + restored RAP percentile at horizon (colored)
   output$rap_pctile_baseline <- renderUI({
     pct <- ingested_baseline_pctile()
