@@ -34,7 +34,7 @@ shiny::runApp()
 
 Keep the R console open to see messages, warnings, and errors from the tool.
 
-Note: some users may see excessive `file.info()` warnings, which can be safely ignored. To run the app with these warnings silenced, open `launch_app_quiet.R` in RStudio and run it as source (default shortcut: Ctrl+Shift+S).
+Note: some users may see excessive `file.info()` warnings, which can be safely ignored. To run the app with these warnings silenced, open `launch_app_quiet.R` in RStudio and run it as source (default shortcut: `Ctrl+Shift+S`).
 
 Alternatively, open an R console and run:
 
@@ -74,7 +74,9 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     Fill out the template, save it under a new name, and load it using the `Load from file` input in the `Baseline Cover` section. Input parameters will be populated automatically based on the contents of the uploaded file.
 
-    **(b) Create from scratch:** Use the inputs to name your site and designate its area, subregion, habitat, and baseline cover.
+    A copy of the most recently uploaded baseline cover file will be cached in a `cache` folder created where `app.R` is stored. The cached file is automatically re-uploaded on the next launch. Use the `Clear cache` button to delete the cached file (the original file will be unaffected).
+
+    **(b) Create from scratch:** Use the inputs to name the site and designate its area, subregion, habitat, and baseline cover. Use the `Save baseline` button to save the scratch inputs in an `.xlsx` file which can be uploaded to the app in a subsequent session.
 
 2. Designate the target post-restoration percent-cover using the sliders in the `Restoration Mix` section. When a target percent-cover is designated for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed beneath the slider.
 
