@@ -2218,8 +2218,7 @@ server <- function(input, output, session) {
   output$baseline_template_dl <- downloadHandler(
     filename = function() "Baseline_Cover_TEMPLATE.xlsx",
     content = function(file) {
-      url <- "https://github.com/laurenttoth/CarbonateBudgetRestorationTool/raw/main/data/Baseline_Cover_TEMPLATE.xlsx"
-      utils::download.file(url, destfile = file, mode = "wb")
+      file.copy(here("www", "Baseline_Cover_TEMPLATE.xlsx"), file, overwrite = TRUE)
     }
   )
 
@@ -3217,19 +3216,17 @@ server <- function(input, output, session) {
     )
   })
 
-  # Monitoring template downloads (raw GitHub URLs)
+  # Monitoring template downloads (served from \www)
   output$monitoring_cover_template_dl <- downloadHandler(
     filename = function() "Restoration_Monitoring_Cover_TEMPLATE.xlsx",
     content = function(file) {
-      url <- "https://github.com/laurenttoth/CarbonateBudgetRestorationTool/raw/main/data/Restoration_Monitoring_Cover_TEMPLATE.xlsx"
-      utils::download.file(url, destfile = file, mode = "wb")
+      file.copy(here("www", "Restoration_Monitoring_Cover_TEMPLATE.xlsx"), file, overwrite = TRUE)
     }
   )
   output$monitoring_bioerosion_template_dl <- downloadHandler(
     filename = function() "Bioerosion_Data_TEMPLATE.xlsx",
     content = function(file) {
-      url <- "https://github.com/laurenttoth/CarbonateBudgetRestorationTool/raw/main/data/Bioerosion_Data_TEMPLATE.xlsx"
-      utils::download.file(url, destfile = file, mode = "wb")
+      file.copy(here("www", "Bioerosion_Data_TEMPLATE.xlsx"), file, overwrite = TRUE)
     }
   )
 
