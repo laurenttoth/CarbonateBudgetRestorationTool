@@ -14,8 +14,9 @@ library(dplyr)
 library(later)
 library(tidyr)
 library(RCurl)
-library(readxl)
 library(plotly)
+library(readxl)
+library(writexl)
 library(stringr)
 library(ggplot2)
 library(ggforce)
@@ -102,8 +103,7 @@ region_pal <- colorFactor(pastel_colors, domain = region_levels)
 
 
 # Ingest baseline cover data template to retrieve list of taxa
-base_cover_df <- read_excel_quiet(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Coral Cover input")
-taxa <- read_excel_quiet(here("data", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
+taxa <- read_excel_quiet(here("www", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
 # Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)
@@ -429,7 +429,7 @@ assemblage_porosity <- function(cover_df, cover_col) {
 }
 
 baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, be_macro_effect, bp) {
-    # Apply bioerosion to baseline growth:
+    # Apply bioerosion to baseline growth df:
     bg_df$consol_area_orig <- site_area - (site_area * uc_pct / 100) - (site_area * bg_df$pct_cvr_orig / 100)
     bg_df$be_micro_effect  <- (bg_df$consol_area_orig / site_area) * be_micro_rate # Multiply the general microbioerosion rate by the proportion of available consolidated sediment
     bg_df$calc_budg_orig   <- bg_df$calc_budg_orig - bg_df$be_micro_effect - be_macro_effect
@@ -734,7 +734,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                      colony_count = outplant_guess, colony_diam = outplant_diam,
                                      duration = rest_horizon + 1,
                                      site_area = site_area, uc_pct = uc_pct,
-                                      
                                      bleaching_severity = bleaching_severity,
                                      bleaching_frequency = bleaching_frequency)
 
@@ -1183,10 +1182,15 @@ body <- dashboardBody(
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
 
-      /* Red warning under the sim-duration slider */
-      .sim-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 2px; }
       /* Red warning under the bioerosion upload widget */
       .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 4px; }
+
+      /* Inline upload label + Download template button */
+      .upload-label-row {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; margin-bottom: 4px;
+      }
+      .upload-label-row .control-label { margin: 0; font-weight: bold; }
 
       /* ---- Responsive uniform scaling for smaller screens ---- */
       /* Shrink the whole layout proportionally so a laptop looks like a
@@ -1374,20 +1378,24 @@ body <- dashboardBody(
                 # Left column: controls
                 column(
                   width = 6,
-                  fileInput("baseline_upload", "Load from file (.xlsx)",
-                    accept = c(".xlsx")
+                  tags$div(
+                    class = "upload-label-row",
+                    tags$span(class = "control-label", tags$strong("Load from file (.xlsx)")),
+                    downloadButton("baseline_template_dl", "Download template", class = "btn-sm")
+                  ),
+                  fileInput("baseline_upload", NULL, accept = c(".xlsx")
                   ),
                   # Typed input allowed (create = TRUE) for scratch-built scenarios
                   selectizeInput(
                     "baseline_site",
-                    label = "Site",
+                    label = tags$strong("Site"),
                     choices = c("\u2013 Select site \u2013" = ""),
                     selected = "",
                     options = list(create = TRUE, placeholder = "Select or type a site...")
                   ),
                   tags$div(
                     class = "param-inline-row",
-                    tags$span(class = "param-label", "Site area:"),
+                    tags$span(class = "param-label", tags$strong("Site area:")),
                     numericInput("site_area_m2", label = NULL,
                     value = 100, min = 1, max = 10000, step = 1
                     ),
@@ -1395,17 +1403,19 @@ body <- dashboardBody(
                   ),
                   selectInput(
                     "subregion_choice",
-                    label = "Subregion",
+                    label = tags$strong("Subregion"),
                     choices = c("\u2013 Select subregion \u2013" = "",
                                 unname(subregion_labels)),
                     selected = ""
                   ),
                   selectInput(
                     "habitat_choice",
-                    label = "Habitat",
+                    label = tags$strong("Habitat"),
                     choices = c("\u2013 Select habitat \u2013" = ""),
                     selected = ""
-                  )
+                  ),
+                  actionButton("baseline_delete_cache", "Clear cache",
+                                 icon = icon("trash"), class = "btn-sm")
                 ),
 
                 # Right column: baseline species cover list + add-species dropdown
@@ -1415,7 +1425,11 @@ body <- dashboardBody(
                   # Auto-populated rows (from .xlsx) + manually added rows, with
                   # the species-picker dropdown rendered below the list.
                   uiOutput("baseline_cover_inputs"),
-
+                  tags$div(
+                    style = "margin-top:8px;",
+                    downloadButton("baseline_save_dl", "Save baseline",
+                                   icon = icon("floppy-disk"), class = "btn-sm")
+                  )
                 )
               )
             )
@@ -1585,8 +1599,8 @@ body <- dashboardBody(
           shinydashboard::box(
             title = "Scenario Selection", width = 12,
             status = "primary", solidHeader = TRUE,
-            selectInput("sc_project", "Project name", choices = NULL),
-            checkboxGroupInput("sc_scenarios", "Scenarios", choices = NULL),
+            selectInput("sc_project", tags$strong("Project name"), choices = NULL),
+            checkboxGroupInput("sc_scenarios", tags$strong("Scenarios"), choices = NULL),
             tags$div(
               style = "display:flex; gap:8px; align-items:center;",
               actionButton("sc_refresh", "Refresh list", icon = icon("rotate")),
@@ -1650,15 +1664,28 @@ body <- dashboardBody(
           width = 3,
           shinydashboard::box(
             title = "Inputs", width = 12, status = "primary", solidHeader = TRUE,
-            fileInput("upload_cover", "Upload coral cover data",
+            tags$div(
+              class = "upload-label-row",
+              tags$span(class = "control-label", "Upload coral cover data"),
+              downloadButton("monitoring_cover_template_dl", "Download template",
+                             class = "btn-sm")
+            ),
+            fileInput("upload_cover", NULL,
               accept = c(".csv", ".xlsx")
             ),
-            fileInput("upload_bioerosion", "Upload bioerosion data",
+            tags$div(
+              class = "upload-label-row",
+              tags$span(class = "control-label", "Upload bioerosion data"),
+              downloadButton("monitoring_bioerosion_template_dl", "Download template",
+                             class = "btn-sm")
+            ),
+            fileInput("upload_bioerosion", NULL,
               accept = c(".csv", ".xlsx")
             ),
+            
             # Red warning for unobserved parrotfish size classes
             uiOutput("bioerosion_parrotfish_warning"),
-            selectizeInput("monitoring_selected_site", "Select site",
+            selectizeInput("monitoring_selected_site", tags$strong("Select site"),
               choices = NULL,
               options = list(placeholder = "Select a site...")
             ),
@@ -1758,13 +1785,13 @@ body <- dashboardBody(
           "A special thanks to Dr. Alice Webb and her team, who originally developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "Reef Persistence Tool"),
           ", which was the inspiration for this project:", tags$br(),
           tags$br(),
-          "Dr Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
+          "Dr. Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
           tags$p("Geography, College of Life and Environmental Sciences, University of Exeter, UK", style = "text-indent: 40px"),
           "Patrick Kiel, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
           tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
           "Mike Jankulak, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
           tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
-          "Dr Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
+          "Dr. Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
           tags$br(),
           "The paper describing the original Reef Persistence Tool is published in ", tags$a(href="https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
 
@@ -1809,6 +1836,9 @@ server <- function(input, output, session) {
 
   .safe_num <- function(x) {
     if (is.null(x) || length(x) == 0 || is.na(x)) 0 else as.numeric(x)
+  }
+  .safe_num_chr <- function(x) {
+    if (is.null(x) || length(x) == 0 || is.na(x)) "" else as.character(x)
   }
 
   # Dark Mode: toggle the body CSS class from the switch ----
@@ -2179,10 +2209,67 @@ server <- function(input, output, session) {
     )
   })
 
-  # On launch: if a cached baseline exists, auto-load it via the same path.
+# On launch: if a cached baseline exists, auto-load it via the same path.
   if (file.exists(cached_baseline_path)) {
     ingest_baseline_file(cached_baseline_path)
   }
+
+  # Download the blank baseline-cover template (.xlsx) from GitHub (raw URL).
+  output$baseline_template_dl <- downloadHandler(
+    filename = function() "Baseline_Cover_TEMPLATE.xlsx",
+    content = function(file) {
+      url <- "https://github.com/laurenttoth/CarbonateBudgetRestorationTool/raw/main/data/Baseline_Cover_TEMPLATE.xlsx"
+      utils::download.file(url, destfile = file, mode = "wb")
+    }
+  )
+
+  # Delete the cached baseline-cover file.
+  observeEvent(input$baseline_delete_cache, {
+    if (file.exists(cached_baseline_path)) {
+      ok <- isTRUE(file.remove(cached_baseline_path))
+      showNotification(
+        if (ok) "Deleted cached baseline file." else "Could not delete cached baseline file.",
+        type = if (ok) "message" else "error"
+      )
+    } else {
+      showNotification("No cached baseline file to delete.", type = "warning")
+    }
+  })
+
+  # Save the current Baseline Cover box contents as an .xlsx matching the
+  # ingestion schema (Coral Cover input sheet). Column names are reconstructed
+  # from the columns the ingestion path reads: Unique_Site_ID, Subregion,
+  # Habitat, Site_Area_m2, Taxon, Percent_Cover.
+  output$baseline_save_dl <- downloadHandler(
+    filename = function() {
+      site_tag <- if (nzchar(.safe_num_chr(input$baseline_site))) input$baseline_site else "baseline"
+      paste0("Baseline_Cover_", gsub("[^A-Za-z0-9]", "_", site_tag), "_", Sys.Date(), ".xlsx")
+    },
+    content = function(file) {
+      sp <- setdiff(baseline_species_list(), "REQUIRED_Unconsolidated_substrate")
+      covers <- vapply(sp, function(s) {
+        .safe_num(input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]])
+      }, numeric(1))
+
+      # Remap the full subregion label back to its code for round-trip fidelity
+      sub_lbl  <- input$subregion_choice
+      sub_code <- if (sub_lbl %in% names(subregion_codes)) subregion_codes[[sub_lbl]] else sub_lbl
+
+      out <- data.frame(
+        Unique_Site_ID = rep(if (nzchar(input$baseline_site)) input$baseline_site else "SITE_1",
+                             length(sp)),
+        Subregion      = rep(sub_code, length(sp)),
+        Habitat        = rep(input$habitat_choice, length(sp)),
+        Site_Area_m2   = rep(.safe_num(input$site_area_m2), length(sp)),
+        Taxon          = sp,
+        Percent_Cover  = covers,
+        stringsAsFactors = FALSE
+      )
+
+      # Write the "Coral Cover input" sheet the ingestion path reads.
+      writexl::write_xlsx(list("Coral Cover input" = out), path = file)
+    }
+  )
 
   # When the selected site changes, filter the upload to that site and
   # push subregion / habitat / area / species / covers into the inputs.
@@ -2302,7 +2389,7 @@ server <- function(input, output, session) {
         tags$span(class = "baseline-species-name", title = s, s),
         tags$div(
           class = "baseline-species-input",
-          numericInput(id, label = NULL, value = val, min = 0, max = 20, step = 0.1)
+          numericInput(id, label = NULL, value = val, min = 0, max = 50, step = 0.1)
         )
       )
     })
@@ -3129,6 +3216,22 @@ server <- function(input, output, session) {
       type = "message"
     )
   })
+
+  # Monitoring template downloads (raw GitHub URLs)
+  output$monitoring_cover_template_dl <- downloadHandler(
+    filename = function() "Restoration_Monitoring_Cover_TEMPLATE.xlsx",
+    content = function(file) {
+      url <- "https://github.com/laurenttoth/CarbonateBudgetRestorationTool/raw/main/data/Restoration_Monitoring_Cover_TEMPLATE.xlsx"
+      utils::download.file(url, destfile = file, mode = "wb")
+    }
+  )
+  output$monitoring_bioerosion_template_dl <- downloadHandler(
+    filename = function() "Bioerosion_Data_TEMPLATE.xlsx",
+    content = function(file) {
+      url <- "https://github.com/laurenttoth/CarbonateBudgetRestorationTool/raw/main/data/Bioerosion_Data_TEMPLATE.xlsx"
+      utils::download.file(url, destfile = file, mode = "wb")
+    }
+  )
 
   # ---- Observed bioerosion per Years_Post_Restoration ----
   # Returns list(by_year = named numeric [year -> kg/m2/yr], unobserved = chr).

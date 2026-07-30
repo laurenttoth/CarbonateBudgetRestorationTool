@@ -9,7 +9,7 @@ withCallingHandlers(
     shiny::runApp()
   },
   warning = function(w) {
-    if (grepl("(cannot resolve (owner|group))|(masked from)|(built under)", conditionMessage(w))) {
+    if (grepl("(cannot resolve (owner|group))|(unknown aesthetics)", conditionMessage(w))) {
       invokeRestart("muffleWarning")
     }
   }

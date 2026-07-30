@@ -13,7 +13,7 @@ install.packages(c('rsconnect','shiny','bslib','shinydashboard','dashboardthemes
                    'ggplot2','dplyr','tidyr','leaflet','shinythemes','leaflegend',
                    'ggplot2','tidyverse','ggforce','png','RCurl','jpeg','sf','magrittr',
                    'maps','reshape2','RColorBrewer','plotly','geojsonio','shinyWidgets',
-                   'shinyjs','shinyBS','here','readxl','tidyr','dplyr','jsonlite'))
+                   'shinyjs','shinyBS','here','readxl','writexl','tidyr','dplyr','jsonlite'))
 ```
 
 If the package installation times out, adjust the timeout setting. For example, to increase the timeout from the default 60 seconds to 120 seconds:
@@ -34,7 +34,7 @@ shiny::runApp()
 
 Keep the R console open to see messages, warnings, and errors from the tool.
 
-Note: some users may see excessive `file.info()` warnings, which can be safely ignored. To run the app with these warnings silenced, open `launch_app_quiet.R` in RStudio and run it as source (default shortcut: `Ctrl+Shift+S`).
+Note: some users may see excessive `file.info()` and/or `unknown aesthetics: text` warnings, which can be safely ignored. To run the app with these warnings silenced, open `launch_app_quiet.R` in RStudio and run it as source (default shortcut: `Ctrl+Shift+S`).
 
 Alternatively, open an R console and run:
 
