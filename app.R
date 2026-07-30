@@ -1407,11 +1407,27 @@ body <- dashboardBody(
                   ),
                   tags$div(
                     class = "param-inline-row",
-                    tags$span(class = "param-label", tags$strong("Site area:")),
+                    tags$span(class = "param-label", "Site area:"),
                     numericInput("site_area_m2", label = NULL,
                     value = 100, min = 1, max = 10000, step = 1
                     ),
                     tags$span(class = "param-unit", "m\u00b2")
+                  ),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", "Latitude:"),
+                    numericInput("site_latitude", label = NULL,
+                      value = NA, min = -90, max = 90, step = 0.00001
+                    ),
+                    tags$span(class = "param-unit", "\u00b0")
+                  ),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", "Longitude:"),
+                    numericInput("site_longitude", label = NULL,
+                      value = NA, min = -180, max = 180, step = 0.00001
+                    ),
+                    tags$span(class = "param-unit", "\u00b0")
                   ),
                   selectInput(
                     "subregion_choice",
@@ -1894,7 +1910,7 @@ server <- function(input, output, session) {
     dur <- .safe_num(input$sim_duration)
     if (h > dur) {
       tags$div(class = "sim-warning",
-        "The simulation duration must meet or exceed the restoration horizon.")
+        HTML("<span style='color: red;'>The simulation duration must meet or exceed the restoration horizon.</span>"))
     }
   })
 
@@ -2120,6 +2136,83 @@ server <- function(input, output, session) {
     proxy
   })
 
+  # ---- Baseline-upload site markers ----
+  # Drawn in their own "baseline" group so they don't churn with the NCRMP
+  # redraw. 50% larger than NCRMP points, on top; the selected site is a further
+  # 25% larger and carries a restored-RAP halo when a model result exists.
+  observe({
+    bs <- baseline_map_sites()
+    field <- input$symbolize_by
+    sel_sid <- input$baseline_site
+
+    proxy <- leafletProxy("mymap") |>
+      clearGroup("baseline") |>
+      clearGroup("baseline_halo")
+
+    if (is.null(bs) || nrow(bs) == 0) return(proxy)
+
+    base_radius <- point_size() * 1.5           # 50% larger than NCRMP
+    radii <- rep(base_radius, nrow(bs))
+    sel_idx <- which(bs$Unique_Site_ID == sel_sid)
+    if (length(sel_idx)) radii[sel_idx] <- base_radius * 1.25  # +25% for selected
+
+    # Fill color: RAP or status only (no bioerosion option for these points)
+    if (field == "current_state") {
+      fill_cols <- num_pal_state(as.character(bs$state))
+    } else {
+      # default + rap both use the RAP palette
+      fill_cols <- num_pal(bs$rap)
+    }
+
+    # Restored-RAP halo on the selected site (only if a model result exists)
+    if (length(sel_idx) == 1) {
+      mr <- model_result()
+      if (!is.null(mr) && nrow(mr$budget_df) > 0) {
+        horizon <- .safe_num(input$rest_horizon)
+        hr <- min(horizon + 1, nrow(mr$budget_df))
+        base_rap     <- bs$rap[sel_idx]
+        restored_rap <- mr$budget_df$RAP_total[hr]
+        halo_col <- if (base_rap > 0.5) {
+          "skyblue"
+        } else if (base_rap < -0.5 && restored_rap >= 0.5) {
+          "darkgreen"
+        } else if (base_rap >= -0.5 && base_rap < 0.5 && restored_rap >= 0.5) {
+          "limegreen"
+        } else if (base_rap <= -0.5 && restored_rap > -0.5 && restored_rap < 0.5) {
+          "palegreen"
+        } else if (restored_rap > -0.5 && restored_rap < 0.5) {
+          "ivory"
+        } else {
+          "red"
+        }
+        proxy <- proxy |>
+          addCircleMarkers(
+            data = bs[sel_idx, , drop = FALSE],
+            lng = ~lon, lat = ~lat,
+            radius = radii[sel_idx] + 4,
+            weight = 0, fillColor = halo_col, fillOpacity = 0.9,
+            stroke = FALSE, group = "baseline_halo"
+          )
+      }
+    }
+
+    proxy |>
+      addCircleMarkers(
+        data = bs,
+        lng = ~lon, lat = ~lat,
+        radius = radii,
+        weight = 2, color = "black",
+        fillColor = fill_cols, fillOpacity = 0.95,
+        stroke = TRUE, group = "baseline",
+        layerId = ~paste0("baseline_", Unique_Site_ID),
+        label = ~Unique_Site_ID,
+        popup = ~paste0(
+          "<b>Baseline site: ", Unique_Site_ID, "</b><br>",
+          "RAP: ", round(rap, 2), " mm/yr (", state, ")"
+        )
+      )
+  })
+
   # Capture the selected reef from a marker click. The clicked site's id is
   # stored and (re)wired to the Monitoring "Select site" dropdown so the map and
   # dropdown stay in agreement (the Monitoring "Restored" panel keys off it when
@@ -2156,6 +2249,50 @@ server <- function(input, output, session) {
   ingested_current_budget <- reactiveVal(NULL)
   # Baseline RAP percentile computed at ingest (gray surround on the graph)
   ingested_baseline_pctile <- reactiveVal(NULL)
+
+  # Per-Unique_Site_ID baseline points for the map. One row per site with
+  # coordinates + a baseline RAP/status derived from that site's cover rows.
+  baseline_map_sites <- reactive({
+    up <- baseline_upload_data()
+    if (is.null(up) || !all(c("Unique_Site_ID", "Latitude", "Longitude") %in% names(up))) {
+      return(NULL)
+    }
+    ids <- unique(as.character(up$Unique_Site_ID[!is.na(up$Unique_Site_ID)]))
+    if (length(ids) == 0) return(NULL)
+
+    rows <- lapply(ids, function(sid) {
+      sr <- up[as.character(up$Unique_Site_ID) == sid, , drop = FALSE]
+      lat <- suppressWarnings(as.numeric(sr$Latitude[!is.na(sr$Latitude)][1]))
+      lon <- suppressWarnings(as.numeric(sr$Longitude[!is.na(sr$Longitude)][1]))
+      if (is.na(lat) || is.na(lon)) return(NULL)
+
+      area_val <- if ("Site_Area_m2" %in% names(sr) && any(!is.na(sr$Site_Area_m2))) {
+        .safe_num(sr$Site_Area_m2[!is.na(sr$Site_Area_m2)][1])
+      } else 100
+      if (area_val <= 0) area_val <- 100
+
+      # Area-occupied baseline budget for this site
+      patch <- 0
+      if (all(c("Taxon", "Percent_Cover") %in% names(sr))) {
+        for (i in seq_len(nrow(sr))) {
+          s <- sr$Taxon[i]; cvr <- suppressWarnings(as.numeric(sr$Percent_Cover[i]))
+          if (is.na(cvr)) next
+          rate <- calc_rates$rate[calc_rates$Taxon == s]
+          if (length(rate) == 0 || is.na(rate[1])) next
+          patch <- patch + area_val * (cvr / 100) * rate[1]
+        }
+      }
+      budget <- patch / area_val   # gross per-m2 (bioerosion omitted here for map)
+      rap <- budget / 2.9 / (1 - 0.6265)
+      state <- if (rap > 0.5) "Growth" else if (rap < -0.5) "Erosion" else "Stasis"
+
+      data.frame(Unique_Site_ID = sid, lat = lat, lon = lon,
+                 rap = rap, state = state, stringsAsFactors = FALSE)
+    })
+    rows <- rows[!vapply(rows, is.null, logical(1))]
+    if (length(rows) == 0) return(NULL)
+    do.call(rbind, rows)
+  })
 
   # Habitat choices ----
   # respond to changes in the selected subregion
@@ -2298,6 +2435,16 @@ server <- function(input, output, session) {
       100
     }
     updateNumericInput(session, "site_area_m2", value = area_val)
+
+    # Latitude / Longitude from the xlsx (if present)
+    lat_val <- if ("Latitude" %in% names(site_rows) && any(!is.na(site_rows$Latitude))) {
+      as.numeric(site_rows$Latitude[!is.na(site_rows$Latitude)][1])
+    } else NA
+    lon_val <- if ("Longitude" %in% names(site_rows) && any(!is.na(site_rows$Longitude))) {
+      as.numeric(site_rows$Longitude[!is.na(site_rows$Longitude)][1])
+    } else NA
+    updateNumericInput(session, "site_latitude",  value = lat_val)
+    updateNumericInput(session, "site_longitude", value = lon_val)
 
     # Subregion: read ['Subregion'] and remap the code to its full label
     if ("Subregion" %in% names(site_rows) && any(!is.na(site_rows$Subregion))) {
@@ -2757,8 +2904,8 @@ server <- function(input, output, session) {
   # Total project cost from the model
   output$model_final_cost <- renderText({
     mr <- model_result()
-    if (is.null(mr)) return("Final cost: \u2013")
-    paste0("Final cost: $", format(round(mr$cost), big.mark = ","))
+    if (is.null(mr)) return("Estimated cost: \u2013")
+    paste0("Estimated cost: $", format(round(mr$cost), big.mark = ","))
   })
 
   # Warn (red) when total target cover exceeds 100% (model refuses to run)
