@@ -715,40 +715,52 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     orig_area_at_horizon <- orig_only[[1]][["area"]][min(rest_horizon + 1, n)]
     sp_to_grow_m <- target_sp_m - orig_area_at_horizon
 
-    # ---- PHASE 1: solve outplant count to hit target by the RESTORATION HORIZON ----
-    # Have to start with a guess for the number of required outplants
-    outplant_guess <- 70
-
-    reiterate <- TRUE
-    guard <- 0 # safety cap to prevent runaway loops
-    while (reiterate) {
-      guard <- guard + 1
-      if (guard > 5000) break
-
-      starting_outplant_area <- outplant_guess * (outplant_diam / 2) ^ 2 * pi
-      needed_outplant_growth <- sp_to_grow_m - starting_outplant_area
-
-      # Search runs ONLY to the restoration horizon (horizon 0 => year-1 area,
-      # i.e. the immediate post-outplant footprint)
-      search_list <- simulate_growth(group = "outplant", species = species,
-                                     colony_count = outplant_guess, colony_diam = outplant_diam,
-                                     duration = rest_horizon + 1,
-                                     site_area = site_area, uc_pct = uc_pct,
-                                     bleaching_severity = bleaching_severity,
-                                     bleaching_frequency = bleaching_frequency)
-
-      new_area <- search_list[[3]] # area at the horizon year
-
-      # Get within the nearest 0.1 m^2
-      if (needed_outplant_growth - new_area < -0.1) { #Too much growth by the horizon:
-        # Use fewer outplants
-        outplant_guess <- outplant_guess - 1
-        if (outplant_guess < 0) { outplant_guess <- 0; reiterate <- FALSE }
-      } else if (needed_outplant_growth - new_area > 0.1) { # Not enough growth:
-        # Use more outplants
-        outplant_guess <- outplant_guess + 1
+    # ---- PHASE 1: solve outplant count to hit target ----
+    if (rest_horizon == 0) {
+      # Immediate coverage: enough outplants of the given size to hit the target
+      # % cover at Year 0. No growth search needed -- divide the remaining area
+      # to fill by a single outplant's footprint and round up.
+      outplant_area <- (outplant_diam / 2) ^ 2 * pi
+      outplant_guess <- if (outplant_area > 0) {
+        max(0, ceiling(sp_to_grow_m / outplant_area))
       } else {
-        reiterate <- FALSE
+        0
+      }
+    } else {
+      # Iterative solve: find the count that reaches target by the HORIZON year.
+      # Have to start with a guess for the number of required outplants
+      outplant_guess <- 70
+
+      reiterate <- TRUE
+      guard <- 0 # safety cap to prevent runaway loops
+      while (reiterate) {
+        guard <- guard + 1
+        if (guard > 5000) break
+
+        starting_outplant_area <- outplant_guess * (outplant_diam / 2) ^ 2 * pi
+        needed_outplant_growth <- sp_to_grow_m - starting_outplant_area
+
+        # Search runs ONLY to the restoration horizon
+        search_list <- simulate_growth(group = "outplant", species = species,
+                                       colony_count = outplant_guess, colony_diam = outplant_diam,
+                                       duration = rest_horizon + 1,
+                                       site_area = site_area, uc_pct = uc_pct,
+                                       bleaching_severity = bleaching_severity,
+                                       bleaching_frequency = bleaching_frequency)
+
+        new_area <- search_list[[3]] # area at the horizon year
+
+        # Get within the nearest 0.1 m^2
+        if (needed_outplant_growth - new_area < -0.1) { #Too much growth by the horizon:
+          # Use fewer outplants
+          outplant_guess <- outplant_guess - 1
+          if (outplant_guess < 0) { outplant_guess <- 0; reiterate <- FALSE }
+        } else if (needed_outplant_growth - new_area > 0.1) { # Not enough growth:
+          # Use more outplants
+          outplant_guess <- outplant_guess + 1
+        } else {
+          reiterate <- FALSE
+        }
       }
     }
 
@@ -2782,14 +2794,24 @@ server <- function(input, output, session) {
     b <- baseline_metrics()
     mr <- model_result()
     bg <- baseline_growth()
-    bg_df <- bg[[1]]
-    bp    <- bg[[2]] # baseline porosity
+
+    # Guard: on cached auto-load the observers can fire before baseline_growth()
+    # has a valid frame. Treat a NULL/empty result as "no baseline yet" so we
+    # never run min()/max()/ggplot on a length-0 or NULL bg_df (which produced
+    # the Inf/-Inf warnings and the fortify error flashing on the plot).
+    bg_ok <- !is.null(bg) &&
+             is.data.frame(bg[[1]]) && nrow(bg[[1]]) > 0
+    bg_df <- if (bg_ok) bg[[1]] else NULL
+    bp    <- if (bg_ok) bg[[2]] else 0.6265  # baseline porosity fallback
+
     site_area <- .safe_num(input$site_area_m2)
-    uc_pct    <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
+    uc_pct    <- .safe_num(input$base_REQUIRED_unconsolidated_substrate)
     be_macro_effect <- resolve_regional_bioerosion(input$subregion_choice, input$habitat_choice)
 
-    # Apply bioerosion to baseline growth:
-    bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate, be_macro_effect, bp)
+    # Apply bioerosion to baseline growth only when we have a real frame.
+    if (!is.null(bg_df)) {
+      bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate, be_macro_effect, bp)
+    }
 
     dur <- b$sim_duration
     horizon <- .safe_num(input$rest_horizon)
@@ -2877,6 +2899,24 @@ server <- function(input, output, session) {
           theme_minimal(base_size = 14)
         y0_rap <- bg_df$RAP_orig[1]
       }
+    } else if (is.null(bg_df)) {
+      # Model output exists but baseline growth isn't ready yet (cached-load
+      # race). Fall back to an empty placeholder rather than indexing a NULL.
+      y_lo <- rap_axis_min(-1)
+      y_hi <- 8
+      bands <- status_bands_df(0, dur, y_lo)
+      d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
+      p <- ggplot(d0, aes(Year, RAP)) +
+        geom_rect(data = bands, inherit.aes = FALSE,
+                  aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                      fill = fill, text = label), alpha = 0.30) +
+        scale_fill_identity() +
+        scale_x_continuous(breaks = x_breaks) +
+        scale_y_continuous(limits = c(y_lo, y_hi),
+                           breaks = rap_axis_breaks(y_lo, y_hi)) +
+        labs(x = "Year", y = "RAP (mm/yr)") +
+        theme_minimal(base_size = 14)
+      y0_rap <- b$rap
     } else {
       # budget_df rows 1..(dur+1) map to Years 0..dur
       bd <- mr$budget_df
