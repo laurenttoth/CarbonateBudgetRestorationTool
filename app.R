@@ -96,6 +96,16 @@ regions_sf <- sf::st_read(here("data", "regions", "regions.shp"), quiet = TRUE)
 # Ensure geographic CRS (WGS84) so it aligns with the leaflet basemap
 regions_sf <- sf::st_transform(regions_sf, 4326)
 
+# Ingest named-reef point shapefile (labels in the "Location" field).
+# Tolerated if missing -> NULL, and the layer/checkbox simply draws nothing.
+named_reefs_sf <- tryCatch(
+  sf::st_transform(
+    sf::st_read(here("data", "named_reefs", "named_reefs.shp"), quiet = TRUE),
+    4326
+  ),
+  error = function(e) NULL
+)
+
 # Pastel palette keyed to the Region field
 region_levels <- sort(unique(regions_sf$Region))
 pastel_colors <- colorRampPalette(RColorBrewer::brewer.pal(9, "Pastel1"))(length(region_levels))
@@ -1409,6 +1419,11 @@ body <- dashboardBody(
 
             tags$hr(),
 
+            # Named-reef labels toggle
+            checkboxInput("show_named_reefs", "Show Named Reefs", value = FALSE),
+
+            tags$hr(),
+
             # Point-size stepper (moved into Map Controls)
             tags$div(
               style = "font-size: 13px; margin-bottom: 4px; color: #333;",
@@ -2016,6 +2031,10 @@ server <- function(input, output, session) {
       ) |>
       setView(lng = -81, lat = 25.5, zoom = 8) |>
 
+      # Dedicated low pane for the named-reef circles so they sit above the
+      # basemap/regions but BELOW the clickable site markers (default ~600).
+      addMapPane("named_reefs_pane", zIndex = 410) |>
+
       # Region polygons, pastel fill at 75% transparency
       addPolygons(
         data        = regions_sf,
@@ -2289,6 +2308,44 @@ server <- function(input, output, session) {
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Coordinates:</td>",
           "<td style='padding: 2px 0;'>", round(lon, 5), ", ", round(lat, 5), "</td></tr>",
           "</table>"
+        )
+      )
+  })
+
+  # ---- Named-reef labeled points ----
+  # 250 m real-world circles (addCircles uses meters), light blue at 0.3 alpha,
+  # each permanently labeled by its "Location" attribute (white text, black
+  # outline). Toggled by the "Show Named Reefs" checkbox; own group so it never
+  # churns with the NCRMP / baseline redraws.
+  observe({
+    proxy <- leafletProxy("mymap") |>
+      clearGroup("named_reefs")
+
+    if (!isTRUE(input$show_named_reefs) || is.null(named_reefs_sf) ||
+        nrow(named_reefs_sf) == 0) {
+      return(proxy)
+    }
+
+    labs <- as.character(named_reefs_sf$Location)
+
+    proxy |>
+      addPolygons(
+        data = named_reefs_sf,
+        weight = 1, color = "#add8e6",
+        fillColor = "#add8e6", fillOpacity = 0.3,
+        stroke = TRUE, opacity = 0.6,
+        group = "named_reefs",
+        options = pathOptions(pane = "named_reefs_pane"),
+        label = labs,
+        labelOptions = labelOptions(
+          noHide = TRUE, direction = "center", textOnly = TRUE,
+          style = list(
+            "color" = "white",
+            "font-weight" = "bold",
+            "font-size" = "13px",
+            "text-shadow" =
+              "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000"
+          )
         )
       )
   })
