@@ -1324,7 +1324,8 @@ body <- dashboardBody(
       body.dark-mode .map-controls-panel .map-controls-body,
       body.dark-mode .map-controls-panel label,
       body.dark-mode .map-controls-panel .control-label,
-      body.dark-mode .map-controls-panel strong { color: #e6e6e6 !important; }
+      body.dark-mode .map-controls-panel strong,
+      body.dark-mode .map-controls-panel .point-size-label { color: #e6e6e6 !important; }
     ")),
     # Toggle the body dark-mode class from the switch
     tags$script(HTML("
@@ -1419,12 +1420,13 @@ body <- dashboardBody(
             tags$hr(),
 
             # Named-reef labels toggle
-            checkboxInput("show_named_reefs", "Show Named Reefs", value = FALSE),
+            checkboxInput("show_named_reefs", "Show named reefs", value = FALSE),
 
             tags$hr(),
 
-            # Point-size stepper (moved into Map Controls)
+            # Point-size stepper
             tags$div(
+              class = "point-size-label",
               style = "font-size: 13px; margin-bottom: 4px; color: #333;",
               "Point size"
             ),
@@ -1829,7 +1831,7 @@ body <- dashboardBody(
           ),
           # Timeline
           shinydashboard::box(
-            title = "Reef Accretion Potential over 10 Years", width = 12,
+            title = "Reef Accretion Potential", width = 12,
             status = "success", solidHeader = TRUE,
             plotly::plotlyOutput("cc_timeline", height = "350px")
           )
@@ -2314,7 +2316,7 @@ server <- function(input, output, session) {
   # ---- Named-reef labeled points ----
   # 250 m real-world circles (addCircles uses meters), light blue at 0.3 alpha,
   # each permanently labeled by its "Location" attribute (white text, black
-  # outline). Toggled by the "Show Named Reefs" checkbox; own group so it never
+  # outline). Toggled by the "Show named reefs" checkbox; own group so it never
   # churns with the NCRMP / baseline redraws.
   observe({
     proxy <- leafletProxy("mymap") |>

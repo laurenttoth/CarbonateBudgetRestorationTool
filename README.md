@@ -62,6 +62,8 @@ Aspects of the map display can be manipulated with the collapsible `Map Controls
 
 - Use the `Symbolize by` group to symbolize the site points by reef state (erosion, stasis, or growth) or gross bioerosion.
 
+- Use the `Show named reefs` checkbox to show/hide named reef sites. When enabled, reef-site polygons will be displayed, and labeled according to the sites' names. These sites are retrieved from Florida Fish & Wildlife Conservation Commission (FWC) mooring buoy data and do not necessarily delineate the geometry of the reef site.
+
 - Use the `Point size` +/- control to adjust the size of the points.
 
 #### Restoration Planning
@@ -70,21 +72,23 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
 1. Genus- or species-level coral cover survey data at the target site is required to begin the simulation. This cover is used as the baseline assemblage for the simulation. There are two ways to enter survey data:
 
-    **(a) File upload:** A `Baseline_Cover_TEMPLATE.xlsx` Excel workbook has been included in the `data` folder of this repository to aid in data entry. See the `README` sheet of this workbook for more information. For an example of a complete data file, see `Baseline_Cover_EXAMPLE.xlsx`, also included in the `data` folder.  
+    **(a) File upload:** In the Baseline Cover group, use the `Download template` button to download a baseline cover template Excel workbook to aid in data entry. See the `README` sheet of this workbook for more information. For an example of a complete data file, see `Baseline_Cover_EXAMPLE.xlsx`, included in the `www` folder of the repository.  
+
+    **IMPORTANT: Do not edit the `*_TEMPLATE.xlsx` files in the `www` folder.** These are the master copies. Always use the `Download template` button to retrieve a fresh template.
 
     Fill out the template, save it under a new name, and load it using the `Load from file` input in the `Baseline Cover` section. Input parameters will be populated automatically based on the contents of the uploaded file.
 
     A copy of the most recently uploaded baseline cover file will be cached in a `cache` folder created where `app.R` is stored. The cached file is automatically re-uploaded on the next launch. Use the `Clear cache` button to delete the cached file (the original file will be unaffected).
 
-    **(b) Create from scratch:** Use the inputs to name the site and designate its area, subregion, habitat, and baseline cover. Use the `Save baseline` button to save the scratch inputs in an `.xlsx` file which can be uploaded to the app in a subsequent session.
+    **(b) Create from scratch:** Use the inputs to name the site and designate its location, area, subregion, habitat, and baseline cover. Use the `Save baseline` button to save the scratch inputs in an `.xlsx` file which can be uploaded to the app in a subsequent session. Once the saved from-scratch `.xlsx` is uploaded, its data will be cached.
 
-2. Designate the target post-restoration percent-cover using the sliders in the `Restoration Mix` section. When a target percent-cover is designated for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed beneath the slider.
+2. Designate the post-restoration percent-cover targets per species using the inputs in the `Restoration Mix` section. When a target percent-cover is designated for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed beneath the input.
 
 3. Manipulate additional restoration variables by using the sliders and text inputs in the `Restoration Parameters` section:  
 
-    **Avg. outplant diameter:** The average diameter of the outplants, in centimeters.
+    **Avg. outplant diameter:** The average starting diameter of the outplants, in centimeters.
 
-    **Avg. outplant cost:** The average cost of each outplant.
+    **Avg. outplant cost:** The average cost of each outplant, in dollars.
 
     **Restoration horizon:** The number of years post-restoration by when the target percent-cover should be reached.
 
@@ -100,17 +104,17 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
 5. After building the scenario, save it by scrolling to the bottom of the page and using the `Save Scenario` section. Enter the name of the project and scenario, and click `Save`. The scenario will be saved as `{project}__{scenario}.json` in an automatically-generated `scenarios` folder wherever app.R is stored.  
 
-    Saved scenarios' filenames may be edited, but retain the double-underscore between the project and scenario labels. The program uses this convention to automatically recognize and differentiate projects and scenarios.
+    **IMPORTANT: Saved scenarios' filenames may be edited, but retain the double-underscore between the project and scenario labels.** The app uses this convention to automatically recognize and differentiate projects and scenarios.
 
 #### Scenario Comparison
 
-Use this tab to compare scenarios created in the `Restoration Planning` tab.
+Use this tab to compare cost, return-on-investment, and projected reef accretion potential across scenarios created in the `Restoration Planning` tab.
 
 The app will automatically detect scenarios saved in the `scenarios` folder. Use the `Project name` dropdown to switch between projects, if more than one is present. By default, the first discovered project is loaded in the dropdown, and all of that project's scenarios are enabled for comparison. Toggle the scenarios on and off as desired.
 
 Use the `Refresh list` button to re-scan the `scenarios` folder and refresh the available projects and scenarios.
 
-Use the `Download report` button to download a `.csv` file which summarizes the selected scenarios. A record is created for each scenario in the report.
+Use the `Download report` button to download a `.csv` file which summarizes the selected scenarios. The `.csv` contains a record is created for each scenario in the report.
 
 An `Impact Summary` is displayed for each enabled scenario. Click the carat at the top-right of a Summary to collapse it.
 
@@ -120,9 +124,9 @@ Use this tab to monitor an ongoing restoration effort using observed coral-cover
 
 Without observed data, a basic simulation of a restoration effort at an NCRMP site can be "monitored". Growth is modeled as a linear regression between the original percent-cover and the target percent-cover calculated from the target percent-cover increase selected on the `Reef Site Map`. Click a site on the map to select it for this simulated monitoring, or use the `Select site` dropdown in the `Inputs` section of the `Restoration Monitoring` tab.
 
-Use the `Upload coral cover data` and `Upload bioerosion data` to use observed data for monitoring, if available. Report the observed data by filling out the `Restoration_Monitoring_TEMPLATE.xlsx` and `Bioerosion_TEMPLATE.xlsx` included in the `data` folder of the repository. See the `README` sheets of these workbook files for more information on data entry. See `Restoration_Monitoring_EXAMPLE.xlsx` and `Bioerosion_EXAMPLE.xlsx` for examples of a complete set of monitoring observation data.
+Use the `Upload coral cover data` and `Upload bioerosion data` to submit observed data for monitoring, if available. Use the `Download template` buttons to download restoration-monitoring and bioerosion template files. See the `README` sheets of these workbook files for more information on data entry. See `Restoration_Monitoring_EXAMPLE.xlsx` and `Bioerosion_EXAMPLE.xlsx` in the repository's `www` folder for examples of a complete set of monitoring observation data.
 
-If the observed reports include data for more than one site, use the `Select site` dropdown to select the site to monitor. 
+If the observed reports include data for more than one site, use the `Select site` dropdown to select the site to monitor.
 
 A comparison between the Baseline and Restored coral cover, carbonate budget, and reef accretion potential is displayed in the `Baseline vs. Restored Impact` section.
 
