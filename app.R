@@ -1360,9 +1360,8 @@ body <- dashboardBody(
         tags$div(
           style = "position: absolute; top: 90px; right: 10px;
                    z-index: 1000; display: flex; gap: 10px;",
-
-          tags$img(src = "usgsLogo.png", style = "height: 75px;"),
-          tags$img(src = "noaaLogo.png", style = "height: 75px;")
+          tags$img(src = "noaaLogo.png", style = "height: 75px;"),
+          tags$img(src = "usgsLogo.png", style = "height: 75px;")
         ),
 
         # Map Controls: vertically-collapsible box below the logos
