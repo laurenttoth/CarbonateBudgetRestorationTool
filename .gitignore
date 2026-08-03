@@ -3,6 +3,6 @@
 .RData
 .Ruserdata
 *Thumbs.db
-data/~$*
+*~$*
 scenarios
 cache
