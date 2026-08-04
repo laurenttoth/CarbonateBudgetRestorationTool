@@ -357,7 +357,8 @@ insert_threshold_crossings <- function(df, xcol = "Year", threshold = 0.5) {
   out <- df[0, , drop = FALSE]
   for (i in seq_len(nrow(df) - 1)) {
     out <- rbind(out, df[i, , drop = FALSE])
-    y1 <- df$RAP[i]; y2 <- df$RAP[i + 1]
+    y1 <- df$RAP[i]
+    y2 <- df$RAP[i + 1]
     # Straddles the threshold (strictly on opposite sides)?
     if (is.finite(y1) && is.finite(y2) &&
         ((y1 < threshold && y2 > threshold) || (y1 > threshold && y2 < threshold))) {
@@ -3980,7 +3981,8 @@ server <- function(input, output, session) {
 
     if (!is.null(ms) && nrow(ms) > 0) {
       # ---- File-driven: real per-year RAP series (Baseline at x = -1) ----
-      x_min <- min(ms$Year); x_max <- max(ms$Year)
+      x_min <- min(ms$Year)
+      x_max <- max(ms$Year)
       # x breaks: label -1 as "Baseline", then integer years
       x_vals   <- sort(unique(ms$Year))
       x_labels <- ifelse(x_vals == -1, "Baseline", as.character(x_vals))
