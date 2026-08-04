@@ -2,7 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
+.Rprofile
+.here
 *Thumbs.db
 *~$*
 scenarios
 cache
+renv

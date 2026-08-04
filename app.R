@@ -49,6 +49,7 @@ read_excel_quiet <- function(path, ...) {
 }
 
 # Ingest data ----
+set_here()
 
 # call data for world map
 world_data   <- ggplot2::map_data("world")
@@ -1591,7 +1592,7 @@ body <- dashboardBody(
                 class = "param-inline-row",
                 tags$span(class = "param-label", "Avg. outplant cost: "),
                 numericInput("outplant_cost", label = NULL,
-                  value = 10, min = 1, max = 100, step = 0.01
+                  value = 10, min = 1, max = 1000, step = 0.01
                 ),
                 tags$span(class = "param-unit", "$")
               ),
@@ -3908,7 +3909,6 @@ server <- function(input, output, session) {
       bands <- status_bands_df(x_min, x_max, y_lo)
 
       ribbon_df <- insert_threshold_crossings(ms, xcol = "Year", threshold = 0.5)
-      print(ribbon_df)
 
       p <- ggplot(ms, aes(x = Year)) +
         geom_rect(data = bands, inherit.aes = FALSE,
