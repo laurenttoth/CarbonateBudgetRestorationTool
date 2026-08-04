@@ -1656,7 +1656,26 @@ body <- dashboardBody(
               )
             ),
             uiOutput("target_cover_warning"),
-            plotly::plotlyOutput("restoration_timeline", height = "320px")
+            fluidRow(
+              column(
+                width = 8,
+                plotly::plotlyOutput("restoration_timeline", height = "320px")
+              ),
+              column(
+                width = 2,
+                tags$h4("Baseline", style = "text-align:center; font-weight:bold;"),
+                valueBoxOutput("rt_baseline_cover", width = NULL),
+                valueBoxOutput("rt_baseline_budget", width = NULL),
+                valueBoxOutput("rt_baseline_rap", width = NULL)
+              ),
+              column(
+                width = 2,
+                tags$h4("Restored", style = "text-align:center; font-weight:bold;"),
+                valueBoxOutput("rt_restored_cover", width = NULL),
+                valueBoxOutput("rt_restored_budget", width = NULL),
+                valueBoxOutput("rt_restored_rap", width = NULL)
+              )
+            )
           )
         )
       ),
@@ -3107,6 +3126,25 @@ server <- function(input, output, session) {
     mr$outplants_by_species
   })
 
+  # Hovered-pip Restored readout. Persists until the next pip hover.
+  rt_restored_hover <- reactiveVal(NULL)
+
+  observeEvent(plotly::event_data("plotly_hover", source = "rest_tl"), {
+    ev <- plotly::event_data("plotly_hover", source = "rest_tl")
+    cd <- ev$customdata
+    # Only pip points carry customdata; line/band vertices return NULL here.
+    if (is.null(cd) || length(cd) == 0 || is.na(cd[1])) return()
+    parts <- suppressWarnings(as.numeric(strsplit(as.character(cd[1]), "\\|")[[1]]))
+    if (length(parts) != 3 || any(is.na(parts))) return()
+    rt_restored_hover(list(cover = parts[1], budget = parts[2], rap = parts[3]))
+  }, ignoreInit = TRUE)
+
+  # Reset the Restored readout when the model changes (e.g. new target/site),
+  # so a stale hover value doesn't linger against a different scenario.
+  observeEvent(model_result(), {
+    rt_restored_hover(NULL)
+  }, ignoreInit = TRUE)
+
   # ---- Reactive graph surrounds ----
   # Total project cost from the model
   output$model_final_cost <- renderText({
@@ -3142,6 +3180,42 @@ server <- function(input, output, session) {
     if (is.na(pct)) return(NULL)
     tags$span(style = paste0("color:", percentile_color(pct), ";"),
       paste0("RAP percentile at restoration horizon: ", round(pct), "%"))
+  })
+
+  # ---- Baseline / Restored value boxes beside the timeline ----
+  # Baseline: static, from baseline_metrics (Year-0). Restored: reacts to the
+  # last pip hover; before any hover, defaults to the horizon values.
+  rt_restored_current <- reactive({
+    h <- rt_restored_hover()
+    if (!is.null(h)) return(h)
+    hv <- horizon_vals()
+    list(cover = hv$r_cover, budget = hv$r_budget, rap = hv$r_rap)
+  })
+
+  output$rt_baseline_cover <- renderValueBox({
+    valueBox(paste0(round(baseline_metrics()$cover, 1), " %"),
+      "Baseline coral cover", icon = icon("percent"), color = "green")
+  })
+  output$rt_baseline_budget <- renderValueBox({
+    valueBox(paste0(round(baseline_metrics()$budget, 2), " kg/m\u00b2/yr"),
+      "Baseline carbonate budget", icon = icon("balance-scale"), color = "blue")
+  })
+  output$rt_baseline_rap <- renderValueBox({
+    valueBox(paste0(round(baseline_metrics()$rap, 2), " mm/yr"),
+      "Baseline reef accretion", icon = icon("chart-line"), color = "aqua")
+  })
+
+  output$rt_restored_cover <- renderValueBox({
+    valueBox(paste0(round(rt_restored_current()$cover, 1), " %"),
+      "Restored coral cover", icon = icon("plus-circle"), color = "olive")
+  })
+  output$rt_restored_budget <- renderValueBox({
+    valueBox(paste0(round(rt_restored_current()$budget, 2), " kg/m\u00b2/yr"),
+      "Restored carbonate budget", icon = icon("balance-scale"), color = "blue")
+  })
+  output$rt_restored_rap <- renderValueBox({
+    valueBox(paste0(round(rt_restored_current()$rap, 2), " mm/yr"),
+      "Restored reef accretion", icon = icon("chart-line"), color = "teal")
   })
 
   output$restoration_timeline <- plotly::renderPlotly({
@@ -3325,10 +3399,13 @@ server <- function(input, output, session) {
           data = pips,
           aes(y = RAP_total, text = paste0(
             "Year ", Year,
-            "<br>Cover: ", round(pct_cvr_total, 1), "%",
-            "<br>RAP: ", round(RAP_total, 2), " mm/yr",
-            "<br>Budget: ", round(calc_budg_total, 2), " kg/m\u00b2/yr"
-          )),
+            "<br>Projected cover: ", round(pct_cvr_total, 1), "%",
+            "<br>Projected RAP: ", round(RAP_total, 2), " mm/yr",
+            "<br>Projected budget: ", round(calc_budg_total, 2), " kg CaCO3/m\u00b2/yr"
+          ),
+          customdata = paste(round(pct_cvr_total, 4),
+                             round(calc_budg_total, 4),
+                             round(RAP_total, 4), sep = "|")),
           size = 4, color = "darkgreen"
         ) +
         scale_x_continuous(breaks = x_breaks) +
@@ -3367,30 +3444,15 @@ server <- function(input, output, session) {
       }
     }
 
-    gp <- plotly::ggplotly(p, tooltip = "text")
+    gp <- plotly::ggplotly(p, tooltip = "text", source = "rest_tl")
 
     # Year-0 baseline annotation ----
     # shows CURRENT RAP + cover + budget (always on).
-    # Background/border/text respond to Dark Mode.
     cur_budget <- ingested_current_budget()
-    # show_budget <- if (!is.null(cur_budget)) cur_budget else b$budget
-    y0_label <- paste0(
-      "Baseline<br>Cover: ", round(b$cover, 1), "%",
-      "<br>RAP: ", round(b$rap, 2), " mm/yr",
-      "<br>Budget: ", round(b$budget, 2), " kg/m\u00b2/yr"
-    )
 
     # Build plotly layout ----
     gp <- gp |>
       plotly::layout(
-        annotations = list(
-          list(
-            x = 0, y = y0_rap, text = y0_label,
-            showarrow = TRUE, arrowhead = 0, ax = 40, ay = -60,
-            align = "left", bgcolor = ann_bg, bordercolor = ann_border,
-            borderwidth = 2, font = list(size = 11, color = ann_font)
-          )
-        ),
         paper_bgcolor = paper_bg,
         plot_bgcolor  = plot_bg,
         font = list(color = font_col),
@@ -4268,13 +4330,13 @@ server <- function(input, output, session) {
     bands <- status_bands_df(0.4, n_sc + 0.6, y_lo)
 
     p <- ggplot(d, aes(x = scenario, y = restored_rap, fill = scenario)) +
-      geom_rect(data = bands, inherit.aes = FALSE,
-                aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
-                    fill = fill, text = label), alpha = 0.30) +
       geom_col(aes(text = paste0(scenario,
                                  "<br>Restored RAP: ", round(restored_rap, 2), " mm/yr")),
                alpha = 1, width = 0.7) +
-      scale_fill_manual(values = c(cols, setNames(c("red","yellow"), c("red","yellow")))) +
+      geom_rect(data = bands, inherit.aes = FALSE,
+                aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                    fill = fill, text = label), alpha = 0.30) +
+      scale_fill_manual(values = c(cols, setNames(c("red", "yellow"), c("red", "yellow")))) +
       scale_y_continuous(limits = c(y_lo, y_hi), breaks = rap_axis_breaks(y_lo, y_hi)) +
       labs(x = NULL, y = "Restored RAP (mm/yr)") +
       sc_theme()[[1]] +

@@ -54,13 +54,15 @@ Use this tab to view National Coral Reef Monitoring Program (NCRMP) reef survey 
 
 By default, sites are symbolized according to their reef accretion potential (RAP). The legend is displayed in the bottom left corner.
 
+If baseline cover data has been uploaded in the `Restoration Planning` tab, the site(s) will be added to the map. The uploaded site points are 50% larger than the NCRMP site points. The site selected in the `Restoration Planning` tab is 25% larger than the rest of the uploaded site points.
+
 Aspects of the map display can be manipulated with the collapsible `Map Controls` section in the upper right:  
 
-- Use the `Target Percent-Cover Increase` slider to simulate a hard-coral percent-cover increase of the given amount at the NCRMP sites. Halo symbology will be added around the site points denoting their "Restoration Potential" (i.e., whether restoration results in a transition in the site's calcium carbonate budget).
+- Use the `Target Percent-Cover Increase` slider to simulate a hard-coral percent-cover increase of the given amount at the NCRMP sites. Halo symbology will be added around the site points denoting their `Restoration Potential` (i.e., whether restoration results in a transition in the site's reef state). If applicable, the selected uploaded site will symbolized with a `Restoration Potential` halo according to the current restoration scenario.
 
 - Use the `Filter by` group to filter the data points by survey year or habitat.
 
-- Use the `Symbolize by` group to symbolize the site points by reef state (erosion, stasis, or growth) or gross bioerosion.
+- Use the `Symbolize by` group to symbolize the site points and uploaded reef points by reef accretion potential, reef state (erosion, stasis, or growth) or gross bioerosion.
 
 - Use the `Show named reefs` checkbox to show/hide named reef sites. When enabled, reef-site polygons will be displayed, and labeled according to the sites' names. These sites are retrieved from Florida Fish & Wildlife Conservation Commission (FWC) mooring buoy data and do not necessarily delineate the geometry of the reef site.
 

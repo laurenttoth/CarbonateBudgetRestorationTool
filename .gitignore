@@ -4,8 +4,8 @@
 .Ruserdata
 .Rprofile
 .here
-*Thumbs.db
-*~$*
+rsconnect
 scenarios
 cache
-renv
+*Thumbs.db
+*~$*
