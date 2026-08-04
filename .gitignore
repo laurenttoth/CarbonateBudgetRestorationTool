@@ -2,7 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
-*Thumbs.db
-data/~$*
+.Rprofile
+.here
+rsconnect
 scenarios
 cache
+*Thumbs.db
+*~$*
