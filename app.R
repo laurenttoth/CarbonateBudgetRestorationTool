@@ -36,7 +36,6 @@ library(shinyBS)
 library(shinythemes)
 library(shinyWidgets)
 library(shinydashboard)
-library(dashboardthemes) # (optional to use dark theme)
 
 # Enable automatic reloading of the app when code changes are detected
 options(shiny.autoreload = TRUE)
@@ -361,8 +360,9 @@ insert_threshold_crossings <- function(df, xcol = "Year", threshold = 0.5) {
     y1 <- df$RAP[i]; y2 <- df$RAP[i + 1]
     # Straddles the threshold (strictly on opposite sides)?
     if (is.finite(y1) && is.finite(y2) &&
-        ((y1 < threshold & y2 > threshold) | (y1 > threshold & y2 < threshold))) {
-      x1 <- df[[xcol]][i]; x2 <- df[[xcol]][i + 1]
+        ((y1 < threshold && y2 > threshold) || (y1 > threshold && y2 < threshold))) {
+      x1 <- df[[xcol]][i]
+      x2 <- df[[xcol]][i + 1]
       frac <- (threshold - y1) / (y2 - y1)
       xc <- x1 + frac * (x2 - x1)
       cross <- df[i, , drop = FALSE]        # template row (carries other cols)
@@ -805,7 +805,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         if (needed_outplant_growth - new_area < -0.1) { #Too much growth by the horizon:
           # Use fewer outplants
           outplant_guess <- outplant_guess - 1
-          if (outplant_guess < 0) { outplant_guess <- 0; reiterate <- FALSE }
+          if (outplant_guess < 0) {
+            outplant_guess <- 0
+            reiterate <- FALSE
+            }
         } else if (needed_outplant_growth - new_area > 0.1) { # Not enough growth:
           # Use more outplants
           outplant_guess <- outplant_guess + 1
@@ -1099,7 +1102,7 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
     else "",
     "</p>",
     "<hr>",
-    "<p>", 
+    "<p>",
     if (!is.na(r_rap) && r_rap >= 3.1 && r_rap < 6.3) {
       "<span style='color:orangered;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2030.</span>"
     } else if (!is.na(r_rap) && r_rap >= 6.3 && r_rap < 8) {
@@ -1459,7 +1462,7 @@ body <- dashboardBody(
               fluidRow(
                 # Left column: controls
                 column(
-                  width = 6,
+                  width = 5,
                   tags$div(
                     class = "upload-label-row",
                     tags$span(class = "control-label", tags$strong("Load from file (.xlsx)")),
@@ -1477,7 +1480,7 @@ body <- dashboardBody(
                   ),
                   tags$div(
                     class = "param-inline-row",
-                    tags$span(class = "param-label", "Latitude:"),
+                    tags$span(class = "param-label", tags$strong("Latitude:")),
                     numericInput("site_latitude", label = NULL,
                       value = NA, min = -90, max = 90, step = 0.00001
                     ),
@@ -1485,7 +1488,7 @@ body <- dashboardBody(
                   ),
                   tags$div(
                     class = "param-inline-row",
-                    tags$span(class = "param-label", "Longitude:"),
+                    tags$span(class = "param-label", tags$strong("Longitude:")),
                     numericInput("site_longitude", label = NULL,
                       value = NA, min = -180, max = 180, step = 0.00001
                     ),
@@ -1518,7 +1521,7 @@ body <- dashboardBody(
 
                 # Right column: baseline species cover list + add-species dropdown
                 column(
-                  width = 6,
+                  width = 7,
                   tags$strong("Baseline species cover (%)"),
                   # Auto-populated rows (from .xlsx) + manually added rows, with
                   # the species-picker dropdown rendered below the list.
@@ -1546,14 +1549,14 @@ body <- dashboardBody(
               column(6,
                 tags$fieldset(
                   class = "mix-fieldset mix-branching",
-                  tags$legend("Branching"),
+                  tags$legend(tags$strong("Branching")),
                   uiOutput("mix_branching")
                 )
               ),
               column(6,
                 tags$fieldset(
                   class = "mix-fieldset mix-weedy",
-                  tags$legend("Weedy / Other"),
+                  tags$legend(tags$strong("Weedy / Other")),
                   uiOutput("mix_weedy")
                 )
               )
@@ -1563,7 +1566,7 @@ body <- dashboardBody(
               column(12,
                 tags$fieldset(
                   class = "mix-fieldset mix-massive",
-                  tags$legend("Massive"),
+                  tags$legend(tags$strong("Massive")),
                   uiOutput("mix_massive")
                 )
               )
@@ -1582,7 +1585,7 @@ body <- dashboardBody(
             column(width = 6,
               tags$div(
                 class = "param-inline-row",
-                tags$span(class = "param-label", "Avg. outplant diameter:"),
+                tags$span(class = "param-label", tags$strong("Avg. outplant diameter:")),
                 numericInput("outplant_size", label = NULL,
                   value = 5, min = 1, max = 100, step = 0.1
                 ),
@@ -1590,7 +1593,7 @@ body <- dashboardBody(
               ),
               tags$div(
                 class = "param-inline-row",
-                tags$span(class = "param-label", "Avg. outplant cost: "),
+                tags$span(class = "param-label", tags$strong("Avg. outplant cost: ")),
                 numericInput("outplant_cost", label = NULL,
                   value = 10, min = 1, max = 1000, step = 0.01
                 ),
@@ -1598,12 +1601,12 @@ body <- dashboardBody(
               ),
 
               # Timeline parameters
-              sliderInput("rest_horizon", "Restoration horizon (years)",
+              sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
                 value = 10, min = 0, max = 30, step = 5
                 ),
               # Sim duration shares the horizon's 0-30 domain so tick geometry
               # lines up natively; a snap-to-10 floor keeps it >= 10 years.
-              sliderInput("sim_duration", "Simulation duration (years)",
+              sliderInput("sim_duration", tags$strong("Simulation duration (years)"),
                 value = 10, min = 0, max = 30, step = 5
                 ),
               # Red warning when horizon exceeds sim duration
@@ -1620,16 +1623,31 @@ body <- dashboardBody(
                           color: #d9534f; padding: 0 6px;",
                   "Bleaching Scenario"
                 ),
-                sliderInput("dhw", "Degree-Heating Weeks",
+                sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
                   min = 8, max = 24, value = 8, step = 1
                 ),
                 sliderTextInput(
                   inputId = "bleach_events",
-                  label = "Events / 5 years",
+                  label = tags$strong("Events / 5 years"),
                   choices = c(0, 1, 2, 5),
                   selected = 0,
                   grid = TRUE
                 )
+              )
+            )
+          ),
+          shinydashboard::box(
+            title = "Save Scenario", width = 12, solidHeader = TRUE, status = "primary",
+            column(width = 5,
+                textInput("scenario_project", tags$strong("Project name"), value = "")
+            ),
+            column(width = 5,
+                textInput("scenario_name", tags$strong("Scenario name"), value = "")
+            ),
+            column(width = 2,
+              fluidRow(
+                tags$h1(), # Used to keep the button aligned
+                actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
               )
             )
           )
@@ -1674,28 +1692,6 @@ body <- dashboardBody(
                 valueBoxOutput("rt_restored_cover", width = NULL),
                 valueBoxOutput("rt_restored_budget", width = NULL),
                 valueBoxOutput("rt_restored_rap", width = NULL)
-              )
-            )
-          )
-        )
-      ),
-
-      fluidRow(
-        column(width = 8),
-        column(width = 4,
-          # "Save Scenario" box
-          shinydashboard::box(
-            title = "Save Scenario", width = 12, solidHeader = TRUE, status = "primary",
-            column(width = 5,
-                textInput("scenario_project", "Project name", value = "")
-            ),
-            column(width = 5,
-                textInput("scenario_name", "Scenario name", value = "")
-            ),
-            column(width = 2,
-              fluidRow(
-                tags$h1(), # Used to keep the button aligned
-                actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
               )
             )
           )
@@ -1799,7 +1795,7 @@ body <- dashboardBody(
             fileInput("upload_bioerosion", NULL,
               accept = c(".csv", ".xlsx")
             ),
-            
+
             # Red warning for unobserved parrotfish size classes
             uiOutput("bioerosion_parrotfish_warning"),
             selectizeInput("monitoring_selected_site", tags$strong("Select site"),
@@ -1865,11 +1861,11 @@ body <- dashboardBody(
       shinydashboard::box(
         width = 12, status = "primary", solidHeader = FALSE,
         tags$div(
-          tags$h4("Aim"),
+          tags$h4(tags$strong("Aim")),
           HTML("The aim of this application is to provide a predictive tool for decision makers to assess reef restoration efforts under future climate change 
             and bleaching scenarios. The modelling approach that is used to build projections in this interactive tool is described in a forthcoming journal publication."), tags$br(),
           tags$br(),
-          tags$h4("Background"),
+          tags$h4(tags$strong("Background")),
           HTML("For reef framework to persist, constructional processes by corals and other calcifers need 
            to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and 
            dynamic and is currently threatened by the effects of sea-level rise, ocean warming, and ocean acidifcation.
@@ -1882,23 +1878,23 @@ body <- dashboardBody(
           HTML("The Carbonate Budget Restoration Tool will enable decision makers to evaluate the impact of reef restoration decisions 
                 in the context of climate change and a variety of bleaching scenarios."), tags$br(),
           tags$br(),
-          tags$h4("Code"),
+          tags$h4(tags$strong("Code")),
           "Code and input data used to generate this Shiny app are available on ", tags$a(href = "https://github.com/laurenttoth/CarbonateBudgetRestorationTool", "Github."), tags$br(),
           tags$br(),
-          tags$h4("Sources"),
+          tags$h4(tags$strong("Sources")),
           "NASA sea-level rise data: ", tags$br(),
           "Coral morphologies: ", tags$br(),
           tags$br(),
-          tags$h4("Authors"),
+          tags$h4(tags$strong("Authors")),
           "Connor M. Jenkins, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
           "Dr. Lauren T. Toth, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
           "Dr. John Morris, Atlantic Oceanographic and Meteorological Laboratory, NOAA, Miami, Florida, USA", tags$br(),
           tags$br(),
-          tags$h4("Contact"),
+          tags$h4(tags$strong("Contact")),
           "Lauren Toth: ", tags$a(href = "mailto:ltoth@usgs.gov", "ltoth@usgs.gov"), tags$br(),
           tags$br(),
           tags$br(),
-          tags$h4("Acknowledgments"),
+          tags$h4(tags$strong("Acknowledgments")),
           "A special thanks to Dr. Alice Webb and her team, who originally developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "Reef Persistence Tool"),
           ", which was the inspiration for this project:", tags$br(),
           tags$br(),
@@ -1910,7 +1906,7 @@ body <- dashboardBody(
           tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
           "Dr. Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
           tags$br(),
-          "The paper describing the original Reef Persistence Tool is published in ", tags$a(href="https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
+          "The paper describing the original Reef Persistence Tool is published in ", tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
 
           # Add logo panel
           absolutePanel(
@@ -2426,26 +2422,36 @@ server <- function(input, output, session) {
 
       area_val <- if ("Site_Area_m2" %in% names(sr) && any(!is.na(sr$Site_Area_m2))) {
         .safe_num(sr$Site_Area_m2[!is.na(sr$Site_Area_m2)][1])
-      } else 100
+      } else {
+        100
+      }
       if (area_val <= 0) area_val <- 100
 
       # Per-site subregion / habitat for bioerosion resolution. Subregion may be
       # a full label or a code in the file; map to the code the data files use.
       raw_sub <- if ("Subregion" %in% names(sr) && any(!is.na(sr$Subregion))) {
         as.character(sr$Subregion[!is.na(sr$Subregion)][1])
-      } else NA_character_
+      } else {
+        NA_character_
+      }
       # Data files use full names; expand a code to its label if one slips in.
       sub_full <- if (!is.na(raw_sub) && raw_sub %in% names(subregion_labels)) {
         unname(subregion_labels[raw_sub])
-      } else raw_sub
+      } else {
+        raw_sub
+      }
       habitat <- if ("Habitat" %in% names(sr) && any(!is.na(sr$Habitat))) {
         as.character(sr$Habitat[!is.na(sr$Habitat)][1])
-      } else NA_character_
+      } else {
+        NA_character_
+      }
 
       # Bioerosion terms (regional). parrotfish split out for the popup.
       be_split <- if (!is.na(sub_full) && !is.na(habitat)) {
         resolve_species_bioerosion(sub_full, habitat)
-      } else list(parrotfish = 0, urchin = 0, sponge = 0)
+      } else {
+        list(parrotfish = 0, urchin = 0, sponge = 0)
+      }
       be_macro <- .safe0(be_split$parrotfish) + .safe0(be_split$urchin) + .safe0(be_split$sponge)
 
       # Unconsolidated substrate % from the special Taxon row (excluded from cover)
@@ -2456,7 +2462,8 @@ server <- function(input, output, session) {
       }
 
       # Area-occupied gross budget, total cover (skip the UC pseudo-taxon)
-      patch <- 0; total_cover <- 0
+      patch <- 0
+      total_cover <- 0
       if (all(c("Taxon", "Percent_Cover") %in% names(sr))) {
         for (i in seq_len(nrow(sr))) {
           s <- sr$Taxon[i]
@@ -2642,10 +2649,14 @@ server <- function(input, output, session) {
     # Latitude / Longitude from the xlsx (if present)
     lat_val <- if ("Latitude" %in% names(site_rows) && any(!is.na(site_rows$Latitude))) {
       as.numeric(site_rows$Latitude[!is.na(site_rows$Latitude)][1])
-    } else NA
+    } else {
+      NA
+    }
     lon_val <- if ("Longitude" %in% names(site_rows) && any(!is.na(site_rows$Longitude))) {
       as.numeric(site_rows$Longitude[!is.na(site_rows$Longitude)][1])
-    } else NA
+    } else {
+      NA
+    }
     updateNumericInput(session, "site_latitude",  value = lat_val)
     updateNumericInput(session, "site_longitude", value = lon_val)
 
@@ -2943,7 +2954,9 @@ server <- function(input, output, session) {
     # micro scaled by the CONSOLIDATED FRACTION (consol/area)
     microbioerosion <- if (consolidated_cover > 0) {
       (consolidated_cover / area_val_num) * 0.24
-    } else 0
+    } else {
+      0
+    }
     macrobioerosion <- resolve_regional_bioerosion(input$subregion_choice, input$habitat_choice)
 
     budget <- (patch_budget / area_val_num) - macrobioerosion - microbioerosion
@@ -3448,6 +3461,7 @@ server <- function(input, output, session) {
 
     # Year-0 baseline annotation ----
     # shows CURRENT RAP + cover + budget (always on).
+    # Background/border/text respond to Dark Mode.
     cur_budget <- ingested_current_budget()
 
     # Build plotly layout ----
@@ -3736,11 +3750,15 @@ server <- function(input, output, session) {
       # Urchins
       ur_val <- if (!sheet_is_empty(ur)) {
         compute_urchin_erosion(ur[ur$Years_Post_Restoration == yr, , drop = FALSE], sp_erosion_urchins)
-      } else reg$urchin
+      } else {
+        reg$urchin
+      }
       # Sponges
       sp_val <- if (!sheet_is_empty(sp)) {
         compute_sponge_erosion(sp[sp$Years_Post_Restoration == yr, , drop = FALSE], sp_erosion_sponges)
-      } else reg$sponge
+      } else {
+        reg$sponge
+      }
 
       by_year[as.character(yr)] <- .safe0(pf_val) + .safe0(ur_val) + .safe0(sp_val)
     }
@@ -3797,7 +3815,9 @@ server <- function(input, output, session) {
     # Site area from the cover .xlsx (Site_Area_m2); default 100
     site_area <- if ("Site_Area_m2" %in% names(cover) && any(!is.na(cover$Site_Area_m2))) {
       .safe0(cover$Site_Area_m2[!is.na(cover$Site_Area_m2)][1])
-    } else 100
+    } else {
+      100
+    }
     if (site_area <= 0) site_area <- 100
 
     bio <- monitoring_bioerosion_by_year()  # NULL -> regional fallback below
@@ -3999,8 +4019,10 @@ server <- function(input, output, session) {
       band_x <- c(x_min, x_max)
     } else {
       # ---- Map-driven: smooth interpolation Baseline (Y0) -> Restored (Y10) ----
-      b <- cc_baseline_vals(); r <- cc_restored_vals()
-      dur <- 10; years <- 0:dur
+      b <- cc_baseline_vals()
+      r <- cc_restored_vals()
+      dur <- 10
+      years <- 0:dur
       rap_series <- b$rap + (r$rap - b$rap) * (years / dur)
       tl <- data.frame(Year = years, RAP = rap_series, stringsAsFactors = FALSE)
 
