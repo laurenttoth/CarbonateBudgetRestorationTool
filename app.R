@@ -1196,6 +1196,7 @@ header <- dashboardHeader(
   tags$li(
     class = "dropdown",
     tags$div(
+      class = "header-blurb",
       style = "padding: 5px; font-size: 14px; color: #333; text-align: right;",
       HTML("This tool is a collaboration between the
             <strong>National Oceanic and Atmospheric Administration (NOAA)</strong> (U.S. Department of Commerce)&nbsp<br/>
@@ -1418,6 +1419,38 @@ body <- dashboardBody(
       body.dark-mode .map-controls-panel .control-label,
       body.dark-mode .map-controls-panel strong,
       body.dark-mode .map-controls-panel .point-size-label { color: #e6e6e6 !important; }
+
+      /* Header collaboration blurb */
+      body.dark-mode .header-blurb,
+      body.dark-mode .header-blurb strong { color: #e6e6e6 !important; }
+
+      /* Filter-by (Habitat / Year) dropdownButton panels.
+         shinyWidgets renders the panel as a Bootstrap .dropdown-menu; the
+         visible background is on that container, not the label elements. */
+      body.dark-mode .dropdown-menu,
+      body.dark-mode .sw-dropdown-content,
+      body.dark-mode .sw-dropdown-in,
+      body.dark-mode .dropdown-menu .form-group,
+      body.dark-mode .dropdown-menu .shiny-options-group {
+        background-color: #2c353f !important;
+        border-color: #3a4552 !important;
+        color: #e6e6e6 !important;
+      }
+      body.dark-mode .dropdown-menu .checkbox label,
+      body.dark-mode .dropdown-menu label,
+      body.dark-mode .dropdown-menu .control-label {
+        color: #e6e6e6 !important;
+      }
+
+      /* selectInput caret (project-name dropdown, etc.) */
+      body.dark-mode .selectize-input:after { border-color: #e6e6e6 transparent transparent transparent !important; }
+      body.dark-mode .selectize-control.single .selectize-input:after { border-top-color: #e6e6e6 !important; }
+
+      /* Plotly axis tick labels + titles (RAP timelines) */
+      body.dark-mode .js-plotly-plot .xtick text,
+      body.dark-mode .js-plotly-plot .ytick text,
+      body.dark-mode .js-plotly-plot .xtitle,
+      body.dark-mode .js-plotly-plot .ytitle { fill: #e6e6e6 !important; }
     ")),
     # Toggle the body dark-mode class from the switch
     tags$script(HTML("
@@ -3665,6 +3698,7 @@ server <- function(input, output, session) {
     }
 
     gp <- plotly::ggplotly(p, tooltip = "text", source = "rest_tl")
+    gp <- plotly::event_register(gp, "plotly_hover")
 
     # Year-0 baseline annotation ----
     # shows CURRENT RAP + cover + budget (always on).
