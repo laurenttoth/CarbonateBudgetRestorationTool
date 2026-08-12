@@ -333,8 +333,7 @@ make_species_label <- function(s, split_line = TRUE) {
   if (length(parts) < 2) return(HTML(s))
   if (split_line) {
     HTML(paste0(parts[1], "<br>", paste(parts[-1], collapse = " ")))
-  }
-  else {
+  } else {
     paste(parts[1], parts[-1])
   }
 }
@@ -1556,8 +1555,13 @@ body <- dashboardBody(
                   width = 6,
                   tags$div(
                     class = "upload-label-row",
-                    tags$span(class = "control-label", tags$strong("Load from file (.xlsx)")),
-                    downloadButton("baseline_template_dl", "Download template", class = "btn-sm")
+                    tags$span(class = "control-label", tags$strong("Load .xlsx")),
+                    tags$div(
+                      style = "display:flex; gap:6px;",
+                      downloadButton("baseline_template_dl", "Template", class = "btn-sm"),
+                      actionButton("baseline_load_example", "Example",
+                                  icon = icon("upload"), class = "btn-sm")
+                    )
                   ),
                   fileInput("baseline_upload", NULL, accept = c(".xlsx")
                   ),
@@ -1901,18 +1905,28 @@ body <- dashboardBody(
             title = "Inputs", width = 12, status = "primary", solidHeader = TRUE,
             tags$div(
               class = "upload-label-row",
-              tags$span(class = "control-label", "Upload coral cover data"),
-              downloadButton("monitoring_cover_template_dl", "Download template",
-                             class = "btn-sm")
+              tags$span(class = "control-label", "Coral cover .xlsx"),
+              tags$div(
+                style = "display:flex; gap:6px;",
+                downloadButton("monitoring_cover_template_dl", "Template",
+                               class = "btn-sm"),
+                actionButton("cover_load_example", "Example",
+                             icon = icon("upload"), class = "btn-sm")
+              )
             ),
             fileInput("upload_cover", NULL,
               accept = c(".csv", ".xlsx")
             ),
             tags$div(
               class = "upload-label-row",
-              tags$span(class = "control-label", "Upload bioerosion data"),
-              downloadButton("monitoring_bioerosion_template_dl", "Download template",
-                             class = "btn-sm")
+              tags$span(class = "control-label", "Bioerosion .xlsx"),
+              tags$div(
+                style = "display:flex; gap:6px;",
+                downloadButton("monitoring_bioerosion_template_dl", "Template",
+                               class = "btn-sm"),
+                actionButton("bioerosion_load_example", "Example",
+                             icon = icon("upload"), class = "btn-sm")
+              )
             ),
             fileInput("upload_bioerosion", NULL,
               accept = c(".csv", ".xlsx")
@@ -2008,6 +2022,7 @@ body <- dashboardBody(
           "Coral morphologies: ", tags$br(),
           "Sea-level rise projections: ", tags$br(),
           "Annual mortality rates: Browne et al. (2026)", tags$br(),
+          "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
           tags$br(),
           tags$h4(tags$strong("Authors")),
           "Connor M. Jenkins, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
@@ -2671,6 +2686,44 @@ server <- function(input, output, session) {
       file.copy(input$baseline_upload$datapath, cached_baseline_path, overwrite = TRUE),
       error = function(e) NULL
     )
+  })
+
+  # Load the bundled example baseline (.xlsx) via the same ingest + cache path.
+  observeEvent(input$baseline_load_example, {
+    ex <- here("www", "Baseline_Cover_EXAMPLE.xlsx")
+    if (!file.exists(ex)) {
+      showNotification("Baseline_Cover_EXAMPLE.xlsx not found in /www.", type = "error")
+      return(invisible(NULL))
+    }
+    ingest_baseline_file(ex)
+    tryCatch(file.copy(ex, cached_baseline_path, overwrite = TRUE),
+             error = function(e) NULL)
+  })
+
+  # Load the bundled Monitoring example files by copying them into the cache
+  # slots the monitoring reactives already read from, then bumping the token.
+  observeEvent(input$cover_load_example, {
+    ex <- here("www", "Restoration_Monitoring_Cover_EXAMPLE.xlsx")
+    if (!file.exists(ex)) {
+      showNotification("Restoration_Monitoring_Cover_EXAMPLE.xlsx not found in /www.", type = "error")
+      return(invisible(NULL))
+    }
+    tryCatch(file.copy(ex, paste0(cached_cover_stub, ".xlsx"), overwrite = TRUE),
+             error = function(e) NULL)
+    monitoring_cache_token(monitoring_cache_token() + 1)
+    showNotification("Loaded example coral-cover data.", type = "message")
+  })
+
+  observeEvent(input$bioerosion_load_example, {
+    ex <- here("www", "Bioerosion_Data_EXAMPLE.xlsx")
+    if (!file.exists(ex)) {
+      showNotification("Bioerosion_Data_EXAMPLE.xlsx not found in /www.", type = "error")
+      return(invisible(NULL))
+    }
+    tryCatch(file.copy(ex, paste0(cached_bioerosion_stub, ".xlsx"), overwrite = TRUE),
+             error = function(e) NULL)
+    monitoring_cache_token(monitoring_cache_token() + 1)
+    showNotification("Loaded example bioerosion data.", type = "message")
   })
 
   # On launch: if a cached baseline exists, auto-load it via the same path.
@@ -3924,7 +3977,6 @@ server <- function(input, output, session) {
 
       by_year[as.character(yr)] <- .safe0(pf_val) + .safe0(ur_val) + .safe0(sp_val)
     }
-    print(by_year)
     list(by_year = by_year, unobserved = unique(unobserved_all))
   })
 
