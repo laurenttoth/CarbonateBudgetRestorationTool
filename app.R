@@ -60,7 +60,7 @@ porosity     <- read.csv(here("data", "Porosity.csv"))
 # Species-specific growth rates
 growth_rates <- read.csv(here("data", "growth_rates_ReefBudget_NCRMP.csv"))
 # Species-specific calcification rates (same file as calc_rates, kept explicit)
-calc_rates   <- read.csv(here("data", "Travis_Calcification_Rates.csv"))
+calc_rates   <- read.csv(here("data", "Calcification_Rates_Courtney_et_al_2024.csv"))
 # Species-specific average colony diameters
 diams        <- read.csv(here("data", "NCRMP_Colony_Diam_Florida.csv"))
 # Region- and habitat-specific bioerosion rates
