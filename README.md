@@ -125,7 +125,7 @@ Alternatively, run the following line in an R console:
 ```r
 install.packages(c("rsconnect", "shiny", "bslib", "shinydashboard", "shinythemes",
                    "ggplot2", "dplyr", "tidyr", "leaflet", "leaflegend", "jsonlite"
-                   "tidyverse", "ggforce", "png", "RCurl", "jpeg", "sf", "magrittr",
+                   "tidyverse", "ggforce", "png", "RCurl", "jpeg", "sf", "magrittr", "Rtools",
                    "maps", "reshape2", "RColorBrewer", "plotly", "geojsonio", "shinyWidgets",
                    "shinyjs", "shinyBS", "here", "readxl", "writexl", "tidyr", "dplyr"))
 ```
