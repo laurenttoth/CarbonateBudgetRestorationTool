@@ -1557,13 +1557,18 @@ body <- dashboardBody(
                     class = "upload-label-row",
                     tags$span(class = "control-label", tags$strong("Load .xlsx")),
                     tags$div(
-                      style = "display:flex; gap:6px;",
+                      style = "display: flex; gap: 6px;",
                       downloadButton("baseline_template_dl", "Template", class = "btn-sm"),
-                      actionButton("baseline_load_example", "Example",
-                                  icon = icon("upload"), class = "btn-sm")
                     )
                   ),
                   fileInput("baseline_upload", NULL, accept = c(".xlsx")
+                  ),
+                  tags$div(
+                    style = "display: flex; margin-top: -35px; margin-bottom: 20px; gap: 6px",
+                    actionButton("baseline_load_example", "Example",
+                                icon = icon("upload"), class = "btn-sm"),
+                    actionButton("baseline_load_cache", "Cache",
+                                icon = icon("upload"), class = "btn-sm")
                   ),
                   # Typed input allowed (create = TRUE) for scratch-built scenarios
                   selectizeInput(
@@ -2669,7 +2674,9 @@ server <- function(input, output, session) {
         selected = selectize_choices[1]
       )
       # Refresh site selectize to trigger the site-change observer immediately
-      if (length(site_ids)) updateSelectizeInput(session, "baseline_site", selected = site_ids[1])
+      if (length(site_ids)) later::later(function() {
+        updateSelectizeInput(session, "baseline_site", selected = site_ids[1])
+      }, delay = 0.5)
     } else {
       showNotification("Upload has no 'Unique_Site_ID' column.", type = "warning")
     }
@@ -2686,6 +2693,15 @@ server <- function(input, output, session) {
       file.copy(input$baseline_upload$datapath, cached_baseline_path, overwrite = TRUE),
       error = function(e) NULL
     )
+  })
+
+  # load the cached baseline data
+  # Baseline percentile still does not populate on the timeline automatically on first click...
+  # but does populate on second "Cache" upload click. ?
+  observeEvent(input$baseline_load_cache, {
+    if (file.exists(cached_baseline_path)) {
+      if (is.null(input$baseline_upload$datapath)) ingest_baseline_file(cached_baseline_path)
+      }
   })
 
   # Load the bundled example baseline (.xlsx) via the same ingest + cache path.
@@ -2727,11 +2743,11 @@ server <- function(input, output, session) {
   })
 
   # On launch: if a cached baseline exists, auto-load it via the same path.
-  observe({
-    if (file.exists(cached_baseline_path)) {
-      if (is.null(input$baseline_upload$datapath)) ingest_baseline_file(cached_baseline_path)
-      }
-  })
+  # observe({
+  #   if (file.exists(cached_baseline_path)) {
+  #     if (is.null(input$baseline_upload$datapath)) ingest_baseline_file(cached_baseline_path)
+  #     }
+  # })
 
   # Download the blank baseline-cover template (.xlsx) from GitHub (raw URL).
   output$baseline_template_dl <- downloadHandler(
@@ -2897,7 +2913,7 @@ server <- function(input, output, session) {
       # Baseline RAP percentile vs. the NCRMP distribution (gray surround)
       ingested_baseline_pctile(rap_percentile(cur_budget / 2.9 / (1 - 0.6265)))
     }
-  }, ignoreInit = TRUE)
+  })#, ignoreInit = TRUE)
 
   # Add-species dropdown: append the chosen species to the baseline list
   # (dropdown itself is rendered above the list in baseline_cover_inputs).
