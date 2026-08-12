@@ -566,14 +566,14 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
   if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.80 # generic fallback
   sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100 # % -> proportion
-  sp_dhw_mortality <- 0.25 # 25% of the cover loss applied as whole-colony mortality
+  sp_dhw_mortality <- 0.30 # 30% of the cover loss applied as whole-colony mortality
                            # (generalized default, see about species-specific values later)
-  sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
+  sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
 
   out_df <- data.frame()
-  new_size          <- colony_diam
-  colony_count_thisrun  <- colony_count # working colony count for this run
-  last_bleach_year  <- 1            # placeholder
+  new_size             <- colony_diam  # working colony diameter for this run
+  colony_count_thisrun <- colony_count # working colony count for this run
+  last_bleach_year     <- 1            # placeholder
 
   for (i in 1:duration) { # R starts counting at 1 so "Year 0" = Year 1; "Year 10" = Year 11
 
@@ -584,13 +584,13 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       colony_count_thisrun <- round(colony_count_thisrun * (1 - mortality_by_size(colony_diam)))
     }
 
-    # Calculate post-bleaching growth reduction from last year's bleaching
+    # Determine post-bleaching growth reduction from last year's bleaching (if applicable)
     years_since_last_bleach <- i - last_bleach_year
     if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
         # Apply post-bleaching production losses
         reduction <- pbr[years_since_last_bleach]
     } else {
-        reduction <- 0
+        post_bleach_growth_reduction <- 0
     }
 
     # Will bleaching occur this year?:
@@ -605,7 +605,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
         colony_count_thisrun <- round(colony_count_thisrun * (1 - sp_dhw_loss * sp_dhw_mortality))
     }
 
-    # Kill colonies due to whole-colony mortality (Brown et al. 2026)
+    # Kill colonies due to chronic whole-colony mortality (Brown et al. 2026)
     # Determine size bin
     this_bin <- round(floor(new_size / 5) * 5) # Round down to nearest 5 cm
     this_bin <- ifelse(this_bin < 5, 5, this_bin) # Ensure minimum bin is 5 cm
@@ -618,7 +618,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Grow the surviving colonies
     # Apply post-bleaching growth reduction to planar growth rate
-    new_size <- new_size + sp_growth_rate * (1 - reduction)
+    new_size <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
     new_area <- (new_size / 2) ^ 2 * pi * colony_count_thisrun
 
     # If bleaching, apply the remaining bleaching stress that did not cause mortality
@@ -631,6 +631,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     this_mortality_partial <- subset(mortality_partial, mortality_partial["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_partial <- this_mortality_partial / 100 # Convert from percent to proportion
     new_area <- new_area * (1 - this_mortality_partial)
+
+    # Colony diameter should be recalculated from new_area at this step?
 
     # Calculate the carbonate budget contribution from this species for this year
     contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
@@ -1196,7 +1198,9 @@ header <- dashboardHeader(
     class = "dropdown",
     tags$div(
       style = "padding: 5px; font-size: 14px; color: #333; text-align: right;",
-      HTML("This tool is a collaboration between the <strong>National Oceanic and Atmospheric Administration (NOAA)</strong> (U.S. Department of Commerce)&nbsp<br/>and the <strong>U.S. Geological Survey (USGS)</strong> (U.S. Department of the Interior).")
+      HTML("This tool is a collaboration between the
+            <strong>National Oceanic and Atmospheric Administration (NOAA)</strong> (U.S. Department of Commerce)&nbsp<br/>
+            and the <strong>U.S. Geological Survey (USGS)</strong> (U.S. Department of the Interior).")
     )
   ),
   # Logos in the top ribbon (as right-aligned dropdown items)
@@ -1225,13 +1229,15 @@ header <- dashboardHeader(
 
 ## Sidebar ----
 sidebar <- dashboardSidebar(
-  width = 230,
+  width = 240,
   sidebarMenu(
     id = "nav",
     menuItem("Reef Site Map", tabName = "home", icon = icon("map")),
-    menuItem("Restoration Planning", tabName = "restoration", icon = icon("seedling")),
-    menuItem("Scenario Comparison", tabName = "scenarios", icon = icon("scale-balanced")),
-    menuItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column")),
+    menuItem(("Management Interventions"), icon = icon("flask"),
+      menuSubItem("Outplanting Scenarios", tabName = "outplanting", icon = icon("seedling")),
+      menuSubItem("Scenario Comparison", tabName = "comparison", icon = icon("scale-balanced")),
+      menuSubItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column"))
+    ),
     menuItem("About this App", tabName = "about", icon = icon("circle-info"))
   )
 )
@@ -1239,7 +1245,7 @@ sidebar <- dashboardSidebar(
 ## Body ----
 body <- dashboardBody(
   useShinyjs(),
-  # Tag Setup ----
+  tags$script(HTML("$('body').addClass('fixed');")), # Keep lock header and sidebar in-place when scrolling
   tags$head(
     includeHTML(here("gtag.html")),
     includeCSS(here("styles.css")),
@@ -1297,7 +1303,7 @@ body <- dashboardBody(
       }
       /* Restoration mix: morphology sub-boxes as compact fieldsets */
       .mix-fieldset {
-        border-radius: 6px; padding: 4px 5px; margin-bottom: 2px;
+        border-radius: 6px; padding: 0 5px; margin: 2px -4px 0 0;
       }
       .mix-fieldset > legend {
         width: auto; font-size: 13px; font-weight: bold;
@@ -1322,9 +1328,8 @@ body <- dashboardBody(
       .mix-species-stacked input {
         width: 8ch; min-width: 8ch; padding: 4px 6px; text-align: right;
       }
-
       /* Tighten gutters between the three top-row boxes (~1/3 spacing) */
-      .restoration-toprow > [class*='col-'] { padding-left: 5px; padding-right: 5px; }
+      .outplant-toprow > [class*='col-'] { padding-left: 5px; padding-right: 5px; }
 
       /* Outplant parameter inputs: Inline label + narrow box*/
       .param-inline-row {
@@ -1532,13 +1537,13 @@ body <- dashboardBody(
       )
     ),
 
-    # Restoration Planning Tab ----
+    # Outplant Scenarios Tab ----
     tabItem(
-      tabName = "restoration",
+      tabName = "outplanting",
       # Vertical layout: horizontal input row on top, timeline on the bottom
-      # `restoration-toprow` class tightens the inter-box gutters.
+      # `outplant-toprow` class tightens the inter-box gutters.
       fluidRow(
-        class = "restoration-toprow",
+        class = "outplant-toprow",
         # ---- Input element 1: Baseline cover ----
         column(4,
           shinydashboard::box(
@@ -1612,7 +1617,7 @@ body <- dashboardBody(
                   div(
                     # This container will scroll vertically if more species are listed 
                     # than the Baseline Cover box can hold
-                    style = "overflow-y: scroll; height: 405px; padding: 5px; border: 1px solid #ccc",
+                    style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
                     uiOutput("baseline_cover_inputs")
                   ),
                   tags$hr(),
@@ -1634,7 +1639,7 @@ body <- dashboardBody(
           # ---- Input element 2: Restoration parameters ----
           shinydashboard::box(
             title = "Restoration Parameters",
-            width = 12, height = "390px",
+            width = 12, height = "375px",
             status = "success", solidHeader = TRUE,
             # div(tags$strong("Target cover (%) post-restoration:")),
             # Top row: Branching (2 cols) + Weedy/Other (2 cols), split evenly
@@ -1677,7 +1682,7 @@ body <- dashboardBody(
               column(4,
                 tags$fieldset(
                   style = "border: 2px solid lightseagreen; border-radius: 6px;
-                        padding: 8px; margin-top: 3px;",
+                        padding: 0 5px; margin: 0 0 -6px -4px;",
                   tags$legend(
                     style = "width: auto; font-size: 15px; font-weight: bold;
                             color: lightseagreen; padding: 1px; border: none; margin-bottom: 0",
@@ -1695,7 +1700,7 @@ body <- dashboardBody(
                     class = "param-inline-row",
                     tags$span(class = "param-label", tags$strong("Avg. outplant cost: ")),
                     numericInput("outplant_cost", label = NULL,
-                      value = 10, min = 1, max = 1000, step = 0.01
+                      value = 100, min = 1, max = 1000, step = 10
                     ),
                     tags$span(class = "param-unit", "$")
                   ),
@@ -1821,7 +1826,7 @@ body <- dashboardBody(
     #          download report (.csv), + collapsible per-scenario Impact Summary
     # Main:    cost bar, ROI bar, per-scenario RAP bar
     tabItem(
-      tabName = "scenarios",
+      tabName = "comparison",
       fluidRow(
         # Sidebar (left)
         column(
