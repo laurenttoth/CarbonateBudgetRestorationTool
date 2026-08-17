@@ -1202,7 +1202,7 @@ header <- dashboardHeader(
       style = "padding: 5px; font-size: 14px; color: #333; text-align: right;",
       HTML("This tool is a collaboration between the
             <strong>National Oceanic and Atmospheric Administration (NOAA)</strong> (U.S. Department of Commerce)&nbsp<br/>
-            and the <strong>U.S. Geological Survey (USGS)</strong> (U.S. Department of the Interior).")
+            and the <strong>U.S. Geological Survey (USGS)</strong> (U.S. Department of the  Interior).")
     )
   ),
   # Logos in the top ribbon (as right-aligned dropdown items)
@@ -2084,7 +2084,7 @@ body <- dashboardBody(
           "Coral morphologies: ", tags$br(),
           "Sea-level rise projections: ", tags$br(),
           "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
-          "Annual mortality rates: Browne et al. (2026)", tags$br(),
+          "Chronic mortality rates: Browne et al. (2026)", tags$br(),
           "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
           tags$br(),
           tags$h4(tags$strong("Authors")),
@@ -2097,7 +2097,7 @@ body <- dashboardBody(
           tags$br(),
           tags$br(),
           tags$h4(tags$strong("Acknowledgments")),
-          "A special thanks to Dr. Alice Webb and her team, who originally developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "Reef Persistence Tool"),
+          "A special thanks to Dr. Alice Webb and her team, who developed the  original ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "Reef Persistence Tool"),
           ", which was the inspiration for this project:", tags$br(),
           tags$br(),
           "Dr. Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
