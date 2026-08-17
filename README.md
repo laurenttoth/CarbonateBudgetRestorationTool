@@ -1,54 +1,16 @@
-# Carbonate Budget Restoration Tool
+# Reef Persistence Tool
+
+## <https://cjenkins-usgs.shinyapps.io/carbonate-budget-restoration-tool/>
 
 This repository contains a Shiny app and carbonate-budget data for sites in the Florida Reef Tract. It is designed to aid reef restoration practitioners in identifying ideal sites, species balances, and outplant strategies to achieve restoration goals.
 
-The Carbonate Budget Restoration Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
-
-## Installation
-
-To install the packages required to use the Carbonate Budget Restoration Tool, run the following line in an R console:
-
-```r
-install.packages(c('rsconnect','shiny','bslib','shinydashboard','dashboardthemes',
-                   'ggplot2','dplyr','tidyr','leaflet','shinythemes','leaflegend',
-                   'ggplot2','tidyverse','ggforce','png','RCurl','jpeg','sf','magrittr',
-                   'maps','reshape2','RColorBrewer','plotly','geojsonio','shinyWidgets',
-                   'shinyjs','shinyBS','here','readxl','writexl','tidyr','dplyr','jsonlite'))
-```
-
-If the package installation times out, adjust the timeout setting. For example, to increase the timeout from the default 60 seconds to 120 seconds:
-
-```r
-options(timeout=120)
-```
+The Reef Persistence Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
 
 ## Usage
 
-### Launching the app
-
-Open `app.R` in RStudio and run:
-
-```r
-shiny::runApp()
-```
-
-Keep the R console open to see messages, warnings, and errors from the tool.
-
-Note: some users may see excessive `file.info()` and/or `unknown aesthetics: text` warnings, which can be safely ignored. To run the app with these warnings silenced, open `launch_app_quiet.R` in RStudio and run it as source (default shortcut: `Ctrl+Shift+S`).
-
-Alternatively, open an R console and run:
-
-```r
-source("path/to/launch_app_quiet.R")
-```
-
-(Replace path/to/launch_app_quiet.R with the actual path to where launch_app_quiet.R is saved. Note that filepaths in R must use forward-slash ("/") or double-backslash ("\\\\") separators.)
-
-### Using the Interface
-
 Use the `☰` button in the header bar to show/hide the navigation sidebar. Click on the sidebar tabs to navigate between pages.
 
-#### Reef Site Map
+### Reef Site Map
 
 Use this tab to view National Coral Reef Monitoring Program (NCRMP) reef survey data from 2014-2024. Select a reef site and view its metadata by clicking on a point.
 
@@ -58,7 +20,7 @@ If baseline cover data has been uploaded in the `Restoration Planning` tab, the 
 
 Aspects of the map display can be manipulated with the collapsible `Map Controls` section in the upper right:  
 
-- Use the `Target Percent-Cover Increase` slider to simulate a hard-coral percent-cover increase of the given amount at the NCRMP sites. Halo symbology will be added around the site points denoting their `Restoration Potential` (i.e., whether restoration results in a transition in the site's reef state). If applicable, the selected uploaded site will symbolized with a `Restoration Potential` halo according to the current restoration scenario.
+- Use the `Target Percent-Cover Increase` slider to simulate a hard-coral percent-cover increase of the given amount at the NCRMP sites. Halo symbology will be added around the site points denoting their `Restoration Potential` (i.e., whether restoration results in a transition in the site's reef state). If applicable, the selected uploaded site will be symbolized with a `Restoration Potential` halo according to the current restoration scenario.
 
 - Use the `Filter by` group to filter the data points by survey year or habitat.
 
@@ -68,7 +30,7 @@ Aspects of the map display can be manipulated with the collapsible `Map Controls
 
 - Use the `Point size` +/- control to adjust the size of the points.
 
-#### Restoration Planning
+### Restoration Planning
 
 Use this tab to simulate a restoration effort at a reef site. Follow these steps to run a simulation:
 
@@ -108,7 +70,7 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     **IMPORTANT: Saved scenarios' filenames may be edited, but retain the double-underscore between the project and scenario labels.** The app uses this convention to automatically recognize and differentiate projects and scenarios.
 
-#### Scenario Comparison
+### Scenario Comparison
 
 Use this tab to compare cost, return-on-investment, and projected reef accretion potential across scenarios created in the `Restoration Planning` tab.
 
@@ -120,7 +82,7 @@ Use the `Download report` button to download a `.csv` file which summarizes the 
 
 An `Impact Summary` is displayed for each enabled scenario. Click the carat at the top-right of a Summary to collapse it.
 
-#### Restoration Monitoring
+### Restoration Monitoring
 
 Use this tab to monitor an ongoing restoration effort using observed coral-cover and bioerosion data.
 
@@ -134,9 +96,65 @@ A comparison between the Baseline and Restored coral cover, carbonate budget, an
 
 The observed data are used to calculate the site's reef accretion potential over time, which is graphed on the timeline in the `Reef Accretion Potential` section.
 
-#### About this App
+### About this App
 
 Contains summary, background, author, source, and methodological information.
+
+## Local Setup (optional)
+
+**Note: This process is only necessary to run the Reef Persistence Tool app locally. For easier access, click the link at the top of this document to launch the app immediately in the web browser. Skip to `Usage` to learn how to use the app.**
+
+### Installation
+
+To install the packages required to use the Reef Persistence Tool, use the `renv` package to rebuild the tool's environment. If `renv` is not installed, open an R console and run:
+
+```r
+install.packages("renv")
+```
+
+Then rebuild the environment from the included `renv.lock` file:
+
+```r
+renv::restore("path/to/tool")
+```
+
+(Replace "path/to/tool" with the actual path to the folder where the Reef Persistence Tool `app.R` is stored.)
+
+Alternatively, run the following line in an R console:
+
+```r
+install.packages(c("Rtools", "rsconnect", "shiny", "bslib", "shinydashboard", "shinythemes",
+                   "ggplot2", "dplyr", "tidyr", "leaflet", "leaflegend", "jsonlite",
+                   "tidyverse", "ggforce", "png", "RCurl", "jpeg", "sf", "magrittr",
+                   "maps", "reshape2", "RColorBrewer", "plotly", "geojsonio", "shinyWidgets",
+                   "shinyjs", "shinyBS", "here", "readxl", "writexl", "tidyr", "dplyr"))
+```
+
+If the package installation times out, adjust the timeout setting. For example, to increase the timeout from the default 60 seconds to 120 seconds:
+
+```r
+options(timeout=120)
+```
+
+### Launching the app
+
+Open `app.R` in RStudio and run:
+
+```r
+shiny::runApp()
+```
+
+Keep the R console open to see messages, warnings, and errors from the tool.
+
+Note: some users may see excessive `file.info()` and/or `unknown aesthetics: text` warnings, which can be safely ignored. To run the app with these warnings silenced, open `launch_app_quiet.R` in RStudio and run it as source (default shortcut: `Ctrl+Shift+S`).
+
+Alternatively, open an R console and run:
+
+```r
+source("path/to/launch_app_quiet.R")
+```
+
+(Replace path/to/launch_app_quiet.R with the actual path to where launch_app_quiet.R is saved. Note that filepaths in R must use forward-slash ("/") or double-backslash ("\\\\") separators.)
 
 ## Artificial Intelligence Disclosure
 
@@ -144,4 +162,4 @@ Claude Opus 4.8 was employed in July and August 2026 to convert the original Shi
 
 ## Recommended Citation
 
-Jenkins, C.M., Toth, L.T., and Morris, J., 2026, Carbonate Budget Restoration Tool Version 1.0: U.S. Geological Survey software release, [DOI placeholder].
+Jenkins, C.M., Toth, L.T., and Morris, J., 2026, Reef Persistence Tool Version 1.0: U.S. Geological Survey software release, [DOI placeholder].
