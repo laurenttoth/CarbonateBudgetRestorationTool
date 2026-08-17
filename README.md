@@ -1,10 +1,10 @@
-# Carbonate Budget Restoration Tool
+# Reef Persistence Tool
 
 ## <https://cjenkins-usgs.shinyapps.io/carbonate-budget-restoration-tool/>
 
 This repository contains a Shiny app and carbonate-budget data for sites in the Florida Reef Tract. It is designed to aid reef restoration practitioners in identifying ideal sites, species balances, and outplant strategies to achieve restoration goals.
 
-The Carbonate Budget Restoration Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
+The Reef Persistence Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
 
 ## Usage
 
@@ -102,11 +102,11 @@ Contains summary, background, author, source, and methodological information.
 
 ## Local Setup (optional)
 
-**Note: This process is only necessary to run the Carbonate Budget Restoration Tool app locally. For easier access, click the link at the top of this document to launch the app immediately in the web browser. Skip to `Usage` to learn how to use the app.**
+**Note: This process is only necessary to run the Reef Persistence Tool app locally. For easier access, click the link at the top of this document to launch the app immediately in the web browser. Skip to `Usage` to learn how to use the app.**
 
 ### Installation
 
-To install the packages required to use the Carbonate Budget Restoration Tool, use the `renv` package to rebuild the tool's environment. If `renv` is not installed, open an R console and run:
+To install the packages required to use the Reef Persistence Tool, use the `renv` package to rebuild the tool's environment. If `renv` is not installed, open an R console and run:
 
 ```r
 install.packages("renv")
@@ -118,14 +118,14 @@ Then rebuild the environment from the included `renv.lock` file:
 renv::restore("path/to/tool")
 ```
 
-(Replace "path/to/tool" with the actual path to the folder where the Carbonate Budget Restoration Tool `app.R` is stored.)
+(Replace "path/to/tool" with the actual path to the folder where the Reef Persistence Tool `app.R` is stored.)
 
 Alternatively, run the following line in an R console:
 
 ```r
-install.packages(c("rsconnect", "shiny", "bslib", "shinydashboard", "shinythemes",
-                   "ggplot2", "dplyr", "tidyr", "leaflet", "leaflegend", "jsonlite"
-                   "tidyverse", "ggforce", "png", "RCurl", "jpeg", "sf", "magrittr", "Rtools",
+install.packages(c("Rtools", "rsconnect", "shiny", "bslib", "shinydashboard", "shinythemes",
+                   "ggplot2", "dplyr", "tidyr", "leaflet", "leaflegend", "jsonlite",
+                   "tidyverse", "ggforce", "png", "RCurl", "jpeg", "sf", "magrittr",
                    "maps", "reshape2", "RColorBrewer", "plotly", "geojsonio", "shinyWidgets",
                    "shinyjs", "shinyBS", "here", "readxl", "writexl", "tidyr", "dplyr"))
 ```
@@ -162,4 +162,4 @@ Claude Opus 4.8 was employed in July and August 2026 to convert the original Shi
 
 ## Recommended Citation
 
-Jenkins, C.M., Toth, L.T., and Morris, J., 2026, Carbonate Budget Restoration Tool Version 1.0: U.S. Geological Survey software release, [DOI placeholder].
+Jenkins, C.M., Toth, L.T., and Morris, J., 2026, Reef Persistence Tool Version 1.0: U.S. Geological Survey software release, [DOI placeholder].

@@ -1,4 +1,4 @@
-# Carbonate Budget Restoration Tool ----
+# Reef Persistence Tool ----
 
 # Adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center
 # from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Lauren T. Toth (USGS) and John T. Morris (NOAA).
@@ -48,8 +48,6 @@ read_excel_quiet <- function(path, ...) {
 }
 
 # Ingest data ----
-set_here()
-
 # call data for world map
 world_data   <- ggplot2::map_data("world")
 worldcountry <- fortify(world_data)
@@ -518,11 +516,15 @@ assemblage_porosity <- function(cover_df, cover_col) {
       massive_pct <- massive_pct + cover_df[cover_df$taxon == s, cover_col]
     }
   }
-  # Only branching corals in the Keys are A. cervicornis and A. palmata
-  acer_pct <- if ("Acropora cervicornis" %in% cover_df$taxon) cover_df[cover_df$taxon == "Acropora cervicornis", cover_col] else 0
-  apal_pct <- if ("Acropora palmata"     %in% cover_df$taxon) cover_df[cover_df$taxon == "Acropora palmata", cover_col] else 0
 
-  if (total_pct > 0 && (acer_pct + apal_pct) > total_pct * 0.75) {
+  # Determine total branching percentage
+  branch_pct <- 0
+  for (sp in all_branching_species) {
+    sp_pct <- if (sp %in% cover_df$taxon) cover_df[cover_df$taxon == sp, cover_col] else 0
+    branch_pct <- branch_pct + sp_pct
+  }
+
+  if (total_pct > 0 && branch_pct > total_pct * 0.75) {
     por <- porosity$Porosity[porosity$Assemblage == "Acropora"]
   } else if (total_pct > 0 && massive_pct > total_pct * 0.75) {
     por <- porosity$Porosity[porosity$Assemblage == "Massive"]
@@ -563,7 +565,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   # Per-species lookups
   genus        <- stringr::str_split(species, " ")[[1]][1]
   sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
-  if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.80 # generic fallback
+  if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
   sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100 # % -> proportion
   sp_dhw_mortality <- 0.30 # 30% of the cover loss applied as whole-colony mortality
                            # (generalized default, see about species-specific values later)
@@ -1161,7 +1163,7 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
     sprintf("%+.1f", d_cover), " %</b></p>",
     "<p>", arrow(d_budget), " Carbonate budget change: <b>",
     sprintf("%+.2f", d_budget), " kg/m\u00b2/yr</b></p>",
-    "<p>", arrow(d_rap), " Reef accretion change: <b>",
+    "<p>", arrow(d_rap), " Reef accretion potential change: <b>",
     sprintf("%+.2f", d_rap), " mm/yr</b></p>",
     "<p>", arrow(d_pct), " RAP percentile change: <b>",
     if (is.na(d_pct)) "\u2013" else sprintf("%+.0f", d_pct), " points</b>",
@@ -1190,8 +1192,8 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
 
 ## Header ----
 header <- dashboardHeader(
-  title = "Carbonate Budget Restoration Tool",
-  titleWidth = 380,
+  title = "Reef Persistence Tool",
+  titleWidth = 240,
   # Explanatory blurb
   tags$li(
     class = "dropdown",
@@ -1210,7 +1212,7 @@ header <- dashboardHeader(
   tags$li(class = "dropdown",
   tags$div(tags$img(src = "usgsLogo.png", style = "height: 50px; padding: 2px 15px 2px 0;"))
   ),
-  # Dark Mode toggle lives in the top ribbon (as a right-aligned dropdown item)
+  # Dark Mode toggle lives in the top ribbon (as a right-aligned "dropdown" item)
   tags$li(
     class = "dropdown",
     tags$div(
@@ -1233,6 +1235,7 @@ sidebar <- dashboardSidebar(
   sidebarMenu(
     id = "nav",
     menuItem("Reef Site Map", tabName = "home", icon = icon("map")),
+    menuItem("Reef Site Projections", tabName = "projections", icon = icon("chart-line")),
     menuItem(("Management Interventions"), icon = icon("flask"),
       menuSubItem("Outplanting Scenarios", tabName = "outplanting", icon = icon("seedling")),
       menuSubItem("Scenario Comparison", tabName = "comparison", icon = icon("scale-balanced")),
@@ -1331,7 +1334,7 @@ body <- dashboardBody(
       /* Tighten gutters between the three top-row boxes (~1/3 spacing) */
       .outplant-toprow > [class*='col-'] { padding-left: 5px; padding-right: 5px; }
 
-      /* Outplant parameter inputs: Inline label + narrow box*/
+      /* Outplant parameter inputs: Inline label + narrow box */
       .param-inline-row {
         display: flex; align-items: center; justify-content: space-between;
         gap: 6px; margin-bottom: 8px;
@@ -1347,8 +1350,17 @@ body <- dashboardBody(
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
 
-      /* Shrink the main value text size in the valueBox readouts */
-      .small-box h3 { font-size: 30px; !important;}
+      /* Shrink the main value text size and add a 1px black text shadow in the valueBox readouts */
+      .small-box h3 { 
+        font-size: 30px; !important;
+        text-shadow: -1px -1px 0 black, 1px -1px 0 black,
+                          -1px 1px 0 black, 1px 1px 0 black;
+      }
+      .small-box .bordered-text {
+      font-size: 18px; !important;
+      text-shadow: -1px -1px 0 black, 1px -1px 0 black,
+                          -1px 1px 0 black, 1px 1px 0 black;
+      }
 
       /* Red warning under the bioerosion upload widget */
       .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 4px; }
@@ -1461,7 +1473,7 @@ body <- dashboardBody(
   ),
 
   tabItems(
-    # Home Tab ----
+    # Home Tab (Reef Site Map) ----
     tabItem(
       tabName = "home",
       div(
@@ -1484,14 +1496,6 @@ body <- dashboardBody(
             )
           )
         ),
-
-        # USGS & NOAA logos
-        # tags$div(
-        #   style = "position: absolute; top: 90px; right: 10px;
-        #            z-index: 1000; display: flex; gap: 10px;",
-        #   tags$img(src = "noaaLogo.png", style = "height: 75px;"),
-        #   tags$img(src = "usgsLogo.png", style = "height: 75px;")
-        # ),
 
         # Map Controls: vertically-collapsible box below the logos
         tags$div(
@@ -1566,6 +1570,15 @@ body <- dashboardBody(
             )
           )
         )
+      )
+    ),
+
+    # Placeholder: Reef Site Projections ----
+    tabItem(
+      tabName = "projections",
+      fluidRow(
+        HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>"),
+        tags$img(src = "persistenceExample.jpg", width = "1500px", height = "850px")
       )
     ),
 
@@ -1749,7 +1762,7 @@ body <- dashboardBody(
 
                   # Timeline parameters
                   sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
-                    value = 10, min = 0, max = 30, step = 5
+                    value = 0, min = 0, max = 30, step = 5
                   ),
                   # Sim duration shares the horizon's 0-30 domain so tick geometry
                   # lines up natively; a snap-to-10 floor keeps it >= 10 years.
@@ -1834,11 +1847,12 @@ body <- dashboardBody(
             fluidRow(
               column(
                 width = 8,
-                plotly::plotlyOutput("restoration_timeline", height = "320px")
+                plotly::plotlyOutput("restoration_timeline", height = "380px")
               ),
               column(
                 width = 2,
                 fluidRow(style = "height:320px; width:12.5vw; display:flex; flex-direction:column; vertical-align:top; justify-content:center;",
+                tags$hr(),
                   tags$style("#rt_baseline_title { text-align: center; font-size: 16px; font-weight: bold; }"),
                   textOutput("rt_baseline_title"),
                   valueBoxOutput("rt_baseline_cover", width = NULL),
@@ -1849,6 +1863,7 @@ body <- dashboardBody(
               column(
                 width = 2,
                 fluidRow(style = "height:320px; width:12.5vw; display:flex; flex-direction:column; vertical-align:top; justify-content:center;",
+                  tags$hr(),
                   tags$style("#rt_restored_title { text-align: center; font-size: 16px; font-weight: bold; }"),
                   textOutput("rt_restored_title"),
                   valueBoxOutput("rt_restored_cover", width = NULL),
@@ -2050,15 +2065,25 @@ body <- dashboardBody(
            reef accretion under different emission and bleaching scenarios."),
           tags$br(),
           tags$br(),
-          HTML("The Carbonate Budget Restoration Tool will enable decision makers to evaluate the impact of reef restoration decisions 
+          HTML("The Reef Persistence Tool will enable decision makers to evaluate the impact of reef restoration decisions 
                 in the context of climate change and a variety of bleaching scenarios."), tags$br(),
           tags$br(),
           tags$h4(tags$strong("Code")),
           "Code and input data used to generate this Shiny app are available on ", tags$a(href = "https://github.com/laurenttoth/CarbonateBudgetRestorationTool", "Github."), tags$br(),
           tags$br(),
+          tags$h4(tags$strong("Disclaimer")),
+          "This software is preliminary or provisional and is subject to revision. It is being
+            provided to meet the need for timely best science. The software has not received final
+            approval by the U.S. Geological Survey (USGS). No warranty, expressed or implied, is
+            made by the USGS or the U.S. Government as to the functionality of the software and
+            related material nor shall the fact of release constitute any such warranty. The
+            software is provided on the condition that neither the USGS nor the U.S. Government
+            shall be held liable for any damages resulting from the authorized or unauthorized
+            use of the software.", tags$br(),
           tags$h4(tags$strong("Sources")),
           "Coral morphologies: ", tags$br(),
           "Sea-level rise projections: ", tags$br(),
+          "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
           "Annual mortality rates: Browne et al. (2026)", tags$br(),
           "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
           tags$br(),
@@ -2114,7 +2139,7 @@ ui <- dashboardPage(
   skin = "black",
   header,
   sidebar,
-  body
+  body,
 )
 
 # Shiny Server ----
@@ -2987,6 +3012,11 @@ server <- function(input, output, session) {
     # Add-species picker, always rendered above the (possibly empty) list.
     # Not-yet-listed taxa only, so it can't add a duplicate.
     remaining <- setdiff(sort(unique(taxa)), sp)
+    rus <- "REQUIRED Unconsolidated substrate"
+    if (rus %in% remaining) {
+      remaining <- remaining[remaining != rus]
+      remaining <- c(rus, remaining)
+    }
     picker <- selectizeInput(
       "add_baseline_species", label = NULL,
       choices = c("+ Add species..." = "", remaining),
@@ -3204,6 +3234,8 @@ server <- function(input, output, session) {
   # Baseline growth series for the timeline (originals only). Available as soon
   # as species + covers + subregion/habitat are set, independent of any target.
   baseline_growth <- reactive({
+    req(nzchar(input$base_REQUIRED_Unconsolidated_substrate))
+
     habitat       <- input$habitat_choice
     subregion <- input$subregion_choice
     site_area     <- .safe_num(input$site_area_m2)
@@ -3271,6 +3303,8 @@ server <- function(input, output, session) {
   # Derives all parameters from Shiny inputs, builds target_cover_df from the
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
+    req(nzchar(input$base_REQUIRED_Unconsolidated_substrate))
+
     # Derived parameters
     habitat        <- input$habitat_choice
     subregion      <- input$subregion_choice
@@ -3439,15 +3473,27 @@ server <- function(input, output, session) {
 
   output$rt_baseline_cover <- renderValueBox({
     valueBox(paste0(round(baseline_metrics()$cover, 1), " %"),
-      "Baseline coral cover", icon = icon("percent"), color = "green")
+      div(class = "bordered-text", "Coral cover"),
+      icon = icon("percent"), color = "green")
   })
   output$rt_baseline_budget <- renderValueBox({
     valueBox(paste0(round(baseline_metrics()$budget, 2), " kg/m\u00b2/yr"),
-      "Baseline carbonate budget", icon = icon("balance-scale"), color = "blue")
+      div(class = "bordered-text", "Carbonate budget"),
+      icon = icon("balance-scale"), color = "blue")
   })
   output$rt_baseline_rap <- renderValueBox({
     valueBox(paste0(round(baseline_metrics()$rap, 2), " mm/yr"),
-      "Baseline reef accretion", icon = icon("chart-line"), color = "aqua")
+      div(class = "bordered-text",
+        HTML(paste0("Reef accretion potential<br/>",
+          "<span style='color:", # color determined by conditional below
+          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>(this reef is ",
+          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          ")</span>"
+          )
+        )
+      ),
+      icon = icon("chart-line"), color = "aqua")
   })
   output$rt_baseline_title <- renderText({
     cvr <- baseline_metrics()$cover
@@ -3456,15 +3502,27 @@ server <- function(input, output, session) {
 
   output$rt_restored_cover <- renderValueBox({
     valueBox(paste0(round(rt_restored_current()$cover, 1), " %"),
-      "Restored coral cover", icon = icon("plus-circle"), color = "olive")
+      div(class = "bordered-text", "Coral cover"),
+      icon = icon("plus-circle"), color = "olive")
   })
   output$rt_restored_budget <- renderValueBox({
     valueBox(paste0(round(rt_restored_current()$budget, 2), " kg/m\u00b2/yr"),
-      "Restored carbonate budget", icon = icon("balance-scale"), color = "blue")
+      div(class = "bordered-text", "Carbonate budget"),
+      icon = icon("balance-scale"), color = "blue")
   })
   output$rt_restored_rap <- renderValueBox({
     valueBox(paste0(round(rt_restored_current()$rap, 2), " mm/yr"),
-      "Restored reef accretion", icon = icon("chart-line"), color = "teal")
+      div(class = "bordered-text",
+        HTML(paste0("Reef accretion potential<br/>",
+          "<span style='color:", # color determined by conditional below
+          if (rt_restored_current()$rap >= 0.5) "forestgreen" else if (rt_restored_current()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>(this reef is ",
+          if (rt_restored_current()$rap >= 0.5) "growing" else if (rt_restored_current()$rap <= -0.5) "eroding" else "in stasis",
+          ")</span>"
+          )
+        )
+      ),
+      icon = icon("chart-line"), color = "teal")
   })
   output$rt_restored_title <- renderText({
     cvr <- rt_restored_current()$cover
@@ -4173,38 +4231,56 @@ server <- function(input, output, session) {
 
   output$cc_baseline_cover <- renderValueBox({
     valueBox(paste0(round(cc_baseline_vals()$cover, 1), " %"),
-      "Baseline coral cover",
+      div(class = "bordered-text", "Coral cover"),
       icon = icon("percent"), color = "green"
     )
   })
   output$cc_baseline_budget <- renderValueBox({
     valueBox(paste0(round(cc_baseline_vals()$budget, 2), " kg/m\u00b2/yr"),
-      "Baseline carbonate budget",
+      div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$cc_baseline_rap <- renderValueBox({
     valueBox(paste0(round(cc_baseline_vals()$rap, 2), " mm/yr"),
-      "Baseline reef accretion",
+      div(class = "bordered-text",
+        HTML(paste0("Reef accretion potential<br/>",
+          "<span style='color:", # color determined by conditional below
+          if (cc_baseline_vals()$rap >= 0.5) "forestgreen" else if (cc_baseline_vals()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>(this reef is ",
+          if (cc_baseline_vals()$rap >= 0.5) "growing" else if (cc_baseline_vals()$rap <= -0.5) "eroding" else "in stasis",
+          ")</span>"
+          )
+        )
+      ),
       icon = icon("chart-line"), color = "aqua"
     )
   })
 
   output$cc_restored_cover <- renderValueBox({
     valueBox(paste0(round(cc_restored_vals()$cover, 1), " %"),
-      "Restored coral cover",
+      div(class = "bordered-text", "Coral cover"),
       icon = icon("plus-circle"), color = "olive"
     )
   })
   output$cc_restored_budget <- renderValueBox({
     valueBox(paste0(round(cc_restored_vals()$budget, 2), " kg/m\u00b2/yr"),
-      "Restored carbonate budget",
+      div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$cc_restored_rap <- renderValueBox({
     valueBox(paste0(round(cc_restored_vals()$rap, 2), " mm/yr"),
-      "Restored reef accretion",
+      div(class = "bordered-text",
+        HTML(paste0("Reef accretion potential<br/>",
+          "<span style='color:", # color determined by conditional below
+          if (cc_restored_vals()$rap >= 0.5) "forestgreen" else if (cc_restored_vals()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>(this reef is ",
+          if (cc_restored_vals()$rap >= 0.5) "growing" else if (cc_restored_vals()$rap <= -0.5) "eroding" else "in stasis",
+          ")</span>"
+          )
+        )
+      ),
       icon = icon("chart-line"), color = "teal"
     )
   })
@@ -4393,7 +4469,7 @@ server <- function(input, output, session) {
         r <- cc_restored_vals()
         out <- data.frame(
           Site = input$monitoring_selected_site,
-          Metric = c("Coral cover (%)", "Carbonate budget (kg/m2/yr)", "Reef accretion (mm/yr)"),
+          Metric = c("Coral cover (%)", "Carbonate budget (kg/m2/yr)", "Reef accretion potential (mm/yr)"),
           Baseline = c(b$cover, b$budget, b$rap),
           Restored = c(r$cover, r$budget, r$rap)
         )
