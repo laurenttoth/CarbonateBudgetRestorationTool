@@ -142,10 +142,10 @@ region_pal <- colorFactor(pastel_colors, domain = region_levels)
 taxa <- read_excel_quiet(here("www", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
-# Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)
+# Ingest NASA Interagency sea-level projections (PSMSL id 1701 (Vaca Key), "Total" sheet)
 slr_raw <- read_excel_quiet(
-  here("data", "sealevel_explorer_data_psmsl_id_1701.xlsx"),
-  sheet = "Future-Total"
+  here("data", "sl_taskforce_scenarios_psmsl_id_1701.xlsx"),
+  sheet = "Total"
 )
 
 # Keep only the median (quantile 50), medium-confidence rows
@@ -1362,8 +1362,12 @@ body <- dashboardBody(
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
 
-      /* Reduce margins for sim duration slider */
-      .duration-slider {  }
+      /* Apply bolding to shinydashboard::box titles */
+      .box-header .box-title {
+        font-weight: bold;
+        text-shadow: -1px -1px 0 black, 1px -1px 0 black,
+                     -1px 1px 0 black, 1px 1px 0 black;
+      }
 
       /* Shrink the main value text size and add a 1px black text shadow in the valueBox readouts */
       .small-box h3 { 
@@ -3765,7 +3769,7 @@ server <- function(input, output, session) {
         p <- p + geom_line(
           data = sd,
           aes(x = Year, y = SLR, group = Scenario,
-              text = paste0(toupper(Scenario),
+              text = paste0(Scenario,
                             "<br>Year ", Year,
                             "<br>SLR: ", round(SLR, 2), " mm/yr")),
           color = "#1f6fd6",
