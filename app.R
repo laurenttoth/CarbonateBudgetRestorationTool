@@ -144,24 +144,25 @@ taxa <- taxa$Taxon
 
 # Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)
 slr_raw <- read_excel_quiet(
-  here("data", "ipcc_ar6_sea_level_projection_psmsl_id_363.xlsx"),
-  sheet = "Total"
+  here("data", "sealevel_explorer_data_psmsl_id_1701.xlsx"),
+  sheet = "Future-Total"
 )
 
 # Keep only the median (quantile 50), medium-confidence rows
-slr_med <- slr_raw[slr_raw$quantile == 50 & slr_raw$confidence == "medium", , drop = FALSE]
+slr_med <- slr_raw[slr_raw$quantile == 50, , drop = FALSE]
+# & slr_raw$confidence == "medium", # this criterion only necessary for NASA Interagency data, not earth.gov
 
 # Identify year columns (headers that are purely 4-digit numeric)
 slr_year_cols <- names(slr_med)[grepl("^[0-9]{4}$", names(slr_med))]
 slr_years_all <- as.integer(slr_year_cols)
 
 # Build a per-scenario lookup: scenario -> named numeric vector (year -> m)
-slr_scenarios <- c("ssp119", "ssp126", "ssp245", "ssp370", "ssp585")
+slr_scenarios <- c("Low", "IntLow", "Int", "IntHigh", "High")
 
 slr_by_scenario <- lapply(slr_scenarios, function(scn) {
   row <- slr_med[slr_med$scenario == scn, , drop = FALSE]
   if (nrow(row) == 0) return(NULL)
-  vals_cm <- as.numeric(unlist(row[1, slr_year_cols]))
+  vals_cm <- as.numeric(unlist(row[1, slr_year_cols])) / 1000 # convert mm to cm
   setNames(vals_cm, slr_years_all) # values in cm
 })
 names(slr_by_scenario) <- slr_scenarios
@@ -201,12 +202,12 @@ build_slr_timeline <- function(start_year, n_years = 10) {
   do.call(rbind, out[!vapply(out, is.null, logical(1))])
 }
 
-# SSP245 annual SLR RATE (mm/yr) at a specific calendar year. Computed as the
+# Int annual SLR RATE (mm/yr) at a specific calendar year. Computed as the
 # year-over-year difference of the interpolated cumulative SLR, matching the
 # rate convention used by build_slr_timeline. Used for the Scenario Comparison
 # RAP barplot reference lines (2030 / 2050 / 2100).
-ssp245_rate_at <- function(cal_year) {
-  vec <- slr_by_scenario[["ssp245"]]
+Int_rate_at <- function(cal_year) {
+  vec <- slr_by_scenario[["Int"]]
   if (is.null(vec)) return(NA_real_)
   ax <- as.integer(names(vec))
   if (length(ax) < 2) return(NA_real_)
@@ -3598,15 +3599,15 @@ server <- function(input, output, session) {
     start_year <- as.integer(format(Sys.Date(), "%Y")) + 1
     slr_tl <- build_slr_timeline(start_year, n_years = b$sim_duration)
 
-    # Line-weight emphasis: ssp245 heaviest, then ssp126 & ssp370, rest light
+    # Line-weight emphasis: Int heaviest, then IntLow & IntHigh, rest light
     slr_weight <- c(
-      ssp119 = 0.2, ssp126 = 0.4, ssp245 = 0.75,
-      ssp370 = 0.4, ssp585 = 0.2
+      Low = 0.2, IntLow = 0.4, Int = 0.75,
+      IntHigh = 0.4, High = 0.2
     )
-    # ssp245 solid; all others dashed
+    # Int solid; all others dashed
     slr_dash <- c(
-      ssp119 = "dash", ssp126 = "dash", ssp245 = "solid",
-      ssp370 = "dash", ssp585 = "dash"
+      Low = "dash", IntLow = "dash", Int = "solid",
+      IntHigh = "dash", High = "dash"
     )
 
     # Determine x-axis breaks
@@ -3757,7 +3758,7 @@ server <- function(input, output, session) {
 
     # Add one blue SLR line per scenario, ordered so heavy lines draw on top.
     if (!is.null(slr_tl) && nrow(slr_tl) > 0) {
-      scn_order <- c("ssp119", "ssp585", "ssp370", "ssp126", "ssp245")
+      scn_order <- c("Low", "High", "IntHigh", "IntLow", "Int")
       scn_order <- scn_order[scn_order %in% unique(slr_tl$Scenario)]
       for (scn in scn_order) {
         sd <- slr_tl[slr_tl$Scenario == scn, ]
@@ -4324,7 +4325,7 @@ server <- function(input, output, session) {
   # Timeline: RAP over the simulation duration with SLR reference lines (plotly).
   #  - Cover .xlsx uploaded  -> real per-year RAP series (Baseline at x=-1).
   #  - No upload (map-driven) -> smooth interpolation Baseline (Y0) -> Restored (Y10).
-  # Reference lines (geologic + SSP245 rates) + y-axis floor + dark-mode shared.
+  # Reference lines (geologic + Int rates) + y-axis floor + dark-mode shared.
   output$cc_timeline <- plotly::renderPlotly({
     ms <- monitoring_series()
 
@@ -4334,11 +4335,11 @@ server <- function(input, output, session) {
     font_col <- if (dark) "#e6e6e6" else "#333333"
     grid_col <- if (dark) "#5a6472" else "#d9d9d9"
 
-    # SSP245 reference rates (mm/yr) at 2030 / 2050 / 2100
+    # Int reference rates (mm/yr) at 2030 / 2050 / 2100
     slr_refs <- c(
-      "SSP245 @2030" = ssp245_rate_at(2030),
-      "SSP245 @2050" = ssp245_rate_at(2050),
-      "SSP245 @2100" = ssp245_rate_at(2100)
+      "Int @2030" = Int_rate_at(2030),
+      "Int @2050" = Int_rate_at(2050),
+      "Int @2100" = Int_rate_at(2100)
     )
     geo_baseline <- 3.1
 
@@ -4447,7 +4448,7 @@ server <- function(input, output, session) {
         bgcolor = paper_bg, opacity = 0.9
       )
 
-    # SSP245 reference rates (blue dashed) at 2030 / 2050 / 2100
+    # Int reference rates (blue dashed) at 2030 / 2050 / 2100
     slr_ann_col <- "#1f6fd6"
     for (nm in names(slr_refs)) {
       yv <- slr_refs[[nm]]
@@ -4702,9 +4703,9 @@ server <- function(input, output, session) {
 
     geo_baseline <- 3.1
     slr_refs <- c(
-      "SSP245 @2030" = ssp245_rate_at(2030),
-      "SSP245 @2050" = ssp245_rate_at(2050),
-      "SSP245 @2100" = ssp245_rate_at(2100)
+      "Int @2030" = Int_rate_at(2030),
+      "Int @2050" = Int_rate_at(2050),
+      "Int @2100" = Int_rate_at(2100)
     )
 
     data_min <- min(c(d$restored_rap, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
