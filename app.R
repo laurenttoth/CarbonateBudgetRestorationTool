@@ -216,7 +216,7 @@ ssp245_rate_at <- function(cal_year) {
 
 # Calculate reef accretion potential
 df$rap <- df$net_G / 2.9 / (1 - 0.6265)
-df$current_state <- ifelse(df$rap > 0.5, "Growth", ifelse(df$rap < -0.5, "Erosion", "Stasis"))
+df$current_state <- ifelse(df$rap > 0.5, "growth", ifelse(df$rap < -0.5, "erosion", "stasis"))
 
 # RAP percentile helper ----
 # Rank a RAP value against the NCRMP baseline distribution (df$rap).
@@ -361,15 +361,15 @@ rap_axis_breaks <- function(y_lo, y_hi) {
 }
 
 # Status-band data frame builder ----
-# Two-row df (Erosion + Stasis) carrying a `label` column that rides through
-# ggplotly's tooltip="text" channel, so bands hover as "Erosion"/"Stasis"
+# Two-row df (erosion + stasis) carrying a `label` column that rides through
+# ggplotly's tooltip="text" channel, so bands hover as "erosion"/"stasis"
 # instead of "trace 0"/"trace 1". Drawn with geom_rect (annotate() can't carry
 # a tooltip aesthetic).
 status_bands_df <- function(xmin, xmax, y_lo) {
   data.frame(
     xmin = c(xmin, xmin), xmax = c(xmax, xmax),
     ymin = c(y_lo, -0.5),  ymax = c(-0.5, 0.5),
-    fill = c("red", "yellow"), label = c("Erosion", "Stasis"),
+    fill = c("red", "yellow"), label = c("erosion", "stasis"),
     stringsAsFactors = FALSE
   )
 }
@@ -545,7 +545,7 @@ baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, mac
 }
 
 # ----------------------------------------------------------------------------
-# Growth simulation ----
+# growth simulation ----
 # Applicable to original colonies and new outplants, and reused by both the
 # restoration model and the baseline-growth reactive. Performs its own per-
 # species lookups (growth rate, DHW slope) from `species` + `bleaching_severity`.
@@ -580,7 +580,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Incorporate Mote outplant mortality observations during Year 0 = "Year 1".
     # Apply before growth calculation.
-    # Colony numbers be rounded at every step.
+    # Colony numbers rounded at every step.
     if (group == "outplant" && i == 1) {
       colony_count_thisrun <- round(colony_count_thisrun * (1 - mortality_by_size(colony_diam)))
     }
@@ -608,42 +608,50 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Kill colonies due to chronic whole-colony mortality (Brown et al. 2026)
     # Determine size bin
-    this_bin <- round(floor(new_size / 5) * 5) # Round down to nearest 5 cm
+    this_bin <- round(floor(new_size / 5) * 5) # Round size down to nearest 5 cm bin
     this_bin <- ifelse(this_bin < 5, 5, this_bin) # Ensure minimum bin is 5 cm
     # Determine morphology
     this_morph <- if (species %in% all_branching_species) "branching" else "other"
     this_mortality_whole <- subset(mortality_whole, mortality_whole["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_whole <- this_mortality_whole / 100 # Convert from percent to proportion
-
+    # Reduce colony count
     colony_count_thisrun <- round(colony_count_thisrun * (1 - this_mortality_whole))
 
-    # Grow the surviving colonies
-    # Apply post-bleaching growth reduction to planar growth rate
-    new_size <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
-    new_area <- (new_size / 2) ^ 2 * pi * colony_count_thisrun
-
-    # If bleaching, apply the remaining bleaching stress that did not cause mortality
-    # as a reduction to the new_area created this year:
-    if (bleaching) {
-      new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
-    }
-
-    # Apply annual partial mortality to new_area created by surviving colonies
+    # Shrink colonies due to chronic partial mortality (Brown et al. 2026)
+    # Calculate starting area
+    new_area <- (new_size / 2) ^ 2 * pi
+    # Apply annual partial mortality to surviving colonies' starting area
     this_mortality_partial <- subset(mortality_partial, mortality_partial["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_partial <- this_mortality_partial / 100 # Convert from percent to proportion
     new_area <- new_area * (1 - this_mortality_partial)
 
-    # Colony diameter should be recalculated from new_area at this step?
+    # If bleaching, apply the remaining bleaching stress that did not cause mortality
+    # as a reduction to the colonies' area:
+    if (bleaching) {
+      new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
+    }
+
+    # Recalculate post-mortality colony diameter from reduced new_area:
+    new_size <- 2 * sqrt(new_area / pi)
+
+    # Grow the surviving colonies
+    # Apply post-bleaching growth reduction to planar growth rate
+    new_size <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
+
+    # Recalculate the post-growth per-colony area:
+    new_area <- (new_size / 2) ^ 2 * pi
+    # Calculate per-species area:
+    sp_area <- new_area * colony_count_thisrun
 
     # Calculate the carbonate budget contribution from this species for this year
-    contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
+    contrib <- calc_rates$rate[calc_rates$Taxon == species] * sp_area
     budget  <- contrib / site_area
 
     # Populate the output dataframe with total values as of this year:
-    out_df[i, "area"]      <- new_area # Calcifier area
+    out_df[i, "area"]      <- sp_area # Calcifier area
     out_df[i, "calc_accr"] <- contrib # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
     out_df[i, "calc_budg"] <- budget # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
-    out_df[i, "pct_cvr"]   <- new_area / site_area * 100 # Calcifier percent cover
+    out_df[i, "pct_cvr"]   <- sp_area / site_area * 100 # Calcifier percent cover
   }
 
   list(df = out_df, final_count = colony_count_thisrun, final_area = new_area)
@@ -1093,7 +1101,10 @@ num_pal_rev        <- colorNumeric(colors, domain = at, reverse = TRUE)
 pal_gross_rev      <- make_wr_pal("grossE_G", rev = TRUE)
 
 # Reef State: original Blue / Yellow / Orange status colors
-state_colors <- c("Growth" = "#0099FF", "Stasis" = "#FFFF99", "Erosion" = "#FF6600")
+state_colors <- c("growth"  = "#0099FF",
+                  "stasis"  = "#FFFF99",
+                  "erosion" = "#FF6600")
+
 num_pal_state <- colorFactor(
   palette = unname(state_colors),
   levels  = names(state_colors)
@@ -1102,6 +1113,7 @@ num_pal_state <- colorFactor(
 # Restoration Mix groupings ----
 # Branching (tan) | Weedy/Other (lime) across the top; Massive (gray) below.
 branching_species <- c("Acropora cervicornis", "Acropora palmata")
+weedy_species <- c("Porites astreoides", "Porites porites")
 mix_massive_species <- c(
   "Colpophyllia natans",
   "Diploria labyrinthiformis",
@@ -1113,7 +1125,6 @@ mix_massive_species <- c(
   "Stephanocoenia intersepta"
 )
 
-weedy_species <- c("Porites astreoides", "Porites porites")
 
 # Pastel palette pool for scenarios ----
 # Strong reds and greens are excluded so bar colors don't carry connotative
@@ -1312,11 +1323,11 @@ body <- dashboardBody(
         width: auto; font-size: 13px; font-weight: bold;
         margin-bottom: 2px; padding: 0 4px; border: none;
       }
-      .mix-branching { border: 2px solid #c8a165; }   /* tan */
+      .mix-branching { border: 2px solid #c8a165; margin-left: -10px }   /* tan */
       .mix-branching > legend { color: #a97d3e; }
       .mix-massive   { border: 2px solid #9e9e9e; }   /* gray */
       .mix-massive   > legend { color: #6f6f6f; }
-      .mix-weedy     { border: 2px solid #7bc043; }   /* lime */
+      .mix-weedy     { border: 2px solid #7bc043; margin-right: -10px }  /* lime */
       .mix-weedy     > legend { color: #5a9130; }
       
       /* Two-line, italic slider labels in the mix sub-boxes */
@@ -1349,6 +1360,9 @@ body <- dashboardBody(
       .param-inline-row .param-unit {
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
+
+      /* Reduce margins for sim duration slider */
+      .duration-slider {  }
 
       /* Shrink the main value text size and add a 1px black text shadow in the valueBox readouts */
       .small-box h3 { 
@@ -1578,7 +1592,7 @@ body <- dashboardBody(
       tabName = "projections",
       fluidRow(
         HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>"),
-        tags$img(src = "persistenceExample.jpg", width = "1500px", height = "850px")
+        tags$img(src = "persistenceExample.jpg", width = "1400px", height = "1000px")
       )
     ),
 
@@ -1694,7 +1708,7 @@ body <- dashboardBody(
           # ---- Input element 2: Restoration parameters ----
           shinydashboard::box(
             title = "Restoration Parameters",
-            width = 12, height = "375px",
+            width = 12, height = "360px",
             status = "success", solidHeader = TRUE,
             # div(tags$strong("Target cover (%) post-restoration:")),
             # Top row: Branching (2 cols) + Weedy/Other (2 cols), split evenly
@@ -1702,10 +1716,11 @@ body <- dashboardBody(
               column(8,
                 tags$fieldset(
                   style = "border: 2px solid seagreen; border-radius: 6px;
-                        padding: 8px; margin-top: 3px;",
+                        padding: 8px; margin-top: 3px; margin-right: -15px;",
                   tags$legend(
                     style = "width: auto; font-size: 15px; font-weight: bold;
-                            color: seagreen; padding: 0 3px; border: none; margin-bottom: 0",
+                            color: seagreen; padding: 0 3px; border: none;
+                            margin-bottom: 0;",
                     "Species Mix: Target cover (%) post-restoration"
                     ),
                   column(6,
@@ -1737,7 +1752,7 @@ body <- dashboardBody(
               column(4,
                 tags$fieldset(
                   style = "border: 2px solid lightseagreen; border-radius: 6px;
-                        padding: 0 5px; margin: 0 0 -6px -4px;",
+                        padding: 0 10px; margin: 0 0 -10px -4px;",
                   tags$legend(
                     style = "width: auto; font-size: 15px; font-weight: bold;
                             color: lightseagreen; padding: 1px; border: none; margin-bottom: 0",
@@ -1766,8 +1781,11 @@ body <- dashboardBody(
                   ),
                   # Sim duration shares the horizon's 0-30 domain so tick geometry
                   # lines up natively; a snap-to-10 floor keeps it >= 10 years.
-                  sliderInput("sim_duration", tags$strong("Simulation duration (years)"),
-                    value = 10, min = 0, max = 30, step = 5
+                  tags$div(style = "margin: -10px 0;",
+                    sliderInput(
+                      "sim_duration", tags$strong("Simulation duration (years)"),
+                      value = 10, min = 0, max = 30, step = 5
+                    )
                   ),
                   # Red warning when horizon exceeds sim duration
                   uiOutput("sim_duration_warning")
@@ -2218,13 +2236,13 @@ server <- function(input, output, session) {
     # Projected RAP from the target cover increase, via the regression slope
     inc <- if (is.null(input$target_cover_increase)) 0 else input$target_cover_increase
     d$restored_rap <- d$rap + cover_rap_slope * inc
-    d$restored_state <- ifelse(d$restored_rap > 0.5, "Growth", ifelse(d$restored_rap < -0.5, "Erosion", "Stasis"))
+    d$restored_state <- ifelse(d$restored_rap > 0.5, "growth", ifelse(d$restored_rap < -0.5, "erosion", "stasis"))
 
     # Halo / fill classification (only meaningful when inc > 0)
     classify <- function(rap) {
-        if (rap >= 0.5) {
+        if (rap > 0.5) {
           "growth"
-        } else if (rap <= -0.5) {
+        } else if (rap < -0.5) {
           "erosion"
         } else {
           "stasis"
@@ -2303,18 +2321,18 @@ server <- function(input, output, session) {
     }
 
     # In RAP mode, reduce "No Return" sites to 25% opacity
-    fill_opacity <- rep(0.85, nrow(d))
-    if (field == "rap" && inc > 0) {
-      erod_idx <- which(d$halo == "erosion")
-      fill_cols[erod_idx] <- "erosion"
-      fill_opacity[erod_idx] <- 0.25
-    }
+    # fill_opacity <- rep(0.85, nrow(d))
+    # if (field == "rap" && inc > 0) {
+    #   erod_idx <- which(d$halo == "erosion")
+    #   fill_cols[erod_idx] <- "erosion"
+    #   fill_opacity[erod_idx] <- 0.25
+    # }
 
     # Draw halos first (underneath) when slider is active
     if (inc > 0) {
-      halo_cols <- c(growth = "#002fff",
-                     stasis = "#ffff6d",
-                     erosion = "#ff5500"
+      halo_cols <- c("growth"  = "#002fff",
+                     "stasis"  = "#ffff6d",
+                     "erosion" = "#ff5500"
       )
       hd <- d[d$halo %in% names(halo_cols), , drop = FALSE]
       if (nrow(hd) > 0) {
@@ -2341,7 +2359,7 @@ server <- function(input, output, session) {
         weight = 1,
         color = "black",
         fillColor = fill_cols,
-        fillOpacity = fill_opacity,
+        fillOpacity = 100,
         stroke = TRUE,
         group = "ncrmp",
         layerId = ~site_id,
@@ -2371,9 +2389,9 @@ server <- function(input, output, session) {
       )
 
     # Legend for Restoration Potential
-    rest_colors = c("Growth"  = "#002fff",
-                    "Stasis"  = "#ffff6d",
-                    "Erosion" = "#ff5500")
+    rest_colors = c("growth"  = "#002fff",
+                    "stasis"  = "#ffff6d",
+                    "erosion" = "#ff5500")
 
     proxy <- proxy |>
       addLegend("bottomleft",
@@ -2445,8 +2463,8 @@ server <- function(input, output, session) {
         bs$restored_rap[sel_row] <- mr$budget_df$RAP_total[hr]
       }
     }
-    bs$restored_state <- ifelse(bs$restored_rap > 0.5, "Growth",
-                         ifelse(bs$restored_rap < -0.5, "Erosion", "Stasis"))
+    bs$restored_state <- ifelse(bs$restored_rap > 0.5, "growth",
+                         ifelse(bs$restored_rap < -0.5, "erosion", "stasis"))
 
     base_radius <- point_size() * 1.5           # 50% larger than NCRMP
     radii <- rep(base_radius, nrow(bs))
@@ -2672,7 +2690,7 @@ server <- function(input, output, session) {
 
       net_budget <- gross_budget - be_micro - be_macro
       rap <- net_budget / 2.9 / (1 - 0.6265)
-      state <- if (rap > 0.5) "Growth" else if (rap < -0.5) "Erosion" else "Stasis"
+      state <- if (rap > 0.5) "growth" else if (rap < -0.5) "erosion" else "stasis"
 
       # Gross bioerosion figure for popup (whole-patch kg/yr, to echo NCRMP)
       gross_be <- (be_micro + be_macro)
@@ -3234,15 +3252,13 @@ server <- function(input, output, session) {
   # Baseline growth series for the timeline (originals only). Available as soon
   # as species + covers + subregion/habitat are set, independent of any target.
   baseline_growth <- reactive({
-    req(nzchar(input$base_REQUIRED_Unconsolidated_substrate))
-
     habitat       <- input$habitat_choice
     subregion <- input$subregion_choice
     site_area     <- .safe_num(input$site_area_m2)
     sim_duration  <- .safe_num(input$sim_duration)
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
     if (site_area <= 0) site_area <- 100
-    req(nzchar(habitat), nzchar(subregion))
+    req(nzchar(habitat), nzchar(subregion), nzchar(unconsolidated_pct_cvr))
 
     sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
     if (length(sp) == 0) return(NULL)
@@ -3485,11 +3501,13 @@ server <- function(input, output, session) {
     valueBox(paste0(round(baseline_metrics()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
           if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
+          ";'>",
           if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          "</span>",
+          ")"
           )
         )
       ),
@@ -3514,11 +3532,13 @@ server <- function(input, output, session) {
     valueBox(paste0(round(rt_restored_current()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
-          if (rt_restored_current()$rap >= 0.5) "forestgreen" else if (rt_restored_current()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
-          if (rt_restored_current()$rap >= 0.5) "growing" else if (rt_restored_current()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>",
+          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          "</span>",
+          ")"
           )
         )
       ),
@@ -4245,11 +4265,13 @@ server <- function(input, output, session) {
     valueBox(paste0(round(cc_baseline_vals()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
-          if (cc_baseline_vals()$rap >= 0.5) "forestgreen" else if (cc_baseline_vals()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
-          if (cc_baseline_vals()$rap >= 0.5) "growing" else if (cc_baseline_vals()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>",
+          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          "</span>",
+          ")"
           )
         )
       ),
@@ -4273,11 +4295,13 @@ server <- function(input, output, session) {
     valueBox(paste0(round(cc_restored_vals()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
-          if (cc_restored_vals()$rap >= 0.5) "forestgreen" else if (cc_restored_vals()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
-          if (cc_restored_vals()$rap >= 0.5) "growing" else if (cc_restored_vals()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          ";'>",
+          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          "</span>",
+          ")"
           )
         )
       ),
@@ -4665,7 +4689,7 @@ server <- function(input, output, session) {
   }, bg = "transparent")
 
   # Per-scenario RAP bar with reference lines + status bands.
-  # Bands ride through tooltip="text" as "Erosion"/"Stasis".
+  # Bands ride through tooltip="text" as "erosion"/"stasis".
   output$sc_rap_bar <- plotly::renderPlotly({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))

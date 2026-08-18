@@ -4,7 +4,7 @@
 
 This repository contains a Shiny app and carbonate-budget data for sites in the Florida Reef Tract. It is designed to aid reef restoration practitioners in identifying ideal sites, species balances, and outplant strategies to achieve restoration goals.
 
-The Reef Persistence Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
+The Reef Persistence Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's original Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
 
 ## Usage
 
@@ -26,7 +26,7 @@ Aspects of the map display can be manipulated with the collapsible `Map Controls
 
 - Use the `Symbolize by` group to symbolize the site points and uploaded reef points by reef accretion potential, reef state (erosion, stasis, or growth) or gross bioerosion.
 
-- Use the `Show named reefs` checkbox to show/hide named reef sites. When enabled, reef-site polygons will be displayed, and labeled according to the sites' names. These sites are retrieved from Florida Fish & Wildlife Conservation Commission (FWC) mooring buoy data and do not necessarily delineate the geometry of the reef site.
+- Use the `Show named reefs` checkbox to show/hide named reef sites. When enabled, reef-site polygons will be displayed, and labeled according to the sites' names. These sites are retrieved from Florida Fish & Wildlife Conservation Commission (FWC) mooring buoy data, and do not necessarily delineate the geography of the reef site (though the locations are accurate).
 
 - Use the `Point size` +/- control to adjust the size of the points.
 
@@ -46,9 +46,9 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     **(b) Create from scratch:** Use the inputs to name the site and designate its location, area, subregion, habitat, and baseline cover. Use the `Save baseline` button to save the scratch inputs in an `.xlsx` file which can be uploaded to the app in a subsequent session. Once the saved from-scratch `.xlsx` is uploaded, its data will be cached.
 
-2. Designate the post-restoration percent-cover targets per species using the inputs in the `Restoration Mix` section. When a target percent-cover is designated for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed beneath the input.
+2. Designate the post-restoration percent-cover targets per species using the inputs in the `Species Mix` section of the `Restoration Parameters` box. When a target percent-cover is designated for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed beneath the input.
 
-3. Manipulate additional restoration variables by using the sliders and text inputs in the `Restoration Parameters` section:  
+3. Manipulate additional restoration variables by using the sliders and text inputs in the `Restoration Parameters`' `Outplanting Strategy` section:  
 
     **Avg. outplant diameter:** The average starting diameter of the outplants, in centimeters.
 
@@ -58,15 +58,15 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     **Simulation duration:** The number of years post-restoration that the simulation should last. Can exceed the `Restoration horizon` so the long-term effect of the restoration plan may be observed.
 
-    **Bleaching Scenario:**
+4. Account for coral bleaching mortality and growth stress by manipulating variables in the `Bleaching Scenario` box:
 
     **Degree-Heating Weeks:** The cumulative heat stress expected each year, in degree-heating weeks.
 
     **Events / 5 years:** The number of bleaching events expected per five years.
 
-4. View the simulation and its predicted cost in the `Projected Reef Accretion Potential (RAP)` timeline.
+5. View the simulation and its predicted cost in the `Projected Reef Accretion Potential (RAP)` timeline.
 
-5. After building the scenario, save it by scrolling to the bottom of the page and using the `Save Scenario` section. Enter the name of the project and scenario, and click `Save`. The scenario will be saved as `{project}__{scenario}.json` in an automatically-generated `scenarios` folder wherever app.R is stored.  
+6. After building the scenario, save it by scrolling to the bottom of the page and using the `Save Scenario` section. Enter the name of the project and scenario, and click `Save`. The scenario will be saved as `{project}__{scenario}.json` in an automatically-generated `scenarios` folder wherever app.R is stored.  
 
     **IMPORTANT: Saved scenarios' filenames may be edited, but retain the double-underscore between the project and scenario labels.** The app uses this convention to automatically recognize and differentiate projects and scenarios.
 
@@ -78,7 +78,7 @@ The app will automatically detect scenarios saved in the `scenarios` folder. Use
 
 Use the `Refresh list` button to re-scan the `scenarios` folder and refresh the available projects and scenarios.
 
-Use the `Download report` button to download a `.csv` file which summarizes the selected scenarios. The `.csv` contains a record is created for each scenario in the report.
+Use the `Download report` button to download a `.csv` file which summarizes the selected scenarios. The `.csv` contains a record for each scenario in the report.
 
 An `Impact Summary` is displayed for each enabled scenario. Click the carat at the top-right of a Summary to collapse it.
 
@@ -102,7 +102,7 @@ Contains summary, background, author, source, and methodological information.
 
 ## Local Setup (optional)
 
-**Note: This process is only necessary to run the Reef Persistence Tool app locally. For easier access, click the link at the top of this document to launch the app immediately in the web browser. Skip to `Usage` to learn how to use the app.**
+**Note: This process is only necessary to run the Reef Persistence Tool app locally. For easier access, click the link at the top of this document to launch the app immediately in the web browser.**
 
 ### Installation
 
