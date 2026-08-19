@@ -1385,7 +1385,7 @@ body <- dashboardBody(
       }
 
       /* Red warning under the bioerosion upload widget */
-      .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 4px; }
+      .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: -15px; margin-bottom: 15px; }
 
       /* Inline upload label + Download template button */
       .upload-label-row {
@@ -1997,9 +1997,12 @@ body <- dashboardBody(
                              icon = icon("upload"), class = "btn-sm")
               )
             ),
-            fileInput("upload_cover", NULL,
-              accept = c(".csv", ".xlsx")
+            tags$div(style = "margin-bottom: -30px;",
+              fileInput("upload_cover", NULL,
+                accept = c(".csv", ".xlsx")
+              )
             ),
+            uiOutput("monitoring_cover_uc_warning"),
             tags$div(
               class = "upload-label-row",
               tags$span(class = "control-label", "Bioerosion .xlsx"),
@@ -2011,8 +2014,10 @@ body <- dashboardBody(
                              icon = icon("upload"), class = "btn-sm")
               )
             ),
-            fileInput("upload_bioerosion", NULL,
-              accept = c(".csv", ".xlsx")
+            tags$div(style = "margin-bottom: -30px;",
+              fileInput("upload_bioerosion", NULL,
+                accept = c(".csv", ".xlsx")
+              )
             ),
 
             # Red warning for unobserved parrotfish size classes
@@ -4141,6 +4146,23 @@ server <- function(input, output, session) {
     list(by_year = by_year, unobserved = unique(unobserved_all))
   })
 
+  # Red error when an uploaded cover file lacks a nonzero UC substrate value.
+    output$monitoring_cover_uc_warning <- renderUI({
+      if (isFALSE(monitoring_uc_ok())) {
+        tags$div(class = "bioerosion-warning",
+          "Error: Uploaded coral cover data does not include unconsolidated substrate.")
+      }
+    })
+
+  # Disable the Monitoring download button in the bad-UC state.
+  observe({
+    if (isFALSE(monitoring_uc_ok())) {
+      shinyjs::disable("cc_download_report")
+    } else {
+      shinyjs::enable("cc_download_report")
+    }
+  })
+  
   # Red warning for any unobserved parrotfish size classes
   output$bioerosion_parrotfish_warning <- renderUI({
     bio <- monitoring_bioerosion_by_year()
@@ -4172,6 +4194,28 @@ server <- function(input, output, session) {
   # per-Taxon Percent_Cover (area-occupied method), subtracts generalized
   # microbioerosion + bioerosion (observed if present, else regional), and
   # derives RAP with assemblage-based porosity. -1 == Baseline.
+
+  # Does the uploaded cover file carry a nonzero unconsolidated-substrate value
+  # for the selected site? Monitoring calculations require it.
+  monitoring_uc_ok <- reactive({
+    info <- monitoring_cover_path()
+    if (is.null(info) || info$ext != "xlsx") return(NA)  # not applicable yet
+    cover <- uploaded_monitoring_cover()
+    if (is.null(cover) || !all(c("Taxon", "Percent_Cover") %in% names(cover))) return(NA)
+    site <- input$monitoring_selected_site
+    if (is.null(site) || !nzchar(site)) return(NA)
+    if ("Unique_Site_ID" %in% names(cover)) {
+      cover <- cover[as.character(cover$Unique_Site_ID) == site, , drop = FALSE]
+    }
+    if (nrow(cover) == 0) return(NA)
+    uc_row <- suppressWarnings(as.numeric(
+      cover$Percent_Cover[cover$Taxon == "REQUIRED Unconsolidated substrate"]
+    ))
+    uc_row <- uc_row[!is.na(uc_row)]
+    if (length(uc_row) == 0) return(FALSE)
+    uc_row[1] > 0
+  })
+
   monitoring_series <- reactive({
     info <- monitoring_cover_path()
     if (is.null(info) || info$ext != "xlsx") return(NULL)
@@ -4181,6 +4225,9 @@ server <- function(input, output, session) {
 
     needed <- c("Years_Post_Restoration", "Taxon", "Percent_Cover", "Unique_Site_ID")
     if (!all(needed %in% names(cover))) return(NULL)
+
+    # Require a nonzero unconsolidated-substrate entry; otherwise don't fire.
+    if (isFALSE(monitoring_uc_ok())) return(NULL)
 
     site <- input$monitoring_selected_site
     req(!is.null(site), nzchar(site))
@@ -4248,6 +4295,8 @@ server <- function(input, output, session) {
   # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
   # When the monitoring pipeline is active, "Baseline" is the -1 row.
   cc_baseline_vals <- reactive({
+    # Uploaded cover file present but missing a nonzero UC value: go blank.
+    if (isFALSE(monitoring_uc_ok())) return(NULL)
     ms <- monitoring_series()
     if (!is.null(ms) && any(ms$Year == -1)) {
       r <- ms[ms$Year == -1, ][1, ]
@@ -4271,6 +4320,7 @@ server <- function(input, output, session) {
   #  - No cover upload (map-driven) -> project the SELECTED SITE's own baseline
   #    with the Home-tab linear model + the map's target-cover inputs.
   cc_restored_vals <- reactive({
+    if (isFALSE(monitoring_uc_ok())) return(NULL)
     ms <- monitoring_series()
     if (!is.null(ms) && nrow(ms) > 0) {
       r <- ms[which.max(ms$Year), ]
@@ -4288,18 +4338,21 @@ server <- function(input, output, session) {
   })
 
   output$cc_baseline_cover <- renderValueBox({
+    req(cc_baseline_vals())
     valueBox(paste0(round(cc_baseline_vals()$cover, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
       icon = icon("percent"), color = "green"
     )
   })
   output$cc_baseline_budget <- renderValueBox({
+    req(cc_baseline_vals())
     valueBox(paste0(round(cc_baseline_vals()$budget, 2), " kg/m\u00b2/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$cc_baseline_rap <- renderValueBox({
+    req(cc_baseline_vals())
     valueBox(paste0(round(cc_baseline_vals()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
@@ -4318,18 +4371,21 @@ server <- function(input, output, session) {
   })
 
   output$cc_restored_cover <- renderValueBox({
+    req(cc_restored_vals())
     valueBox(paste0(round(cc_restored_vals()$cover, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
       icon = icon("plus-circle"), color = "olive"
     )
   })
   output$cc_restored_budget <- renderValueBox({
+    req(cc_restored_vals())
     valueBox(paste0(round(cc_restored_vals()$budget, 2), " kg/m\u00b2/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$cc_restored_rap <- renderValueBox({
+    req(cc_restored_vals())
     valueBox(paste0(round(cc_restored_vals()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
@@ -4349,6 +4405,7 @@ server <- function(input, output, session) {
 
   # Impact summary text box (reuses shared builder)
   output$cc_impact_summary <- renderUI({
+    req(cc_baseline_vals(), cc_restored_vals())
     b <- cc_baseline_vals()
     r <- cc_restored_vals()
     build_impact_summary(
@@ -4364,6 +4421,7 @@ server <- function(input, output, session) {
   #  - No upload (map-driven) -> smooth interpolation Baseline (Y0) -> Restored (Y10).
   # Reference lines (geologic + Int rates) + y-axis floor + dark-mode shared.
   output$cc_timeline <- plotly::renderPlotly({
+    req(!isFALSE(monitoring_uc_ok()))
     ms <- monitoring_series()
 
     dark <- isTRUE(input$dark_mode)
