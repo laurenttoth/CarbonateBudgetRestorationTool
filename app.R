@@ -861,8 +861,28 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     } else {
       # Iterative solve: find the count that reaches target by the HORIZON year.
-      # Have to start with a guess for the number of required outplants
+      # Strategy: run one trial, measure the per-outplant area yield at the
+      # horizon, jump the guess to the theoretical count needed to fill
+      # sp_to_grow_m, then refine with a bounded +/-1 loop.
+      #
+      # NOTE: simulate_growth's final_area (index [[3]]) is the per-COLONY area
+      # at the horizon, so total yielded area = final_area * outplant_guess.
       outplant_guess <- 50
+
+      trial <- simulate_growth(group = "outplant", species = species,
+                               colony_count = outplant_guess, colony_diam = outplant_diam,
+                               duration = rest_horizon + 1,
+                               site_area = site_area, uc_pct = uc_pct,
+                               bleaching_severity = bleaching_severity,
+                               bleaching_frequency = bleaching_frequency)
+      per_colony_area <- trial[[3]]          # area of ONE surviving colony at horizon
+
+      # Seed from the theoretical count. Each outplant occupies its starting
+      # footprint immediately and grows to per_colony_area by the horizon, so
+      # total horizon area ~= per_colony_area * n. Solve n for sp_to_grow_m.
+      if (is.finite(per_colony_area) && per_colony_area > 0) {
+        outplant_guess <- max(0, ceiling(sp_to_grow_m / per_colony_area))
+      }
 
       reiterate <- TRUE
       guard <- 0 # safety cap to prevent runaway loops
@@ -881,7 +901,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                        bleaching_severity = bleaching_severity,
                                        bleaching_frequency = bleaching_frequency)
 
-        new_area <- search_list[[3]] # area at the horizon year
+        new_area <- search_list[[3]] * outplant_guess # total area at the horizon
 
         # Get within the nearest 0.01 m^2
         if (needed_outplant_growth - new_area < -0.01) { #Too much growth by the horizon:
@@ -4300,14 +4320,12 @@ server <- function(input, output, session) {
     ms <- monitoring_series()
     if (!is.null(ms) && any(ms$Year == -1)) {
       r <- ms[ms$Year == -1, ][1, ]
-      print(paste0("Baseline mcover = ", r$cover, " mbudget = ", r$budget, " mrap = ", r$RAP))
       return(list(cover = r$cover, budget = r$budget, rap = r$RAP))
     }
 
     req(input$monitoring_selected_site)
     dat <- df |> filter(site_id == input$monitoring_selected_site) |> slice(1)
     rap <- if (!is.null(dat$rap) && !is.na(dat$rap)) dat$rap else dat$net_G / 2.9 / (1 - 0.6265)
-    print(paste0("map site cover = ", dat$hardCoral_PrctCvr, " budget = ", dat$net_G, " rap = ", rap))
     list(
       cover  = dat$hardCoral_PrctCvr,
       budget = dat$net_G,
@@ -4324,7 +4342,6 @@ server <- function(input, output, session) {
     ms <- monitoring_series()
     if (!is.null(ms) && nrow(ms) > 0) {
       r <- ms[which.max(ms$Year), ]
-      print(paste0("Restored rcover = ", r$cover, " rbudget = ", r$budget, " rrap = ", r$RAP))
       return(list(cover = r$cover, budget = r$budget, rap = r$RAP))
     }
 
@@ -4333,7 +4350,6 @@ server <- function(input, output, session) {
     restored_rap    <- base$rap + cover_rap_slope * inc
     restored_cover  <- base$cover + inc
     restored_budget <- restored_rap * 2.9 * (1 - 0.6265)
-    print(paste0("cover = ", restored_cover, " budget = ", restored_budget, " rap = ", restored_rap))
     list(cover = restored_cover, budget = restored_budget, rap = restored_rap)
   })
 
