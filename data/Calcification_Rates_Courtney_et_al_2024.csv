@@ -1,4 +1,4 @@
-Region,Taxon,rate,Lower bound,Upper bound
+Region,Taxon,rate,lower_bound,upper_bound
 Atlantic,Acropora,53,45.22,60.88
 Atlantic,Acropora cervicornis,62.29,51.16,73.84
 Atlantic,Acropora palmata,53.01,40.58,65.54

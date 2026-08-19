@@ -538,12 +538,25 @@ assemblage_porosity <- function(cover_df, cover_col) {
   por / 100 # proportion
 }
 
-baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, macrobioerosion, bp) {
+baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, macrobioerosion, bp,
+                                    be_sd_lo = NA_real_, be_sd_hi = NA_real_) {
     # Apply bioerosion to baseline growth df:
     bg_df$consol_area_orig <- site_area - (site_area * uc_pct / 100) - (site_area * bg_df$pct_cvr_orig / 100)
     bg_df$microbioerosion  <- (bg_df$consol_area_orig / site_area) * be_micro_rate # Multiply the general microbioerosion rate by the proportion of available consolidated sediment
     bg_df$calc_budg_orig   <- bg_df$calc_budg_orig - bg_df$microbioerosion - macrobioerosion
     bg_df$RAP_orig         <- bg_df$calc_budg_orig / 2.9 / (1 - bp)
+
+    # Bounded RAP. min = low calcification + HIGH erosion (macro + +1 SD);
+    # max = high calcification + LOW erosion (macro + -1 SD). When bounds/SDs
+    # are unavailable the min/max columns mirror the mean.
+    if ("calc_budg_orig_min" %in% names(bg_df) && "calc_budg_orig_max" %in% names(bg_df)) {
+      macro_hi <- macrobioerosion + (if (is.finite(be_sd_hi)) be_sd_hi else 0)
+      macro_lo <- macrobioerosion + (if (is.finite(be_sd_lo)) be_sd_lo else 0)
+      bg_df$calc_budg_orig_min <- bg_df$calc_budg_orig_min - bg_df$microbioerosion - macro_hi
+      bg_df$calc_budg_orig_max <- bg_df$calc_budg_orig_max - bg_df$microbioerosion - macro_lo
+      bg_df$RAP_orig_min <- bg_df$calc_budg_orig_min / 2.9 / (1 - bp)
+      bg_df$RAP_orig_max <- bg_df$calc_budg_orig_max / 2.9 / (1 - bp)
+    }
 
     bg_df
 }
@@ -575,7 +588,15 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
                            # (generalized default, see about species-specific values later)
   sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
 
-  out_df <- data.frame()
+  # Per-species calcification-rate bounds (kg CaCO3/m2/yr). NA-safe: when
+  # unavailable, min/max budget columns mirror the average.
+  cr_bounds   <- calc_rate_bounds(species)
+  rate_lo     <- cr_bounds[1]
+  rate_hi     <- cr_bounds[2]
+
+  out_df     <- data.frame()
+  out_df_min <- data.frame()
+  out_df_max <- data.frame()
   new_size             <- colony_diam  # working colony diameter for this run
   colony_count_thisrun <- colony_count # working colony count for this run
   last_bleach_year     <- 1            # placeholder
@@ -648,17 +669,36 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     sp_area <- new_area * colony_count_thisrun
 
     # Calculate the carbonate budget contribution from this species for this year
-    contrib <- calc_rates$rate[calc_rates$Taxon == species] * sp_area
+    sp_rate <- calc_rates$rate[calc_rates$Taxon == species]
+    contrib <- sp_rate * sp_area
     budget  <- contrib / site_area
+
+    # Bounded budgets (same geometry, bounded calcification rate). Fall back to
+    # the average rate when a bound is missing so min/max mirror the mean.
+    r_lo <- if (is.finite(rate_lo)) rate_lo else if (length(sp_rate)) sp_rate else NA_real_
+    r_hi <- if (is.finite(rate_hi)) rate_hi else if (length(sp_rate)) sp_rate else NA_real_
+    budget_lo <- (r_lo * sp_area) / site_area
+    budget_hi <- (r_hi * sp_area) / site_area
 
     # Populate the output dataframe with total values as of this year:
     out_df[i, "area"]      <- sp_area # Calcifier area
     out_df[i, "calc_accr"] <- contrib # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
     out_df[i, "calc_budg"] <- budget # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
     out_df[i, "pct_cvr"]   <- sp_area / site_area * 100 # Calcifier percent cover
+
+    out_df_min[i, "area"]      <- sp_area
+    out_df_min[i, "calc_accr"] <- r_lo * sp_area
+    out_df_min[i, "calc_budg"] <- budget_lo
+    out_df_min[i, "pct_cvr"]   <- sp_area / site_area * 100
+
+    out_df_max[i, "area"]      <- sp_area
+    out_df_max[i, "calc_accr"] <- r_hi * sp_area
+    out_df_max[i, "calc_budg"] <- budget_hi
+    out_df_max[i, "pct_cvr"]   <- sp_area / site_area * 100
   }
 
-  list(df = out_df, final_count = colony_count_thisrun, final_area = new_area)
+  list(df = out_df, final_count = colony_count_thisrun, final_area = new_area,
+       df_min = out_df_min, df_max = out_df_max)
 }
 
 # Resolve habitat-specific macrobioerosion ----
@@ -692,6 +732,49 @@ resolve_species_bioerosion <- function(subregion, habitat) {
 # Generalized Caribbean microbioerosion rate: 0.24 kg CaCO3/m2/yr
 be_micro_rate <- 0.24
 
+# Uncertainty-column availability ----
+# Calcification bounds present + non-empty?
+calc_uncert_available <- all(c("lower_bound", "upper_bound") %in% names(calc_rates)) &&
+  any(is.finite(suppressWarnings(as.numeric(calc_rates[["lower_bound"]])))) &&
+  any(is.finite(suppressWarnings(as.numeric(calc_rates[["upper_bound"]]))))
+
+# Bioerosion STDEV columns present + non-empty?
+bioerosion_uncert_available <- all(
+  c("STDEV_PARROTFISH", "STDEV_URCHIN", "STDEV_MACROBIOEROSION") %in% names(bioerosion)
+) && any(is.finite(suppressWarnings(as.numeric(bioerosion$STDEV_MACROBIOEROSION))))
+
+# Per-species calcification-rate bounds lookup (kg CaCO3/m2/yr).
+# Returns c(lo, hi); NA when unavailable for that taxon.
+calc_rate_bounds <- function(species) {
+  if (!calc_uncert_available) {
+    print("Can't find calc rate bounds")
+    return(c(NA_real_, NA_real_))
+  }
+  row <- calc_rates[calc_rates$Taxon == species, , drop = FALSE]
+  if (nrow(row) == 0) return(c(NA_real_, NA_real_))
+  lo <- suppressWarnings(as.numeric(row[["lower_bound"]][1]))
+  hi <- suppressWarnings(as.numeric(row[["upper_bound"]][1]))
+  c(lo, hi)
+}
+
+# +/-1 STDEV bioerosion band (kg CaCO3/m2/yr) for a subregion/habitat.
+# Returns c(minus1sd_total, plus1sd_total) added to the AVG macrobioerosion.
+# NA when unavailable.
+bioerosion_stdev <- function(subregion, habitat) {
+  if (!bioerosion_uncert_available) {
+    print("Can't find bioerosion rate bounds")
+    return(c(NA_real_, NA_real_))
+  }
+  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
+  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
+  if (nrow(be_hab) == 0) return(c(NA_real_, NA_real_))
+  sd_p <- .safe0(be_hab$STDEV_PARROTFISH[1])
+  sd_u <- .safe0(be_hab$STDEV_URCHIN[1])
+  sd_m <- .safe0(be_hab$STDEV_MACROBIOEROSION[1])
+  sd_tot <- sd_p + sd_u + sd_m
+  c(-sd_tot, sd_tot)
+}
+
 # Baseline-only original growth ----
 # Thin wrapper over simulate_growth: loops the selected species (originals
 # only) and sums the per-year RAP + % cover + budget. Porosity from the
@@ -704,6 +787,8 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_rap  <- rep(0, n)
   total_cvr  <- rep(0, n)
   total_budg <- rep(0, n)
+  total_budg_min <- rep(0, n)
+  total_budg_max <- rep(0, n)
 
   for (row_i in seq_len(nrow(baseline_cover_df))) {
     species        <- baseline_cover_df$taxon[row_i]
@@ -723,11 +808,15 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
                            bleaching_frequency = bleaching_frequency)
 
     #total_rap  <- total_rap  + sim$df$RAP
-    total_cvr  <- total_cvr  + sim$df$pct_cvr
-    total_budg <- total_budg + sim$df$calc_budg
+    total_cvr      <- total_cvr      + sim$df$pct_cvr
+    total_budg     <- total_budg     + sim$df$calc_budg
+    total_budg_min <- total_budg_min + sim$df_min$calc_budg
+    total_budg_max <- total_budg_max + sim$df_max$calc_budg
   }
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
-             pct_cvr_orig = total_cvr, calc_budg_orig = total_budg)
+             pct_cvr_orig = total_cvr, calc_budg_orig = total_budg,
+             calc_budg_orig_min = total_budg_min,
+             calc_budg_orig_max = total_budg_max)
 }
 
 # ----------------------------------------------------------------------------
@@ -773,11 +862,15 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   area_orig       <- rep(0, n)
   calc_accr_orig  <- rep(0, n)
   calc_budg_orig  <- rep(0, n)
+  calc_budg_orig_min <- rep(0, n)
+  calc_budg_orig_max <- rep(0, n)
   # RAP_orig        <- rep(0, n)
   pct_cvr_orig    <- rep(0, n)
   area_new        <- rep(0, n)
   calc_accr_new   <- rep(0, n)
   calc_budg_new   <- rep(0, n)
+  calc_budg_new_min  <- rep(0, n)
+  calc_budg_new_max  <- rep(0, n)
   # RAP_new         <- rep(0, n)
   pct_cvr_new     <- rep(0, n)
 
@@ -810,6 +903,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     area_orig       <- area_orig       + od$area
     calc_accr_orig  <- calc_accr_orig  + od$calc_accr
     calc_budg_orig  <- calc_budg_orig  + od$calc_budg
+    calc_budg_orig_min <- calc_budg_orig_min + orig_list$df_min$calc_budg
+    calc_budg_orig_max <- calc_budg_orig_max + orig_list$df_max$calc_budg
     # RAP_orig        <- RAP_orig        + od$RAP
     pct_cvr_orig    <- pct_cvr_orig    + od$pct_cvr
     any_growth <- TRUE
@@ -931,6 +1026,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     area_new       <- area_new       + nd$area
     calc_accr_new  <- calc_accr_new  + nd$calc_accr
     calc_budg_new  <- calc_budg_new  + nd$calc_budg
+    calc_budg_new_min <- calc_budg_new_min + new_list$df_min$calc_budg
+    calc_budg_new_max <- calc_budg_new_max + new_list$df_max$calc_budg
     # RAP_new        <- RAP_new        + nd$RAP
     pct_cvr_new    <- pct_cvr_new    + nd$pct_cvr
 
@@ -960,6 +1057,15 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$pct_cvr_total    <- budget_df$pct_cvr_orig    + budget_df$pct_cvr_new
   # budget_df$RAP_total        <- budget_df$RAP_orig        + budget_df$RAP_new
 
+  # Bounded gross totals (calcification bounds only, so far)
+  budget_df$calc_budg_total_min <- calc_budg_orig_min + calc_budg_new_min
+  budget_df$calc_budg_total_max <- calc_budg_orig_max + calc_budg_new_max
+
+  # Bioerosion +/-1 SD band (NA -> 0 offset when unavailable)
+  be_sd <- bioerosion_stdev(subregion, habitat)   # c(-sd, +sd)
+  macro_hi <- macrobioerosion + (if (is.finite(be_sd[2])) be_sd[2] else 0)
+  macro_lo <- macrobioerosion + (if (is.finite(be_sd[1])) be_sd[1] else 0)
+
   # Apply bioerosion to final carbonate budget:
   # Determine area of consolidated substrate
   budget_df$consol_area_total <- site_area - (site_area * uc_pct / 100) - (site_area * budget_df$pct_cvr_total / 100)
@@ -970,6 +1076,12 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Recalculate RAP from adjusted carbonate budget
   budget_df$RAP_total         <- budget_df$calc_budg_total / 2.9 / (1 - por)
 
+  # Bounded totals: min = low calc + high erosion; max = high calc + low erosion
+  budget_df$calc_budg_total_min <- budget_df$calc_budg_total_min - budget_df$microbioerosion - macro_hi
+  budget_df$calc_budg_total_max <- budget_df$calc_budg_total_max - budget_df$microbioerosion - macro_lo
+  budget_df$RAP_total_min <- budget_df$calc_budg_total_min / 2.9 / (1 - por)
+  budget_df$RAP_total_max <- budget_df$calc_budg_total_max / 2.9 / (1 - por)
+
   # Apply the SAME bioerosion to the ORIGINALS-only budget so RAP_orig is net
   # (matches baseline_bioerosion_RAP). Without this the dashed "Original" line
   # is gross while the standalone Baseline line is net, making Baseline look
@@ -978,6 +1090,12 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$be_micro_orig    <- (budget_df$consol_area_orig / site_area) * be_micro_rate
   budget_df$calc_budg_orig   <- budget_df$calc_budg_orig - budget_df$be_micro_orig - macrobioerosion
   budget_df$RAP_orig         <- budget_df$calc_budg_orig / 2.9 / (1 - por)
+
+  # Bounded originals-only
+  budget_df$calc_budg_orig_min <- calc_budg_orig_min - budget_df$be_micro_orig - macro_hi
+  budget_df$calc_budg_orig_max <- calc_budg_orig_max - budget_df$be_micro_orig - macro_lo
+  budget_df$RAP_orig_min <- budget_df$calc_budg_orig_min / 2.9 / (1 - por)
+  budget_df$RAP_orig_max <- budget_df$calc_budg_orig_max / 2.9 / (1 - por)
 
   list(
     budget_df = budget_df,
@@ -3627,7 +3745,10 @@ server <- function(input, output, session) {
 
     # Apply bioerosion to baseline growth only when it is a real frame.
     if (!is.null(bg_df)) {
-      bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate, macrobioerosion, bp)
+      be_sd_bg <- bioerosion_stdev(input$subregion_choice, input$habitat_choice)
+      bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate,
+                                       macrobioerosion, bp,
+                                       be_sd_lo = be_sd_bg[1], be_sd_hi = be_sd_bg[2])
     }
 
     tryCatch({
@@ -3695,8 +3816,12 @@ server <- function(input, output, session) {
           theme_minimal(base_size = 14)
         y0_rap <- b$rap
       } else {
+        print(head(bg_df))
         y_lo <- rap_axis_min(min(bg_df$RAP_orig, na.rm = TRUE))
-        y_hi <- max(max(slr_tl$SLR), max(bg_df$RAP_orig, na.rm = TRUE))
+        y_hi <- max(max(slr_tl$SLR),
+                    max(c(bg_df$RAP_orig,
+                          if (!is.null(bg_df$RAP_orig_max)) bg_df$RAP_orig_max else NA_real_),
+                        na.rm = TRUE))
         bands <- status_bands_df(0, dur, y_lo)
         p <- ggplot(bg_df, aes(x = Year)) +
           geom_rect(data = bands, inherit.aes = FALSE,
@@ -3714,6 +3839,28 @@ server <- function(input, output, session) {
                                       "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
                     linetype = "longdash",
                     color = orig_col, linewidth = 0.7) +
+          {
+            if (calc_uncert_available &&
+                all(c("RAP_orig_min", "RAP_orig_max") %in% names(bg_df))) {
+              list(
+                geom_line(aes(y = RAP_orig_min, group = 11,
+                              text = paste0("Baseline lower bound",
+                                            "<br>Year ", Year,
+                                            "<br>RAP: ", round(RAP_orig_min, 2), " mm/yr")),
+                          linetype = "longdash", color = orig_col,
+                          alpha = 0.6, linewidth = 0.35),
+                geom_line(aes(y = RAP_orig_max, group = 12,
+                              text = paste0("Baseline upper bound",
+                                            "<br>Year ", Year,
+                                            "<br>RAP: ", round(RAP_orig_max, 2), " mm/yr")),
+                          linetype = "longdash", color = orig_col,
+                          alpha = 0.6, linewidth = 0.35),
+                geom_ribbon(aes(ymin = RAP_orig_min, ymax = RAP_orig_max),
+                    fill = orig_col, alpha = 0.20
+                )
+              )
+            }
+          } +
 
           scale_x_continuous(breaks = x_breaks) +
           scale_y_continuous(limits = c(y_lo, y_hi),
@@ -3751,15 +3898,19 @@ server <- function(input, output, session) {
         pct_cvr_orig  = bd$pct_cvr_orig,
         pct_cvr_total = bd$pct_cvr_total,
         calc_budg_orig  = bd$calc_budg_orig,
-        calc_budg_total = bd$calc_budg_total
+        calc_budg_total = bd$calc_budg_total,
+        RAP_total_min = if (!is.null(bd$RAP_total_min)) bd$RAP_total_min else NA_real_,
+        RAP_total_max = if (!is.null(bd$RAP_total_max)) bd$RAP_total_max else NA_real_
       )
 
       write.csv(d, here("cache", "combined_data.csv"))
+      print(head(d))
 
       pips <- d[d$Year %in% c(1, 5, 10, 20, 50, 100, dur), ]
 
       y_lo <- rap_axis_min(min(d$RAP_orig, na.rm = TRUE))
-      y_hi <- max(max(slr_tl$SLR), max(d$RAP_total, na.rm = TRUE))
+      y_hi <- max(max(slr_tl$SLR),
+                  max(c(d$RAP_total, d$RAP_total_max), na.rm = TRUE))
       bands <- status_bands_df(0, dur, y_lo)
 
       p <- ggplot(d, aes(x = Year)) +
@@ -3777,6 +3928,28 @@ server <- function(input, output, session) {
                                     "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
                    linetype = "longdash",
                    color = orig_col, linewidth = 0.7) +
+          {
+          if (calc_uncert_available &&
+              all(c("RAP_orig_min", "RAP_orig_max") %in% names(bg_df))) {
+            list(
+              geom_line(aes(y = bg_df$RAP_orig_min, group = 11,
+                            text = paste0("Baseline lower bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(bg_df$RAP_orig_min, 2), " mm/yr")),
+                        linetype = "longdash", color = orig_col,
+                        alpha = 0.6, linewidth = 0.35),
+              geom_line(aes(y = bg_df$RAP_orig_max, group = 12,
+                            text = paste0("Baseline upper bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(bg_df$RAP_orig_max, 2), " mm/yr")),
+                        linetype = "longdash", color = orig_col,
+                        alpha = 0.6, linewidth = 0.35),
+              geom_ribbon(aes(ymin = bg_df$RAP_orig_min, ymax = bg_df$RAP_orig_max),
+                  fill = orig_col, alpha = 0.20
+              )
+            )
+          }
+        } +
         # Total RAP: dark green
         geom_line(aes(y = RAP_total, group = 2,
                       text = paste0("<br>Year ", Year,
@@ -3784,6 +3957,26 @@ server <- function(input, output, session) {
                                     "<br>RAP: ", round(RAP_total, 2), " mm/yr",
                                     "<br>Budget: ", round(calc_budg_total, 2), " kg/m\u00b2/yr")),
                   color = "darkgreen", linewidth = 1.1) +
+        {
+          if (calc_uncert_available &&
+              all(c("RAP_total_min", "RAP_total_max") %in% names(d))) {
+            list(
+              geom_line(aes(y = RAP_total_min, group = 21,
+                            text = paste0("Lower bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(RAP_total_min, 2), " mm/yr")),
+                        color = "darkgreen", alpha = 0.6, linewidth = 0.55),
+              geom_line(aes(y = RAP_total_max, group = 22,
+                            text = paste0("Upper bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(RAP_total_max, 2), " mm/yr")),
+                        color = "darkgreen", alpha = 0.6, linewidth = 0.55),
+              geom_ribbon(aes(ymin = RAP_total_min, ymax = RAP_total_max),
+                  fill = "darkgreen", alpha = 0.4
+                )
+            )
+          }
+        } +
         geom_point(
           data = pips,
           aes(y = RAP_total, text = paste0(
@@ -4294,6 +4487,24 @@ server <- function(input, output, session) {
       }
       gross_budget <- patch_budget / site_area
 
+      # Bounded gross budgets (calcification bounds only; no bioerosion band
+      # on the Monitoring tab). Fall back to the mean when bounds are absent.
+      patch_budget_min <- 0
+      patch_budget_max <- 0
+      for (i in seq_len(nrow(cover_df))) {
+        s   <- cover_df$taxon[i]
+        cvr <- cover_df$cvr[i]
+        rate <- calc_rates$rate[calc_rates$Taxon == s]
+        if (length(rate) == 0 || is.na(rate[1])) next
+        b <- calc_rate_bounds(s)
+        r_lo <- if (is.finite(b[1])) b[1] else rate[1]
+        r_hi <- if (is.finite(b[2])) b[2] else rate[1]
+        patch_budget_min <- patch_budget_min + site_area * (cvr / 100) * r_lo
+        patch_budget_max <- patch_budget_max + site_area * (cvr / 100) * r_hi
+      }
+      gross_budget_min <- patch_budget_min / site_area
+      gross_budget_max <- patch_budget_max / site_area
+
       # Bioerosion for this year: observed (nearest-year substitution) or regional
       bio_year <- if (!is.null(bio)) nearest_bioerosion(bio, yr) else reg_total
       if (is.na(bio_year)) bio_year <- reg_total
@@ -4302,14 +4513,22 @@ server <- function(input, output, session) {
       # NOTE: COME BACK AND FIX THIS SO MICROBIOEROSION IS APPLIED TO CONSOLIDATED SUBSTRATE
       net_budget <- gross_budget - be_micro_rate - .safe0(bio_year)
       rap <- net_budget / 2.9 / (1 - por)
+      # Bounded RAP uses the SAME average bioerosion (calc uncertainty only)
+      net_budget_min <- gross_budget_min - be_micro_rate - .safe0(bio_year)
+      net_budget_max <- gross_budget_max - be_micro_rate - .safe0(bio_year)
+      rap_min <- net_budget_min / 2.9 / (1 - por)
+      rap_max <- net_budget_max / 2.9 / (1 - por)
       total_coral_pct_cvr <- sum(cover_df$cvr, na.rm = TRUE)
 
       out <- rbind(out, data.frame(
         Year = yr, RAP = rap, budget = net_budget, cover = total_coral_pct_cvr,
+        RAP_min = rap_min, RAP_max = rap_max,
         stringsAsFactors = FALSE
       ))
     }
-    out[order(out$Year), ]
+    out <- out[order(out$Year), ]
+    print(head(out))
+    out
   })
 
   # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
@@ -4450,7 +4669,7 @@ server <- function(input, output, session) {
     slr_refs <- c(
       "Int @2030" = Int_rate_at(2030),
       "Int @2050" = Int_rate_at(2050),
-      "Int @2100" = Int_rate_at(2100)
+      "Int @2070" = Int_rate_at(2070)
     )
     geo_baseline <- 3.1
 
@@ -4462,9 +4681,9 @@ server <- function(input, output, session) {
       x_vals   <- sort(unique(ms$Year))
       x_labels <- ifelse(x_vals == -1, "Baseline", as.character(x_vals))
 
-      data_min <- min(c(ms$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      data_min <- min(c(ms$RAP, ms$RAP_min, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
       y_lo <- rap_axis_min(data_min)
-      y_hi <- max(c(ms$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+      y_hi <- max(c(ms$RAP, ms$RAP_max, geo_baseline, slr_refs), na.rm = TRUE) + 1
       bands <- status_bands_df(x_min, x_max, y_lo)
 
       ribbon_df <- insert_threshold_crossings(ms, xcol = "Year", threshold = 0.5)
@@ -4483,6 +4702,24 @@ server <- function(input, output, session) {
                                     "<br>Cover: ", round(cover, 1), " %",
                                     "<br>Budget: ", round(budget, 2), " kg/m\u00b2/yr")),
                   color = "forestgreen", linewidth = 1.4) +
+        {
+          if (calc_uncert_available &&
+              all(c("RAP_min", "RAP_max") %in% names(ms))) {
+            list(
+              geom_line(aes(y = RAP_min, group = 91,
+                            text = paste0("Lower bound",
+                                          "<br>RAP: ", round(RAP_min, 2), " mm/yr")),
+                        color = "forestgreen", alpha = 0.6, linewidth = 0.7),
+              geom_line(aes(y = RAP_max, group = 92,
+                            text = paste0("Upper bound",
+                                          "<br>RAP: ", round(RAP_max, 2), " mm/yr")),
+                        color = "forestgreen", alpha = 0.6, linewidth = 0.7),
+              geom_ribbon(aes(ymin = RAP_min, ymax = RAP_max),
+                  fill = "forestgreen", alpha = 0.4
+              )
+            )
+          }
+        } +
         geom_point(aes(y = RAP, text = paste0(
                         ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
                         "<br>RAP: ", round(RAP, 2), " mm/yr")),
