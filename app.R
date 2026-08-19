@@ -150,7 +150,7 @@ slr_raw <- read_excel_quiet(
 
 # Keep only the median (quantile 50), medium-confidence rows
 slr_med <- slr_raw[slr_raw$quantile == 50, , drop = FALSE]
-# & slr_raw$confidence == "medium", # this criterion only necessary for NASA Interagency data, not earth.gov
+# & slr_raw$confidence == "medium", # this criterion only necessary for NASA IPCC data, not Interagency data.
 
 # Identify year columns (headers that are purely 4-digit numeric)
 slr_year_cols <- names(slr_med)[grepl("^[0-9]{4}$", names(slr_med))]
@@ -183,7 +183,10 @@ build_slr_timeline <- function(start_year, n_years = 10) {
     if (length(ax) < 2) return(NULL)
 
     ay_m <- as.numeric(vec)             # m at each dataset year
-    fit  <- approxfun(ax, ay_m, rule = 2) # linear SLR (m) vs calendar year
+    # Smooth (monotone spline) cumulative SLR so the year-over-year rate below
+    # is a continuous slope rather than the piecewise-constant steps that a
+    # piecewise-linear fit would produce.
+    fit <- splinefun(ax, ay_m, method = "monoH.FC")
 
     slr_m   <- fit(sim_years)
     slr_mm  <- slr_m * 1000             # m -> mm
@@ -859,7 +862,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     } else {
       # Iterative solve: find the count that reaches target by the HORIZON year.
       # Have to start with a guess for the number of required outplants
-      outplant_guess <- 70
+      outplant_guess <- 50
 
       reiterate <- TRUE
       guard <- 0 # safety cap to prevent runaway loops
@@ -880,15 +883,15 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
         new_area <- search_list[[3]] # area at the horizon year
 
-        # Get within the nearest 0.1 m^2
-        if (needed_outplant_growth - new_area < -0.1) { #Too much growth by the horizon:
+        # Get within the nearest 0.01 m^2
+        if (needed_outplant_growth - new_area < -0.01) { #Too much growth by the horizon:
           # Use fewer outplants
           outplant_guess <- outplant_guess - 1
           if (outplant_guess < 0) {
             outplant_guess <- 0
             reiterate <- FALSE
             }
-        } else if (needed_outplant_growth - new_area > 0.1) { # Not enough growth:
+        } else if (needed_outplant_growth - new_area > 0.01) { # Not enough growth:
           # Use more outplants
           outplant_guess <- outplant_guess + 1
         } else {
@@ -1596,8 +1599,12 @@ body <- dashboardBody(
     tabItem(
       tabName = "projections",
       fluidRow(
-        HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>"),
-        tags$img(src = "persistenceExample.jpg", width = "1400px", height = "1000px")
+        column(10,
+          tags$img(src = "persistenceExample.jpg", width = "1350px", height = "950px")
+        ),
+        column(2,
+          HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>")
+        )
       )
     ),
 
@@ -2179,6 +2186,22 @@ server <- function(input, output, session) {
     if (is.null(x) || length(x) == 0 || is.na(x)) "" else as.character(x)
   }
 
+  # Outplanting-tab readiness gate ----
+  # Baseline/restoration projections require a nonzero unconsolidated-substrate
+  # value AND at least one coral species with cover > 0. Returns TRUE only when
+  # both hold, so reactives can req() on it and value boxes / the timeline show
+  # a neutral placeholder instead of erroring while inputs are incomplete.
+  outplanting_ready <- reactive({
+    uc <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
+    if (uc <= 0) return(FALSE)
+    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    if (length(sp) == 0) return(FALSE)
+    covers <- vapply(sp, function(s) {
+      .safe_num(input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]])
+    }, numeric(1))
+    any(covers > 0)
+  })
+
   # Dark Mode: toggle the body CSS class from the switch ----
   observeEvent(input$dark_mode, {
     session$sendCustomMessage("toggle_dark", isTRUE(input$dark_mode))
@@ -2492,13 +2515,17 @@ server <- function(input, output, session) {
         hr <- min(horizon + 1, nrow(mr$budget_df))
         base_rap     <- bs$rap[sel_idx]
         restored_rap <- mr$budget_df$RAP_total[hr]
-        halo_col <- if (restored_rap >= 0.5) {
+        halo_palette <- c("growth"  = "#002fff",
+                          "stasis"  = "#ffff6d",
+                          "erosion" = "#ff5500")
+        halo_key <- if (restored_rap >= 0.5) {
           "growth"
         } else if (restored_rap <= -0.5) {
           "erosion"
         } else {
           "stasis"
         }
+        halo_col <- unname(halo_palette[halo_key])
         proxy <- proxy |>
           addCircleMarkers(
             data = bs[sel_idx, , drop = FALSE],
@@ -3193,11 +3220,11 @@ server <- function(input, output, session) {
   # Budget uses the area-occupied method: per species, area (m^2) * rate,
   # queried from calc_rates by Taxon, normalized to per-m2, minus bioerosion.
   baseline_metrics <- reactive({
+    req(outplanting_ready())
     # If any of these values are empty, baseline metric calculations will not fire.
     req(nzchar(input$habitat_choice),
         nzchar(input$subregion_choice),
-        nzchar(input$site_area_m2),
-        nzchar(input$base_REQUIRED_Unconsolidated_substrate)
+        nzchar(input$site_area_m2)
         )
     sim_duration <- .safe_num(input$sim_duration)
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
@@ -3257,13 +3284,14 @@ server <- function(input, output, session) {
   # Baseline growth series for the timeline (originals only). Available as soon
   # as species + covers + subregion/habitat are set, independent of any target.
   baseline_growth <- reactive({
+    req(outplanting_ready())
     habitat       <- input$habitat_choice
     subregion <- input$subregion_choice
     site_area     <- .safe_num(input$site_area_m2)
     sim_duration  <- .safe_num(input$sim_duration)
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
     if (site_area <= 0) site_area <- 100
-    req(nzchar(habitat), nzchar(subregion), nzchar(unconsolidated_pct_cvr))
+    req(nzchar(habitat), nzchar(subregion))
 
     sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
     if (length(sp) == 0) return(NULL)
@@ -3297,7 +3325,7 @@ server <- function(input, output, session) {
     b <- baseline_metrics()
     slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
     rest_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
-    rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Species)])
+    rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Taxon)])
     net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
 
     total_coral_cover <- sum(rest_vals, na.rm = TRUE)
@@ -3324,7 +3352,7 @@ server <- function(input, output, session) {
   # Derives all parameters from Shiny inputs, builds target_cover_df from the
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
-    req(nzchar(input$base_REQUIRED_Unconsolidated_substrate))
+    req(outplanting_ready())
 
     # Derived parameters
     habitat        <- input$habitat_choice
@@ -3539,9 +3567,9 @@ server <- function(input, output, session) {
         HTML(paste0("Reef accretion potential<br/>",
           "(this reef is ",
           "<span style='color:", # color determined by conditional below
-          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          if (rt_restored_current()$rap >= 0.5) "forestgreen" else if (rt_restored_current()$rap <= -0.5) "lightcoral" else "orange",
           ";'>",
-          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          if (rt_restored_current()$rap >= 0.5) "growing" else if (rt_restored_current()$rap <= -0.5) "eroding" else "in stasis",
           "</span>",
           ")"
           )
@@ -4036,7 +4064,7 @@ server <- function(input, output, session) {
   # no observed-bioerosion file is present (caller then uses regional rates).
   monitoring_bioerosion_by_year <- reactive({
     sheets <- uploaded_monitoring_bioerosion()
-    
+
     if (is.null(sheets)) return(NULL)
 
     cvr <- uploaded_monitoring_cover()
@@ -4223,15 +4251,18 @@ server <- function(input, output, session) {
     ms <- monitoring_series()
     if (!is.null(ms) && any(ms$Year == -1)) {
       r <- ms[ms$Year == -1, ][1, ]
+      print(paste0("Baseline mcover = ", r$cover, " mbudget = ", r$budget, " mrap = ", r$RAP))
       return(list(cover = r$cover, budget = r$budget, rap = r$RAP))
     }
 
     req(input$monitoring_selected_site)
     dat <- df |> filter(site_id == input$monitoring_selected_site) |> slice(1)
+    rap <- if (!is.null(dat$rap) && !is.na(dat$rap)) dat$rap else dat$net_G / 2.9 / (1 - 0.6265)
+    print(paste0("map site cover = ", dat$hardCoral_PrctCvr, " budget = ", dat$net_G, " rap = ", rap))
     list(
       cover  = dat$hardCoral_PrctCvr,
       budget = dat$net_G,
-      rap    = if (!is.null(dat$rap) && !is.na(dat$rap)) dat$rap else dat$net_G / 2.9 / (1 - 0.6265)
+      rap    = rap
     )
   })
 
@@ -4243,6 +4274,7 @@ server <- function(input, output, session) {
     ms <- monitoring_series()
     if (!is.null(ms) && nrow(ms) > 0) {
       r <- ms[which.max(ms$Year), ]
+      print(paste0("Restored rcover = ", r$cover, " rbudget = ", r$budget, " rrap = ", r$RAP))
       return(list(cover = r$cover, budget = r$budget, rap = r$RAP))
     }
 
@@ -4251,6 +4283,7 @@ server <- function(input, output, session) {
     restored_rap    <- base$rap + cover_rap_slope * inc
     restored_cover  <- base$cover + inc
     restored_budget <- restored_rap * 2.9 * (1 - 0.6265)
+    print(paste0("cover = ", restored_cover, " budget = ", restored_budget, " rap = ", restored_rap))
     list(cover = restored_cover, budget = restored_budget, rap = restored_rap)
   })
 
@@ -4272,9 +4305,9 @@ server <- function(input, output, session) {
         HTML(paste0("Reef accretion potential<br/>",
           "(this reef is ",
           "<span style='color:", # color determined by conditional below
-          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          if (cc_baseline_vals()$rap >= 0.5) "forestgreen" else if (cc_baseline_vals()$rap <= -0.5) "lightcoral" else "orange",
           ";'>",
-          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          if (cc_baseline_vals()$rap >= 0.5) "growing" else if (cc_baseline_vals()$rap <= -0.5) "eroding" else "in stasis",
           "</span>",
           ")"
           )
@@ -4302,9 +4335,9 @@ server <- function(input, output, session) {
         HTML(paste0("Reef accretion potential<br/>",
           "(this reef is ",
           "<span style='color:", # color determined by conditional below
-          if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
+          if (cc_restored_vals()$rap >= 0.5) "forestgreen" else if (cc_restored_vals()$rap <= -0.5) "lightcoral" else "orange",
           ";'>",
-          if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
+          if (cc_restored_vals()$rap >= 0.5) "growing" else if (cc_restored_vals()$rap <= -0.5) "eroding" else "in stasis",
           "</span>",
           ")"
           )
