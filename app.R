@@ -142,26 +142,27 @@ region_pal <- colorFactor(pastel_colors, domain = region_levels)
 taxa <- read_excel_quiet(here("www", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
 
-# Ingest IPCC AR6 sea-level projections (PSMSL id 363, "Total" sheet)
+# Ingest NASA Interagency sea-level projections (PSMSL id 1701 (Vaca Key), "Total" sheet)
 slr_raw <- read_excel_quiet(
-  here("data", "ipcc_ar6_sea_level_projection_psmsl_id_363.xlsx"),
+  here("data", "sl_taskforce_scenarios_psmsl_id_1701.xlsx"),
   sheet = "Total"
 )
 
 # Keep only the median (quantile 50), medium-confidence rows
-slr_med <- slr_raw[slr_raw$quantile == 50 & slr_raw$confidence == "medium", , drop = FALSE]
+slr_med <- slr_raw[slr_raw$quantile == 50, , drop = FALSE]
+# & slr_raw$confidence == "medium", # this criterion only necessary for NASA IPCC data, not Interagency data.
 
 # Identify year columns (headers that are purely 4-digit numeric)
 slr_year_cols <- names(slr_med)[grepl("^[0-9]{4}$", names(slr_med))]
 slr_years_all <- as.integer(slr_year_cols)
 
 # Build a per-scenario lookup: scenario -> named numeric vector (year -> m)
-slr_scenarios <- c("ssp119", "ssp126", "ssp245", "ssp370", "ssp585")
+slr_scenarios <- c("Low", "IntLow", "Int", "IntHigh", "High")
 
 slr_by_scenario <- lapply(slr_scenarios, function(scn) {
   row <- slr_med[slr_med$scenario == scn, , drop = FALSE]
   if (nrow(row) == 0) return(NULL)
-  vals_cm <- as.numeric(unlist(row[1, slr_year_cols]))
+  vals_cm <- as.numeric(unlist(row[1, slr_year_cols])) / 1000 # convert mm to cm
   setNames(vals_cm, slr_years_all) # values in cm
 })
 names(slr_by_scenario) <- slr_scenarios
@@ -182,7 +183,10 @@ build_slr_timeline <- function(start_year, n_years = 10) {
     if (length(ax) < 2) return(NULL)
 
     ay_m <- as.numeric(vec)             # m at each dataset year
-    fit  <- approxfun(ax, ay_m, rule = 2) # linear SLR (m) vs calendar year
+    # Smooth (monotone spline) cumulative SLR so the year-over-year rate below
+    # is a continuous slope rather than the piecewise-constant steps that a
+    # piecewise-linear fit would produce.
+    fit <- splinefun(ax, ay_m, method = "monoH.FC")
 
     slr_m   <- fit(sim_years)
     slr_mm  <- slr_m * 1000             # m -> mm
@@ -201,12 +205,12 @@ build_slr_timeline <- function(start_year, n_years = 10) {
   do.call(rbind, out[!vapply(out, is.null, logical(1))])
 }
 
-# SSP245 annual SLR RATE (mm/yr) at a specific calendar year. Computed as the
+# Int annual SLR RATE (mm/yr) at a specific calendar year. Computed as the
 # year-over-year difference of the interpolated cumulative SLR, matching the
 # rate convention used by build_slr_timeline. Used for the Scenario Comparison
 # RAP barplot reference lines (2030 / 2050 / 2100).
-ssp245_rate_at <- function(cal_year) {
-  vec <- slr_by_scenario[["ssp245"]]
+Int_rate_at <- function(cal_year) {
+  vec <- slr_by_scenario[["Int"]]
   if (is.null(vec)) return(NA_real_)
   ax <- as.integer(names(vec))
   if (length(ax) < 2) return(NA_real_)
@@ -216,7 +220,7 @@ ssp245_rate_at <- function(cal_year) {
 
 # Calculate reef accretion potential
 df$rap <- df$net_G / 2.9 / (1 - 0.6265)
-df$current_state <- ifelse(df$rap > 0.5, "Growth", ifelse(df$rap < -0.5, "Erosion", "Stasis"))
+df$current_state <- ifelse(df$rap > 0.5, "growth", ifelse(df$rap < -0.5, "erosion", "stasis"))
 
 # RAP percentile helper ----
 # Rank a RAP value against the NCRMP baseline distribution (df$rap).
@@ -361,15 +365,15 @@ rap_axis_breaks <- function(y_lo, y_hi) {
 }
 
 # Status-band data frame builder ----
-# Two-row df (Erosion + Stasis) carrying a `label` column that rides through
-# ggplotly's tooltip="text" channel, so bands hover as "Erosion"/"Stasis"
+# Two-row df (erosion + stasis) carrying a `label` column that rides through
+# ggplotly's tooltip="text" channel, so bands hover as "erosion"/"stasis"
 # instead of "trace 0"/"trace 1". Drawn with geom_rect (annotate() can't carry
 # a tooltip aesthetic).
 status_bands_df <- function(xmin, xmax, y_lo) {
   data.frame(
     xmin = c(xmin, xmin), xmax = c(xmax, xmax),
     ymin = c(y_lo, -0.5),  ymax = c(-0.5, 0.5),
-    fill = c("red", "yellow"), label = c("Erosion", "Stasis"),
+    fill = c("red", "yellow"), label = c("erosion", "stasis"),
     stringsAsFactors = FALSE
   )
 }
@@ -534,18 +538,31 @@ assemblage_porosity <- function(cover_df, cover_col) {
   por / 100 # proportion
 }
 
-baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, macrobioerosion, bp) {
+baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, macrobioerosion, bp,
+                                    be_sd_lo = NA_real_, be_sd_hi = NA_real_) {
     # Apply bioerosion to baseline growth df:
     bg_df$consol_area_orig <- site_area - (site_area * uc_pct / 100) - (site_area * bg_df$pct_cvr_orig / 100)
     bg_df$microbioerosion  <- (bg_df$consol_area_orig / site_area) * be_micro_rate # Multiply the general microbioerosion rate by the proportion of available consolidated sediment
     bg_df$calc_budg_orig   <- bg_df$calc_budg_orig - bg_df$microbioerosion - macrobioerosion
     bg_df$RAP_orig         <- bg_df$calc_budg_orig / 2.9 / (1 - bp)
 
+    # Bounded RAP. min = low calcification + HIGH erosion (macro + +1 SD);
+    # max = high calcification + LOW erosion (macro + -1 SD). When bounds/SDs
+    # are unavailable the min/max columns mirror the mean.
+    if ("calc_budg_orig_min" %in% names(bg_df) && "calc_budg_orig_max" %in% names(bg_df)) {
+      macro_hi <- macrobioerosion + (if (is.finite(be_sd_hi)) be_sd_hi else 0)
+      macro_lo <- macrobioerosion + (if (is.finite(be_sd_lo)) be_sd_lo else 0)
+      bg_df$calc_budg_orig_min <- bg_df$calc_budg_orig_min - bg_df$microbioerosion - macro_hi
+      bg_df$calc_budg_orig_max <- bg_df$calc_budg_orig_max - bg_df$microbioerosion - macro_lo
+      bg_df$RAP_orig_min <- bg_df$calc_budg_orig_min / 2.9 / (1 - bp)
+      bg_df$RAP_orig_max <- bg_df$calc_budg_orig_max / 2.9 / (1 - bp)
+    }
+
     bg_df
 }
 
 # ----------------------------------------------------------------------------
-# Growth simulation ----
+# growth simulation ----
 # Applicable to original colonies and new outplants, and reused by both the
 # restoration model and the baseline-growth reactive. Performs its own per-
 # species lookups (growth rate, DHW slope) from `species` + `bleaching_severity`.
@@ -571,7 +588,15 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
                            # (generalized default, see about species-specific values later)
   sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
 
-  out_df <- data.frame()
+  # Per-species calcification-rate bounds (kg CaCO3/m2/yr). NA-safe: when
+  # unavailable, min/max budget columns mirror the average.
+  cr_bounds   <- calc_rate_bounds(species)
+  rate_lo     <- cr_bounds[1]
+  rate_hi     <- cr_bounds[2]
+
+  out_df     <- data.frame()
+  out_df_min <- data.frame()
+  out_df_max <- data.frame()
   new_size             <- colony_diam  # working colony diameter for this run
   colony_count_thisrun <- colony_count # working colony count for this run
   last_bleach_year     <- 1            # placeholder
@@ -580,7 +605,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Incorporate Mote outplant mortality observations during Year 0 = "Year 1".
     # Apply before growth calculation.
-    # Colony numbers be rounded at every step.
+    # Colony numbers rounded at every step.
     if (group == "outplant" && i == 1) {
       colony_count_thisrun <- round(colony_count_thisrun * (1 - mortality_by_size(colony_diam)))
     }
@@ -608,45 +633,72 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Kill colonies due to chronic whole-colony mortality (Brown et al. 2026)
     # Determine size bin
-    this_bin <- round(floor(new_size / 5) * 5) # Round down to nearest 5 cm
+    this_bin <- round(floor(new_size / 5) * 5) # Round size down to nearest 5 cm bin
     this_bin <- ifelse(this_bin < 5, 5, this_bin) # Ensure minimum bin is 5 cm
     # Determine morphology
     this_morph <- if (species %in% all_branching_species) "branching" else "other"
     this_mortality_whole <- subset(mortality_whole, mortality_whole["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_whole <- this_mortality_whole / 100 # Convert from percent to proportion
-
+    # Reduce colony count
     colony_count_thisrun <- round(colony_count_thisrun * (1 - this_mortality_whole))
 
-    # Grow the surviving colonies
-    # Apply post-bleaching growth reduction to planar growth rate
-    new_size <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
-    new_area <- (new_size / 2) ^ 2 * pi * colony_count_thisrun
-
-    # If bleaching, apply the remaining bleaching stress that did not cause mortality
-    # as a reduction to the new_area created this year:
-    if (bleaching) {
-      new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
-    }
-
-    # Apply annual partial mortality to new_area created by surviving colonies
+    # Shrink colonies due to chronic partial mortality (Brown et al. 2026)
+    # Calculate starting area
+    new_area <- (new_size / 2) ^ 2 * pi
+    # Apply annual partial mortality to surviving colonies' starting area
     this_mortality_partial <- subset(mortality_partial, mortality_partial["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_partial <- this_mortality_partial / 100 # Convert from percent to proportion
     new_area <- new_area * (1 - this_mortality_partial)
 
-    # Colony diameter should be recalculated from new_area at this step?
+    # If bleaching, apply the remaining bleaching stress that did not cause mortality
+    # as a reduction to the colonies' area:
+    if (bleaching) {
+      new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
+    }
+
+    # Recalculate post-mortality colony diameter from reduced new_area:
+    new_size <- 2 * sqrt(new_area / pi)
+
+    # Grow the surviving colonies
+    # Apply post-bleaching growth reduction to planar growth rate
+    new_size <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
+
+    # Recalculate the post-growth per-colony area:
+    new_area <- (new_size / 2) ^ 2 * pi
+    # Calculate per-species area:
+    sp_area <- new_area * colony_count_thisrun
 
     # Calculate the carbonate budget contribution from this species for this year
-    contrib <- calc_rates$rate[calc_rates$Taxon == species] * new_area
+    sp_rate <- calc_rates$rate[calc_rates$Taxon == species]
+    contrib <- sp_rate * sp_area
     budget  <- contrib / site_area
 
+    # Bounded budgets (same geometry, bounded calcification rate). Fall back to
+    # the average rate when a bound is missing so min/max mirror the mean.
+    r_lo <- if (is.finite(rate_lo)) rate_lo else if (length(sp_rate)) sp_rate else NA_real_
+    r_hi <- if (is.finite(rate_hi)) rate_hi else if (length(sp_rate)) sp_rate else NA_real_
+    budget_lo <- (r_lo * sp_area) / site_area
+    budget_hi <- (r_hi * sp_area) / site_area
+
     # Populate the output dataframe with total values as of this year:
-    out_df[i, "area"]      <- new_area # Calcifier area
+    out_df[i, "area"]      <- sp_area # Calcifier area
     out_df[i, "calc_accr"] <- contrib # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
     out_df[i, "calc_budg"] <- budget # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
-    out_df[i, "pct_cvr"]   <- new_area / site_area * 100 # Calcifier percent cover
+    out_df[i, "pct_cvr"]   <- sp_area / site_area * 100 # Calcifier percent cover
+
+    out_df_min[i, "area"]      <- sp_area
+    out_df_min[i, "calc_accr"] <- r_lo * sp_area
+    out_df_min[i, "calc_budg"] <- budget_lo
+    out_df_min[i, "pct_cvr"]   <- sp_area / site_area * 100
+
+    out_df_max[i, "area"]      <- sp_area
+    out_df_max[i, "calc_accr"] <- r_hi * sp_area
+    out_df_max[i, "calc_budg"] <- budget_hi
+    out_df_max[i, "pct_cvr"]   <- sp_area / site_area * 100
   }
 
-  list(df = out_df, final_count = colony_count_thisrun, final_area = new_area)
+  list(df = out_df, final_count = colony_count_thisrun, final_area = new_area,
+       df_min = out_df_min, df_max = out_df_max)
 }
 
 # Resolve habitat-specific macrobioerosion ----
@@ -680,6 +732,47 @@ resolve_species_bioerosion <- function(subregion, habitat) {
 # Generalized Caribbean microbioerosion rate: 0.24 kg CaCO3/m2/yr
 be_micro_rate <- 0.24
 
+# Uncertainty-column availability ----
+# Calcification bounds present + non-empty?
+calc_uncert_available <- all(c("lower_bound", "upper_bound") %in% names(calc_rates)) &&
+  any(is.finite(suppressWarnings(as.numeric(calc_rates[["lower_bound"]])))) &&
+  any(is.finite(suppressWarnings(as.numeric(calc_rates[["upper_bound"]]))))
+
+# Bioerosion STDEV columns present + non-empty?
+bioerosion_uncert_available <- all(
+  c("STDEV_PARROTFISH", "STDEV_URCHIN", "STDEV_MACROBIOEROSION") %in% names(bioerosion)
+) && any(is.finite(suppressWarnings(as.numeric(bioerosion$STDEV_MACROBIOEROSION))))
+
+# Per-species calcification-rate bounds lookup (kg CaCO3/m2/yr).
+# Returns c(lo, hi); NA when unavailable for that taxon.
+calc_rate_bounds <- function(species) {
+  if (!calc_uncert_available) {
+    return(c(NA_real_, NA_real_))
+  }
+  row <- calc_rates[calc_rates$Taxon == species, , drop = FALSE]
+  if (nrow(row) == 0) return(c(NA_real_, NA_real_))
+  lo <- suppressWarnings(as.numeric(row[["lower_bound"]][1]))
+  hi <- suppressWarnings(as.numeric(row[["upper_bound"]][1]))
+  c(lo, hi)
+}
+
+# +/-1 STDEV bioerosion band (kg CaCO3/m2/yr) for a subregion/habitat.
+# Returns c(minus1sd_total, plus1sd_total) added to the AVG macrobioerosion.
+# NA when unavailable.
+bioerosion_stdev <- function(subregion, habitat) {
+  if (!bioerosion_uncert_available) {
+    return(c(NA_real_, NA_real_))
+  }
+  be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
+  be_hab <- be_sub[be_sub$HABITAT_TYPE == habitat, ]
+  if (nrow(be_hab) == 0) return(c(NA_real_, NA_real_))
+  sd_p <- .safe0(be_hab$STDEV_PARROTFISH[1])
+  sd_u <- .safe0(be_hab$STDEV_URCHIN[1])
+  sd_m <- .safe0(be_hab$STDEV_MACROBIOEROSION[1])
+  sd_tot <- sd_p + sd_u + sd_m
+  c(-sd_tot, sd_tot)
+}
+
 # Baseline-only original growth ----
 # Thin wrapper over simulate_growth: loops the selected species (originals
 # only) and sums the per-year RAP + % cover + budget. Porosity from the
@@ -692,6 +785,8 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_rap  <- rep(0, n)
   total_cvr  <- rep(0, n)
   total_budg <- rep(0, n)
+  total_budg_min <- rep(0, n)
+  total_budg_max <- rep(0, n)
 
   for (row_i in seq_len(nrow(baseline_cover_df))) {
     species        <- baseline_cover_df$taxon[row_i]
@@ -711,11 +806,15 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
                            bleaching_frequency = bleaching_frequency)
 
     #total_rap  <- total_rap  + sim$df$RAP
-    total_cvr  <- total_cvr  + sim$df$pct_cvr
-    total_budg <- total_budg + sim$df$calc_budg
+    total_cvr      <- total_cvr      + sim$df$pct_cvr
+    total_budg     <- total_budg     + sim$df$calc_budg
+    total_budg_min <- total_budg_min + sim$df_min$calc_budg
+    total_budg_max <- total_budg_max + sim$df_max$calc_budg
   }
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
-             pct_cvr_orig = total_cvr, calc_budg_orig = total_budg)
+             pct_cvr_orig = total_cvr, calc_budg_orig = total_budg,
+             calc_budg_orig_min = total_budg_min,
+             calc_budg_orig_max = total_budg_max)
 }
 
 # ----------------------------------------------------------------------------
@@ -761,11 +860,15 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   area_orig       <- rep(0, n)
   calc_accr_orig  <- rep(0, n)
   calc_budg_orig  <- rep(0, n)
+  calc_budg_orig_min <- rep(0, n)
+  calc_budg_orig_max <- rep(0, n)
   # RAP_orig        <- rep(0, n)
   pct_cvr_orig    <- rep(0, n)
   area_new        <- rep(0, n)
   calc_accr_new   <- rep(0, n)
   calc_budg_new   <- rep(0, n)
+  calc_budg_new_min  <- rep(0, n)
+  calc_budg_new_max  <- rep(0, n)
   # RAP_new         <- rep(0, n)
   pct_cvr_new     <- rep(0, n)
 
@@ -798,6 +901,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     area_orig       <- area_orig       + od$area
     calc_accr_orig  <- calc_accr_orig  + od$calc_accr
     calc_budg_orig  <- calc_budg_orig  + od$calc_budg
+    calc_budg_orig_min <- calc_budg_orig_min + orig_list$df_min$calc_budg
+    calc_budg_orig_max <- calc_budg_orig_max + orig_list$df_max$calc_budg
     # RAP_orig        <- RAP_orig        + od$RAP
     pct_cvr_orig    <- pct_cvr_orig    + od$pct_cvr
     any_growth <- TRUE
@@ -849,8 +954,28 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     } else {
       # Iterative solve: find the count that reaches target by the HORIZON year.
-      # Have to start with a guess for the number of required outplants
-      outplant_guess <- 70
+      # Strategy: run one trial, measure the per-outplant area yield at the
+      # horizon, jump the guess to the theoretical count needed to fill
+      # sp_to_grow_m, then refine with a bounded +/-1 loop.
+      #
+      # NOTE: simulate_growth's final_area (index [[3]]) is the per-COLONY area
+      # at the horizon, so total yielded area = final_area * outplant_guess.
+      outplant_guess <- 50
+
+      trial <- simulate_growth(group = "outplant", species = species,
+                               colony_count = outplant_guess, colony_diam = outplant_diam,
+                               duration = rest_horizon + 1,
+                               site_area = site_area, uc_pct = uc_pct,
+                               bleaching_severity = bleaching_severity,
+                               bleaching_frequency = bleaching_frequency)
+      per_colony_area <- trial[[3]]          # area of ONE surviving colony at horizon
+
+      # Seed from the theoretical count. Each outplant occupies its starting
+      # footprint immediately and grows to per_colony_area by the horizon, so
+      # total horizon area ~= per_colony_area * n. Solve n for sp_to_grow_m.
+      if (is.finite(per_colony_area) && per_colony_area > 0) {
+        outplant_guess <- max(0, ceiling(sp_to_grow_m / per_colony_area))
+      }
 
       reiterate <- TRUE
       guard <- 0 # safety cap to prevent runaway loops
@@ -869,17 +994,17 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                        bleaching_severity = bleaching_severity,
                                        bleaching_frequency = bleaching_frequency)
 
-        new_area <- search_list[[3]] # area at the horizon year
+        new_area <- search_list[[3]] * outplant_guess # total area at the horizon
 
-        # Get within the nearest 0.1 m^2
-        if (needed_outplant_growth - new_area < -0.1) { #Too much growth by the horizon:
+        # Get within the nearest 0.01 m^2
+        if (needed_outplant_growth - new_area < -0.01) { #Too much growth by the horizon:
           # Use fewer outplants
           outplant_guess <- outplant_guess - 1
           if (outplant_guess < 0) {
             outplant_guess <- 0
             reiterate <- FALSE
             }
-        } else if (needed_outplant_growth - new_area > 0.1) { # Not enough growth:
+        } else if (needed_outplant_growth - new_area > 0.01) { # Not enough growth:
           # Use more outplants
           outplant_guess <- outplant_guess + 1
         } else {
@@ -899,6 +1024,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     area_new       <- area_new       + nd$area
     calc_accr_new  <- calc_accr_new  + nd$calc_accr
     calc_budg_new  <- calc_budg_new  + nd$calc_budg
+    calc_budg_new_min <- calc_budg_new_min + new_list$df_min$calc_budg
+    calc_budg_new_max <- calc_budg_new_max + new_list$df_max$calc_budg
     # RAP_new        <- RAP_new        + nd$RAP
     pct_cvr_new    <- pct_cvr_new    + nd$pct_cvr
 
@@ -928,6 +1055,15 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$pct_cvr_total    <- budget_df$pct_cvr_orig    + budget_df$pct_cvr_new
   # budget_df$RAP_total        <- budget_df$RAP_orig        + budget_df$RAP_new
 
+  # Bounded gross totals (calcification bounds only, so far)
+  budget_df$calc_budg_total_min <- calc_budg_orig_min + calc_budg_new_min
+  budget_df$calc_budg_total_max <- calc_budg_orig_max + calc_budg_new_max
+
+  # Bioerosion +/-1 SD band (NA -> 0 offset when unavailable)
+  be_sd <- bioerosion_stdev(subregion, habitat)   # c(-sd, +sd)
+  macro_hi <- macrobioerosion + (if (is.finite(be_sd[2])) be_sd[2] else 0)
+  macro_lo <- macrobioerosion + (if (is.finite(be_sd[1])) be_sd[1] else 0)
+
   # Apply bioerosion to final carbonate budget:
   # Determine area of consolidated substrate
   budget_df$consol_area_total <- site_area - (site_area * uc_pct / 100) - (site_area * budget_df$pct_cvr_total / 100)
@@ -938,6 +1074,12 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Recalculate RAP from adjusted carbonate budget
   budget_df$RAP_total         <- budget_df$calc_budg_total / 2.9 / (1 - por)
 
+  # Bounded totals: min = low calc + high erosion; max = high calc + low erosion
+  budget_df$calc_budg_total_min <- budget_df$calc_budg_total_min - budget_df$microbioerosion - macro_hi
+  budget_df$calc_budg_total_max <- budget_df$calc_budg_total_max - budget_df$microbioerosion - macro_lo
+  budget_df$RAP_total_min <- budget_df$calc_budg_total_min / 2.9 / (1 - por)
+  budget_df$RAP_total_max <- budget_df$calc_budg_total_max / 2.9 / (1 - por)
+
   # Apply the SAME bioerosion to the ORIGINALS-only budget so RAP_orig is net
   # (matches baseline_bioerosion_RAP). Without this the dashed "Original" line
   # is gross while the standalone Baseline line is net, making Baseline look
@@ -946,6 +1088,12 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$be_micro_orig    <- (budget_df$consol_area_orig / site_area) * be_micro_rate
   budget_df$calc_budg_orig   <- budget_df$calc_budg_orig - budget_df$be_micro_orig - macrobioerosion
   budget_df$RAP_orig         <- budget_df$calc_budg_orig / 2.9 / (1 - por)
+
+  # Bounded originals-only
+  budget_df$calc_budg_orig_min <- calc_budg_orig_min - budget_df$be_micro_orig - macro_hi
+  budget_df$calc_budg_orig_max <- calc_budg_orig_max - budget_df$be_micro_orig - macro_lo
+  budget_df$RAP_orig_min <- budget_df$calc_budg_orig_min / 2.9 / (1 - por)
+  budget_df$RAP_orig_max <- budget_df$calc_budg_orig_max / 2.9 / (1 - por)
 
   list(
     budget_df = budget_df,
@@ -1093,7 +1241,10 @@ num_pal_rev        <- colorNumeric(colors, domain = at, reverse = TRUE)
 pal_gross_rev      <- make_wr_pal("grossE_G", rev = TRUE)
 
 # Reef State: original Blue / Yellow / Orange status colors
-state_colors <- c("Growth" = "#0099FF", "Stasis" = "#FFFF99", "Erosion" = "#FF6600")
+state_colors <- c("growth"  = "#0099FF",
+                  "stasis"  = "#FFFF99",
+                  "erosion" = "#FF6600")
+
 num_pal_state <- colorFactor(
   palette = unname(state_colors),
   levels  = names(state_colors)
@@ -1102,6 +1253,7 @@ num_pal_state <- colorFactor(
 # Restoration Mix groupings ----
 # Branching (tan) | Weedy/Other (lime) across the top; Massive (gray) below.
 branching_species <- c("Acropora cervicornis", "Acropora palmata")
+weedy_species <- c("Porites astreoides", "Porites porites")
 mix_massive_species <- c(
   "Colpophyllia natans",
   "Diploria labyrinthiformis",
@@ -1113,7 +1265,6 @@ mix_massive_species <- c(
   "Stephanocoenia intersepta"
 )
 
-weedy_species <- c("Porites astreoides", "Porites porites")
 
 # Pastel palette pool for scenarios ----
 # Strong reds and greens are excluded so bar colors don't carry connotative
@@ -1312,11 +1463,11 @@ body <- dashboardBody(
         width: auto; font-size: 13px; font-weight: bold;
         margin-bottom: 2px; padding: 0 4px; border: none;
       }
-      .mix-branching { border: 2px solid #c8a165; }   /* tan */
+      .mix-branching { border: 2px solid #c8a165; margin-left: -10px }   /* tan */
       .mix-branching > legend { color: #a97d3e; }
       .mix-massive   { border: 2px solid #9e9e9e; }   /* gray */
       .mix-massive   > legend { color: #6f6f6f; }
-      .mix-weedy     { border: 2px solid #7bc043; }   /* lime */
+      .mix-weedy     { border: 2px solid #7bc043; margin-right: -10px }  /* lime */
       .mix-weedy     > legend { color: #5a9130; }
       
       /* Two-line, italic slider labels in the mix sub-boxes */
@@ -1350,6 +1501,13 @@ body <- dashboardBody(
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
 
+      /* Apply bolding to shinydashboard::box titles */
+      .box-header .box-title {
+        font-weight: bold;
+        text-shadow: -1px -1px 0 black, 1px -1px 0 black,
+                     -1px 1px 0 black, 1px 1px 0 black;
+      }
+
       /* Shrink the main value text size and add a 1px black text shadow in the valueBox readouts */
       .small-box h3 { 
         font-size: 30px; !important;
@@ -1363,7 +1521,7 @@ body <- dashboardBody(
       }
 
       /* Red warning under the bioerosion upload widget */
-      .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: 4px; }
+      .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: -15px; margin-bottom: 15px; }
 
       /* Inline upload label + Download template button */
       .upload-label-row {
@@ -1577,8 +1735,12 @@ body <- dashboardBody(
     tabItem(
       tabName = "projections",
       fluidRow(
-        HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>"),
-        tags$img(src = "persistenceExample.jpg", width = "1500px", height = "850px")
+        column(10,
+          tags$img(src = "persistenceExample.jpg", width = "1350px", height = "950px")
+        ),
+        column(2,
+          HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>")
+        )
       )
     ),
 
@@ -1610,7 +1772,7 @@ body <- dashboardBody(
                   fileInput("baseline_upload", NULL, accept = c(".xlsx")
                   ),
                   tags$div(
-                    style = "display: flex; margin-top: -35px; margin-bottom: 20px; gap: 6px",
+                    style = "display: flex; margin-top: -15px; margin-bottom: 20px; gap: 6px",
                     actionButton("baseline_load_example", "Example",
                                 icon = icon("upload"), class = "btn-sm"),
                     actionButton("baseline_load_cache", "Cache",
@@ -1694,7 +1856,7 @@ body <- dashboardBody(
           # ---- Input element 2: Restoration parameters ----
           shinydashboard::box(
             title = "Restoration Parameters",
-            width = 12, height = "375px",
+            width = 12, height = "360px",
             status = "success", solidHeader = TRUE,
             # div(tags$strong("Target cover (%) post-restoration:")),
             # Top row: Branching (2 cols) + Weedy/Other (2 cols), split evenly
@@ -1702,10 +1864,11 @@ body <- dashboardBody(
               column(8,
                 tags$fieldset(
                   style = "border: 2px solid seagreen; border-radius: 6px;
-                        padding: 8px; margin-top: 3px;",
+                        padding: 8px; margin-top: 3px; margin-right: -15px;",
                   tags$legend(
                     style = "width: auto; font-size: 15px; font-weight: bold;
-                            color: seagreen; padding: 0 3px; border: none; margin-bottom: 0",
+                            color: seagreen; padding: 0 3px; border: none;
+                            margin-bottom: 0;",
                     "Species Mix: Target cover (%) post-restoration"
                     ),
                   column(6,
@@ -1737,7 +1900,7 @@ body <- dashboardBody(
               column(4,
                 tags$fieldset(
                   style = "border: 2px solid lightseagreen; border-radius: 6px;
-                        padding: 0 5px; margin: 0 0 -6px -4px;",
+                        padding: 0 10px; margin: 0 0 -10px -4px;",
                   tags$legend(
                     style = "width: auto; font-size: 15px; font-weight: bold;
                             color: lightseagreen; padding: 1px; border: none; margin-bottom: 0",
@@ -1766,8 +1929,11 @@ body <- dashboardBody(
                   ),
                   # Sim duration shares the horizon's 0-30 domain so tick geometry
                   # lines up natively; a snap-to-10 floor keeps it >= 10 years.
-                  sliderInput("sim_duration", tags$strong("Simulation duration (years)"),
-                    value = 10, min = 0, max = 30, step = 5
+                  tags$div(style = "margin: -10px 0;",
+                    sliderInput(
+                      "sim_duration", tags$strong("Simulation duration (years)"),
+                      value = 10, min = 0, max = 30, step = 5
+                    )
                   ),
                   # Red warning when horizon exceeds sim duration
                   uiOutput("sim_duration_warning")
@@ -1967,9 +2133,12 @@ body <- dashboardBody(
                              icon = icon("upload"), class = "btn-sm")
               )
             ),
-            fileInput("upload_cover", NULL,
-              accept = c(".csv", ".xlsx")
+            tags$div(style = "margin-bottom: -30px;",
+              fileInput("upload_cover", NULL,
+                accept = c(".csv", ".xlsx")
+              )
             ),
+            uiOutput("monitoring_cover_uc_warning"),
             tags$div(
               class = "upload-label-row",
               tags$span(class = "control-label", "Bioerosion .xlsx"),
@@ -1981,8 +2150,10 @@ body <- dashboardBody(
                              icon = icon("upload"), class = "btn-sm")
               )
             ),
-            fileInput("upload_bioerosion", NULL,
-              accept = c(".csv", ".xlsx")
+            tags$div(style = "margin-bottom: -30px;",
+              fileInput("upload_bioerosion", NULL,
+                accept = c(".csv", ".xlsx")
+              )
             ),
 
             # Red warning for unobserved parrotfish size classes
@@ -2156,6 +2327,22 @@ server <- function(input, output, session) {
     if (is.null(x) || length(x) == 0 || is.na(x)) "" else as.character(x)
   }
 
+  # Outplanting-tab readiness gate ----
+  # Baseline/restoration projections require a nonzero unconsolidated-substrate
+  # value AND at least one coral species with cover > 0. Returns TRUE only when
+  # both hold, so reactives can req() on it and value boxes / the timeline show
+  # a neutral placeholder instead of erroring while inputs are incomplete.
+  outplanting_ready <- reactive({
+    uc <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
+    if (uc <= 0) return(FALSE)
+    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    if (length(sp) == 0) return(FALSE)
+    covers <- vapply(sp, function(s) {
+      .safe_num(input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]])
+    }, numeric(1))
+    any(covers > 0)
+  })
+
   # Dark Mode: toggle the body CSS class from the switch ----
   observeEvent(input$dark_mode, {
     session$sendCustomMessage("toggle_dark", isTRUE(input$dark_mode))
@@ -2218,13 +2405,13 @@ server <- function(input, output, session) {
     # Projected RAP from the target cover increase, via the regression slope
     inc <- if (is.null(input$target_cover_increase)) 0 else input$target_cover_increase
     d$restored_rap <- d$rap + cover_rap_slope * inc
-    d$restored_state <- ifelse(d$restored_rap > 0.5, "Growth", ifelse(d$restored_rap < -0.5, "Erosion", "Stasis"))
+    d$restored_state <- ifelse(d$restored_rap > 0.5, "growth", ifelse(d$restored_rap < -0.5, "erosion", "stasis"))
 
     # Halo / fill classification (only meaningful when inc > 0)
     classify <- function(rap) {
-        if (rap >= 0.5) {
+        if (rap > 0.5) {
           "growth"
-        } else if (rap <= -0.5) {
+        } else if (rap < -0.5) {
           "erosion"
         } else {
           "stasis"
@@ -2303,18 +2490,18 @@ server <- function(input, output, session) {
     }
 
     # In RAP mode, reduce "No Return" sites to 25% opacity
-    fill_opacity <- rep(0.85, nrow(d))
-    if (field == "rap" && inc > 0) {
-      erod_idx <- which(d$halo == "erosion")
-      fill_cols[erod_idx] <- "erosion"
-      fill_opacity[erod_idx] <- 0.25
-    }
+    # fill_opacity <- rep(0.85, nrow(d))
+    # if (field == "rap" && inc > 0) {
+    #   erod_idx <- which(d$halo == "erosion")
+    #   fill_cols[erod_idx] <- "erosion"
+    #   fill_opacity[erod_idx] <- 0.25
+    # }
 
     # Draw halos first (underneath) when slider is active
     if (inc > 0) {
-      halo_cols <- c(growth = "#002fff",
-                     stasis = "#ffff6d",
-                     erosion = "#ff5500"
+      halo_cols <- c("growth"  = "#002fff",
+                     "stasis"  = "#ffff6d",
+                     "erosion" = "#ff5500"
       )
       hd <- d[d$halo %in% names(halo_cols), , drop = FALSE]
       if (nrow(hd) > 0) {
@@ -2341,7 +2528,7 @@ server <- function(input, output, session) {
         weight = 1,
         color = "black",
         fillColor = fill_cols,
-        fillOpacity = fill_opacity,
+        fillOpacity = 100,
         stroke = TRUE,
         group = "ncrmp",
         layerId = ~site_id,
@@ -2371,9 +2558,9 @@ server <- function(input, output, session) {
       )
 
     # Legend for Restoration Potential
-    rest_colors = c("Growth"  = "#002fff",
-                    "Stasis"  = "#ffff6d",
-                    "Erosion" = "#ff5500")
+    rest_colors = c("growth"  = "#002fff",
+                    "stasis"  = "#ffff6d",
+                    "erosion" = "#ff5500")
 
     proxy <- proxy |>
       addLegend("bottomleft",
@@ -2445,8 +2632,8 @@ server <- function(input, output, session) {
         bs$restored_rap[sel_row] <- mr$budget_df$RAP_total[hr]
       }
     }
-    bs$restored_state <- ifelse(bs$restored_rap > 0.5, "Growth",
-                         ifelse(bs$restored_rap < -0.5, "Erosion", "Stasis"))
+    bs$restored_state <- ifelse(bs$restored_rap > 0.5, "growth",
+                         ifelse(bs$restored_rap < -0.5, "erosion", "stasis"))
 
     base_radius <- point_size() * 1.5           # 50% larger than NCRMP
     radii <- rep(base_radius, nrow(bs))
@@ -2469,13 +2656,17 @@ server <- function(input, output, session) {
         hr <- min(horizon + 1, nrow(mr$budget_df))
         base_rap     <- bs$rap[sel_idx]
         restored_rap <- mr$budget_df$RAP_total[hr]
-        halo_col <- if (restored_rap >= 0.5) {
+        halo_palette <- c("growth"  = "#002fff",
+                          "stasis"  = "#ffff6d",
+                          "erosion" = "#ff5500")
+        halo_key <- if (restored_rap >= 0.5) {
           "growth"
         } else if (restored_rap <= -0.5) {
           "erosion"
         } else {
           "stasis"
         }
+        halo_col <- unname(halo_palette[halo_key])
         proxy <- proxy |>
           addCircleMarkers(
             data = bs[sel_idx, , drop = FALSE],
@@ -2672,7 +2863,7 @@ server <- function(input, output, session) {
 
       net_budget <- gross_budget - be_micro - be_macro
       rap <- net_budget / 2.9 / (1 - 0.6265)
-      state <- if (rap > 0.5) "Growth" else if (rap < -0.5) "Erosion" else "Stasis"
+      state <- if (rap > 0.5) "growth" else if (rap < -0.5) "erosion" else "stasis"
 
       # Gross bioerosion figure for popup (whole-patch kg/yr, to echo NCRMP)
       gross_be <- (be_micro + be_macro)
@@ -3170,11 +3361,11 @@ server <- function(input, output, session) {
   # Budget uses the area-occupied method: per species, area (m^2) * rate,
   # queried from calc_rates by Taxon, normalized to per-m2, minus bioerosion.
   baseline_metrics <- reactive({
+    req(outplanting_ready())
     # If any of these values are empty, baseline metric calculations will not fire.
     req(nzchar(input$habitat_choice),
         nzchar(input$subregion_choice),
-        nzchar(input$site_area_m2),
-        nzchar(input$base_REQUIRED_Unconsolidated_substrate)
+        nzchar(input$site_area_m2)
         )
     sim_duration <- .safe_num(input$sim_duration)
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
@@ -3234,8 +3425,7 @@ server <- function(input, output, session) {
   # Baseline growth series for the timeline (originals only). Available as soon
   # as species + covers + subregion/habitat are set, independent of any target.
   baseline_growth <- reactive({
-    req(nzchar(input$base_REQUIRED_Unconsolidated_substrate))
-
+    req(outplanting_ready())
     habitat       <- input$habitat_choice
     subregion <- input$subregion_choice
     site_area     <- .safe_num(input$site_area_m2)
@@ -3276,7 +3466,7 @@ server <- function(input, output, session) {
     b <- baseline_metrics()
     slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
     rest_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
-    rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Species)])
+    rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Taxon)])
     net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
 
     total_coral_cover <- sum(rest_vals, na.rm = TRUE)
@@ -3303,7 +3493,7 @@ server <- function(input, output, session) {
   # Derives all parameters from Shiny inputs, builds target_cover_df from the
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
-    req(nzchar(input$base_REQUIRED_Unconsolidated_substrate))
+    req(outplanting_ready())
 
     # Derived parameters
     habitat        <- input$habitat_choice
@@ -3485,11 +3675,13 @@ server <- function(input, output, session) {
     valueBox(paste0(round(baseline_metrics()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
           if (baseline_metrics()$rap >= 0.5) "forestgreen" else if (baseline_metrics()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
+          ";'>",
           if (baseline_metrics()$rap >= 0.5) "growing" else if (baseline_metrics()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          "</span>",
+          ")"
           )
         )
       ),
@@ -3514,11 +3706,13 @@ server <- function(input, output, session) {
     valueBox(paste0(round(rt_restored_current()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
           if (rt_restored_current()$rap >= 0.5) "forestgreen" else if (rt_restored_current()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
+          ";'>",
           if (rt_restored_current()$rap >= 0.5) "growing" else if (rt_restored_current()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          "</span>",
+          ")"
           )
         )
       ),
@@ -3549,7 +3743,10 @@ server <- function(input, output, session) {
 
     # Apply bioerosion to baseline growth only when it is a real frame.
     if (!is.null(bg_df)) {
-      bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate, macrobioerosion, bp)
+      be_sd_bg <- bioerosion_stdev(input$subregion_choice, input$habitat_choice)
+      bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate,
+                                       macrobioerosion, bp,
+                                       be_sd_lo = be_sd_bg[1], be_sd_hi = be_sd_bg[2])
     }
 
     tryCatch({
@@ -3578,15 +3775,15 @@ server <- function(input, output, session) {
     start_year <- as.integer(format(Sys.Date(), "%Y")) + 1
     slr_tl <- build_slr_timeline(start_year, n_years = b$sim_duration)
 
-    # Line-weight emphasis: ssp245 heaviest, then ssp126 & ssp370, rest light
+    # Line-weight emphasis: Int heaviest, then IntLow & IntHigh, rest light
     slr_weight <- c(
-      ssp119 = 0.2, ssp126 = 0.4, ssp245 = 0.75,
-      ssp370 = 0.4, ssp585 = 0.2
+      Low = 0.2, IntLow = 0.4, Int = 0.75,
+      IntHigh = 0.4, High = 0.2
     )
-    # ssp245 solid; all others dashed
+    # Int solid; all others dashed
     slr_dash <- c(
-      ssp119 = "dash", ssp126 = "dash", ssp245 = "solid",
-      ssp370 = "dash", ssp585 = "dash"
+      Low = "dash", IntLow = "dash", Int = "solid",
+      IntHigh = "dash", High = "dash"
     )
 
     # Determine x-axis breaks
@@ -3617,8 +3814,12 @@ server <- function(input, output, session) {
           theme_minimal(base_size = 14)
         y0_rap <- b$rap
       } else {
+        print(head(bg_df))
         y_lo <- rap_axis_min(min(bg_df$RAP_orig, na.rm = TRUE))
-        y_hi <- max(max(slr_tl$SLR), max(bg_df$RAP_orig, na.rm = TRUE))
+        y_hi <- max(max(slr_tl$SLR),
+                    max(c(bg_df$RAP_orig,
+                          if (!is.null(bg_df$RAP_orig_max)) bg_df$RAP_orig_max else NA_real_),
+                        na.rm = TRUE))
         bands <- status_bands_df(0, dur, y_lo)
         p <- ggplot(bg_df, aes(x = Year)) +
           geom_rect(data = bands, inherit.aes = FALSE,
@@ -3636,6 +3837,28 @@ server <- function(input, output, session) {
                                       "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
                     linetype = "longdash",
                     color = orig_col, linewidth = 0.7) +
+          {
+            if (calc_uncert_available &&
+                all(c("RAP_orig_min", "RAP_orig_max") %in% names(bg_df))) {
+              list(
+                geom_line(aes(y = RAP_orig_min, group = 11,
+                              text = paste0("Baseline lower bound",
+                                            "<br>Year ", Year,
+                                            "<br>RAP: ", round(RAP_orig_min, 2), " mm/yr")),
+                          linetype = "longdash", color = orig_col,
+                          alpha = 0.6, linewidth = 0.35),
+                geom_line(aes(y = RAP_orig_max, group = 12,
+                              text = paste0("Baseline upper bound",
+                                            "<br>Year ", Year,
+                                            "<br>RAP: ", round(RAP_orig_max, 2), " mm/yr")),
+                          linetype = "longdash", color = orig_col,
+                          alpha = 0.6, linewidth = 0.35),
+                geom_ribbon(aes(ymin = RAP_orig_min, ymax = RAP_orig_max),
+                    fill = orig_col, alpha = 0.20
+                )
+              )
+            }
+          } +
 
           scale_x_continuous(breaks = x_breaks) +
           scale_y_continuous(limits = c(y_lo, y_hi),
@@ -3673,15 +3896,19 @@ server <- function(input, output, session) {
         pct_cvr_orig  = bd$pct_cvr_orig,
         pct_cvr_total = bd$pct_cvr_total,
         calc_budg_orig  = bd$calc_budg_orig,
-        calc_budg_total = bd$calc_budg_total
+        calc_budg_total = bd$calc_budg_total,
+        RAP_total_min = if (!is.null(bd$RAP_total_min)) bd$RAP_total_min else NA_real_,
+        RAP_total_max = if (!is.null(bd$RAP_total_max)) bd$RAP_total_max else NA_real_
       )
 
       write.csv(d, here("cache", "combined_data.csv"))
+      print(head(d))
 
       pips <- d[d$Year %in% c(1, 5, 10, 20, 50, 100, dur), ]
 
       y_lo <- rap_axis_min(min(d$RAP_orig, na.rm = TRUE))
-      y_hi <- max(max(slr_tl$SLR), max(d$RAP_total, na.rm = TRUE))
+      y_hi <- max(max(slr_tl$SLR),
+                  max(c(d$RAP_total, d$RAP_total_max), na.rm = TRUE))
       bands <- status_bands_df(0, dur, y_lo)
 
       p <- ggplot(d, aes(x = Year)) +
@@ -3699,6 +3926,28 @@ server <- function(input, output, session) {
                                     "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
                    linetype = "longdash",
                    color = orig_col, linewidth = 0.7) +
+          {
+          if (calc_uncert_available &&
+              all(c("RAP_orig_min", "RAP_orig_max") %in% names(bg_df))) {
+            list(
+              geom_line(aes(y = bg_df$RAP_orig_min, group = 11,
+                            text = paste0("Baseline lower bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(bg_df$RAP_orig_min, 2), " mm/yr")),
+                        linetype = "longdash", color = orig_col,
+                        alpha = 0.6, linewidth = 0.35),
+              geom_line(aes(y = bg_df$RAP_orig_max, group = 12,
+                            text = paste0("Baseline upper bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(bg_df$RAP_orig_max, 2), " mm/yr")),
+                        linetype = "longdash", color = orig_col,
+                        alpha = 0.6, linewidth = 0.35),
+              geom_ribbon(aes(ymin = bg_df$RAP_orig_min, ymax = bg_df$RAP_orig_max),
+                  fill = orig_col, alpha = 0.20
+              )
+            )
+          }
+        } +
         # Total RAP: dark green
         geom_line(aes(y = RAP_total, group = 2,
                       text = paste0("<br>Year ", Year,
@@ -3706,6 +3955,26 @@ server <- function(input, output, session) {
                                     "<br>RAP: ", round(RAP_total, 2), " mm/yr",
                                     "<br>Budget: ", round(calc_budg_total, 2), " kg/m\u00b2/yr")),
                   color = "darkgreen", linewidth = 1.1) +
+        {
+          if (calc_uncert_available &&
+              all(c("RAP_total_min", "RAP_total_max") %in% names(d))) {
+            list(
+              geom_line(aes(y = RAP_total_min, group = 21,
+                            text = paste0("Lower bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(RAP_total_min, 2), " mm/yr")),
+                        color = "darkgreen", alpha = 0.6, linewidth = 0.55),
+              geom_line(aes(y = RAP_total_max, group = 22,
+                            text = paste0("Upper bound",
+                                          "<br>Year ", Year,
+                                          "<br>RAP: ", round(RAP_total_max, 2), " mm/yr")),
+                        color = "darkgreen", alpha = 0.6, linewidth = 0.55),
+              geom_ribbon(aes(ymin = RAP_total_min, ymax = RAP_total_max),
+                  fill = "darkgreen", alpha = 0.4
+                )
+            )
+          }
+        } +
         geom_point(
           data = pips,
           aes(y = RAP_total, text = paste0(
@@ -3737,14 +4006,14 @@ server <- function(input, output, session) {
 
     # Add one blue SLR line per scenario, ordered so heavy lines draw on top.
     if (!is.null(slr_tl) && nrow(slr_tl) > 0) {
-      scn_order <- c("ssp119", "ssp585", "ssp370", "ssp126", "ssp245")
+      scn_order <- c("Low", "High", "IntHigh", "IntLow", "Int")
       scn_order <- scn_order[scn_order %in% unique(slr_tl$Scenario)]
       for (scn in scn_order) {
         sd <- slr_tl[slr_tl$Scenario == scn, ]
         p <- p + geom_line(
           data = sd,
           aes(x = Year, y = SLR, group = Scenario,
-              text = paste0(toupper(Scenario),
+              text = paste0(Scenario,
                             "<br>Year ", Year,
                             "<br>SLR: ", round(SLR, 2), " mm/yr")),
           color = "#1f6fd6",
@@ -4011,7 +4280,7 @@ server <- function(input, output, session) {
   # no observed-bioerosion file is present (caller then uses regional rates).
   monitoring_bioerosion_by_year <- reactive({
     sheets <- uploaded_monitoring_bioerosion()
-    
+
     if (is.null(sheets)) return(NULL)
 
     cvr <- uploaded_monitoring_cover()
@@ -4088,6 +4357,23 @@ server <- function(input, output, session) {
     list(by_year = by_year, unobserved = unique(unobserved_all))
   })
 
+  # Red error when an uploaded cover file lacks a nonzero UC substrate value.
+    output$monitoring_cover_uc_warning <- renderUI({
+      if (isFALSE(monitoring_uc_ok())) {
+        tags$div(class = "bioerosion-warning",
+          "Error: Uploaded coral cover data does not include unconsolidated substrate.")
+      }
+    })
+
+  # Disable the Monitoring download button in the bad-UC state.
+  observe({
+    if (isFALSE(monitoring_uc_ok())) {
+      shinyjs::disable("cc_download_report")
+    } else {
+      shinyjs::enable("cc_download_report")
+    }
+  })
+  
   # Red warning for any unobserved parrotfish size classes
   output$bioerosion_parrotfish_warning <- renderUI({
     bio <- monitoring_bioerosion_by_year()
@@ -4119,6 +4405,28 @@ server <- function(input, output, session) {
   # per-Taxon Percent_Cover (area-occupied method), subtracts generalized
   # microbioerosion + bioerosion (observed if present, else regional), and
   # derives RAP with assemblage-based porosity. -1 == Baseline.
+
+  # Does the uploaded cover file carry a nonzero unconsolidated-substrate value
+  # for the selected site? Monitoring calculations require it.
+  monitoring_uc_ok <- reactive({
+    info <- monitoring_cover_path()
+    if (is.null(info) || info$ext != "xlsx") return(NA)  # not applicable yet
+    cover <- uploaded_monitoring_cover()
+    if (is.null(cover) || !all(c("Taxon", "Percent_Cover") %in% names(cover))) return(NA)
+    site <- input$monitoring_selected_site
+    if (is.null(site) || !nzchar(site)) return(NA)
+    if ("Unique_Site_ID" %in% names(cover)) {
+      cover <- cover[as.character(cover$Unique_Site_ID) == site, , drop = FALSE]
+    }
+    if (nrow(cover) == 0) return(NA)
+    uc_row <- suppressWarnings(as.numeric(
+      cover$Percent_Cover[cover$Taxon == "REQUIRED Unconsolidated substrate"]
+    ))
+    uc_row <- uc_row[!is.na(uc_row)]
+    if (length(uc_row) == 0) return(FALSE)
+    uc_row[1] > 0
+  })
+
   monitoring_series <- reactive({
     info <- monitoring_cover_path()
     if (is.null(info) || info$ext != "xlsx") return(NULL)
@@ -4128,6 +4436,9 @@ server <- function(input, output, session) {
 
     needed <- c("Years_Post_Restoration", "Taxon", "Percent_Cover", "Unique_Site_ID")
     if (!all(needed %in% names(cover))) return(NULL)
+
+    # Require a nonzero unconsolidated-substrate entry; otherwise don't fire.
+    if (isFALSE(monitoring_uc_ok())) return(NULL)
 
     site <- input$monitoring_selected_site
     req(!is.null(site), nzchar(site))
@@ -4174,6 +4485,24 @@ server <- function(input, output, session) {
       }
       gross_budget <- patch_budget / site_area
 
+      # Bounded gross budgets (calcification bounds only; no bioerosion band
+      # on the Monitoring tab). Fall back to the mean when bounds are absent.
+      patch_budget_min <- 0
+      patch_budget_max <- 0
+      for (i in seq_len(nrow(cover_df))) {
+        s   <- cover_df$taxon[i]
+        cvr <- cover_df$cvr[i]
+        rate <- calc_rates$rate[calc_rates$Taxon == s]
+        if (length(rate) == 0 || is.na(rate[1])) next
+        b <- calc_rate_bounds(s)
+        r_lo <- if (is.finite(b[1])) b[1] else rate[1]
+        r_hi <- if (is.finite(b[2])) b[2] else rate[1]
+        patch_budget_min <- patch_budget_min + site_area * (cvr / 100) * r_lo
+        patch_budget_max <- patch_budget_max + site_area * (cvr / 100) * r_hi
+      }
+      gross_budget_min <- patch_budget_min / site_area
+      gross_budget_max <- patch_budget_max / site_area
+
       # Bioerosion for this year: observed (nearest-year substitution) or regional
       bio_year <- if (!is.null(bio)) nearest_bioerosion(bio, yr) else reg_total
       if (is.na(bio_year)) bio_year <- reg_total
@@ -4182,19 +4511,29 @@ server <- function(input, output, session) {
       # NOTE: COME BACK AND FIX THIS SO MICROBIOEROSION IS APPLIED TO CONSOLIDATED SUBSTRATE
       net_budget <- gross_budget - be_micro_rate - .safe0(bio_year)
       rap <- net_budget / 2.9 / (1 - por)
+      # Bounded RAP uses the SAME average bioerosion (calc uncertainty only)
+      net_budget_min <- gross_budget_min - be_micro_rate - .safe0(bio_year)
+      net_budget_max <- gross_budget_max - be_micro_rate - .safe0(bio_year)
+      rap_min <- net_budget_min / 2.9 / (1 - por)
+      rap_max <- net_budget_max / 2.9 / (1 - por)
       total_coral_pct_cvr <- sum(cover_df$cvr, na.rm = TRUE)
 
       out <- rbind(out, data.frame(
         Year = yr, RAP = rap, budget = net_budget, cover = total_coral_pct_cvr,
+        RAP_min = rap_min, RAP_max = rap_max,
         stringsAsFactors = FALSE
       ))
     }
-    out[order(out$Year), ]
+    out <- out[order(out$Year), ]
+    print(head(out))
+    out
   })
 
   # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
   # When the monitoring pipeline is active, "Baseline" is the -1 row.
   cc_baseline_vals <- reactive({
+    # Uploaded cover file present but missing a nonzero UC value: go blank.
+    if (isFALSE(monitoring_uc_ok())) return(NULL)
     ms <- monitoring_series()
     if (!is.null(ms) && any(ms$Year == -1)) {
       r <- ms[ms$Year == -1, ][1, ]
@@ -4203,10 +4542,11 @@ server <- function(input, output, session) {
 
     req(input$monitoring_selected_site)
     dat <- df |> filter(site_id == input$monitoring_selected_site) |> slice(1)
+    rap <- if (!is.null(dat$rap) && !is.na(dat$rap)) dat$rap else dat$net_G / 2.9 / (1 - 0.6265)
     list(
       cover  = dat$hardCoral_PrctCvr,
       budget = dat$net_G,
-      rap    = if (!is.null(dat$rap) && !is.na(dat$rap)) dat$rap else dat$net_G / 2.9 / (1 - 0.6265)
+      rap    = rap
     )
   })
 
@@ -4215,6 +4555,7 @@ server <- function(input, output, session) {
   #  - No cover upload (map-driven) -> project the SELECTED SITE's own baseline
   #    with the Home-tab linear model + the map's target-cover inputs.
   cc_restored_vals <- reactive({
+    if (isFALSE(monitoring_uc_ok())) return(NULL)
     ms <- monitoring_series()
     if (!is.null(ms) && nrow(ms) > 0) {
       r <- ms[which.max(ms$Year), ]
@@ -4230,26 +4571,31 @@ server <- function(input, output, session) {
   })
 
   output$cc_baseline_cover <- renderValueBox({
+    req(cc_baseline_vals())
     valueBox(paste0(round(cc_baseline_vals()$cover, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
       icon = icon("percent"), color = "green"
     )
   })
   output$cc_baseline_budget <- renderValueBox({
+    req(cc_baseline_vals())
     valueBox(paste0(round(cc_baseline_vals()$budget, 2), " kg/m\u00b2/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$cc_baseline_rap <- renderValueBox({
+    req(cc_baseline_vals())
     valueBox(paste0(round(cc_baseline_vals()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
           if (cc_baseline_vals()$rap >= 0.5) "forestgreen" else if (cc_baseline_vals()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
+          ";'>",
           if (cc_baseline_vals()$rap >= 0.5) "growing" else if (cc_baseline_vals()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          "</span>",
+          ")"
           )
         )
       ),
@@ -4258,26 +4604,31 @@ server <- function(input, output, session) {
   })
 
   output$cc_restored_cover <- renderValueBox({
+    req(cc_restored_vals())
     valueBox(paste0(round(cc_restored_vals()$cover, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
       icon = icon("plus-circle"), color = "olive"
     )
   })
   output$cc_restored_budget <- renderValueBox({
+    req(cc_restored_vals())
     valueBox(paste0(round(cc_restored_vals()$budget, 2), " kg/m\u00b2/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$cc_restored_rap <- renderValueBox({
+    req(cc_restored_vals())
     valueBox(paste0(round(cc_restored_vals()$rap, 2), " mm/yr"),
       div(class = "bordered-text",
         HTML(paste0("Reef accretion potential<br/>",
+          "(this reef is ",
           "<span style='color:", # color determined by conditional below
           if (cc_restored_vals()$rap >= 0.5) "forestgreen" else if (cc_restored_vals()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>(this reef is ",
+          ";'>",
           if (cc_restored_vals()$rap >= 0.5) "growing" else if (cc_restored_vals()$rap <= -0.5) "eroding" else "in stasis",
-          ")</span>"
+          "</span>",
+          ")"
           )
         )
       ),
@@ -4287,6 +4638,7 @@ server <- function(input, output, session) {
 
   # Impact summary text box (reuses shared builder)
   output$cc_impact_summary <- renderUI({
+    req(cc_baseline_vals(), cc_restored_vals())
     b <- cc_baseline_vals()
     r <- cc_restored_vals()
     build_impact_summary(
@@ -4300,8 +4652,9 @@ server <- function(input, output, session) {
   # Timeline: RAP over the simulation duration with SLR reference lines (plotly).
   #  - Cover .xlsx uploaded  -> real per-year RAP series (Baseline at x=-1).
   #  - No upload (map-driven) -> smooth interpolation Baseline (Y0) -> Restored (Y10).
-  # Reference lines (geologic + SSP245 rates) + y-axis floor + dark-mode shared.
+  # Reference lines (geologic + Int rates) + y-axis floor + dark-mode shared.
   output$cc_timeline <- plotly::renderPlotly({
+    req(!isFALSE(monitoring_uc_ok()))
     ms <- monitoring_series()
 
     dark <- isTRUE(input$dark_mode)
@@ -4310,11 +4663,11 @@ server <- function(input, output, session) {
     font_col <- if (dark) "#e6e6e6" else "#333333"
     grid_col <- if (dark) "#5a6472" else "#d9d9d9"
 
-    # SSP245 reference rates (mm/yr) at 2030 / 2050 / 2100
+    # Int reference rates (mm/yr) at 2030 / 2050 / 2100
     slr_refs <- c(
-      "SSP245 @2030" = ssp245_rate_at(2030),
-      "SSP245 @2050" = ssp245_rate_at(2050),
-      "SSP245 @2100" = ssp245_rate_at(2100)
+      "Int @2030" = Int_rate_at(2030),
+      "Int @2050" = Int_rate_at(2050),
+      "Int @2070" = Int_rate_at(2070)
     )
     geo_baseline <- 3.1
 
@@ -4326,9 +4679,9 @@ server <- function(input, output, session) {
       x_vals   <- sort(unique(ms$Year))
       x_labels <- ifelse(x_vals == -1, "Baseline", as.character(x_vals))
 
-      data_min <- min(c(ms$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      data_min <- min(c(ms$RAP, ms$RAP_min, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
       y_lo <- rap_axis_min(data_min)
-      y_hi <- max(c(ms$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+      y_hi <- max(c(ms$RAP, ms$RAP_max, geo_baseline, slr_refs), na.rm = TRUE) + 1
       bands <- status_bands_df(x_min, x_max, y_lo)
 
       ribbon_df <- insert_threshold_crossings(ms, xcol = "Year", threshold = 0.5)
@@ -4347,6 +4700,24 @@ server <- function(input, output, session) {
                                     "<br>Cover: ", round(cover, 1), " %",
                                     "<br>Budget: ", round(budget, 2), " kg/m\u00b2/yr")),
                   color = "forestgreen", linewidth = 1.4) +
+        {
+          if (calc_uncert_available &&
+              all(c("RAP_min", "RAP_max") %in% names(ms))) {
+            list(
+              geom_line(aes(y = RAP_min, group = 91,
+                            text = paste0("Lower bound",
+                                          "<br>RAP: ", round(RAP_min, 2), " mm/yr")),
+                        color = "forestgreen", alpha = 0.6, linewidth = 0.7),
+              geom_line(aes(y = RAP_max, group = 92,
+                            text = paste0("Upper bound",
+                                          "<br>RAP: ", round(RAP_max, 2), " mm/yr")),
+                        color = "forestgreen", alpha = 0.6, linewidth = 0.7),
+              geom_ribbon(aes(ymin = RAP_min, ymax = RAP_max),
+                  fill = "forestgreen", alpha = 0.4
+              )
+            )
+          }
+        } +
         geom_point(aes(y = RAP, text = paste0(
                         ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
                         "<br>RAP: ", round(RAP, 2), " mm/yr")),
@@ -4423,7 +4794,7 @@ server <- function(input, output, session) {
         bgcolor = paper_bg, opacity = 0.9
       )
 
-    # SSP245 reference rates (blue dashed) at 2030 / 2050 / 2100
+    # Int reference rates (blue dashed) at 2030 / 2050 / 2100
     slr_ann_col <- "#1f6fd6"
     for (nm in names(slr_refs)) {
       yv <- slr_refs[[nm]]
@@ -4665,7 +5036,7 @@ server <- function(input, output, session) {
   }, bg = "transparent")
 
   # Per-scenario RAP bar with reference lines + status bands.
-  # Bands ride through tooltip="text" as "Erosion"/"Stasis".
+  # Bands ride through tooltip="text" as "erosion"/"stasis".
   output$sc_rap_bar <- plotly::renderPlotly({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
@@ -4678,9 +5049,9 @@ server <- function(input, output, session) {
 
     geo_baseline <- 3.1
     slr_refs <- c(
-      "SSP245 @2030" = ssp245_rate_at(2030),
-      "SSP245 @2050" = ssp245_rate_at(2050),
-      "SSP245 @2100" = ssp245_rate_at(2100)
+      "Int @2030" = Int_rate_at(2030),
+      "Int @2050" = Int_rate_at(2050),
+      "Int @2100" = Int_rate_at(2100)
     )
 
     data_min <- min(c(d$restored_rap, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
