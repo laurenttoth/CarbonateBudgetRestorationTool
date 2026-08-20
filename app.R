@@ -747,7 +747,6 @@ bioerosion_uncert_available <- all(
 # Returns c(lo, hi); NA when unavailable for that taxon.
 calc_rate_bounds <- function(species) {
   if (!calc_uncert_available) {
-    print("Can't find calc rate bounds")
     return(c(NA_real_, NA_real_))
   }
   row <- calc_rates[calc_rates$Taxon == species, , drop = FALSE]
@@ -762,7 +761,6 @@ calc_rate_bounds <- function(species) {
 # NA when unavailable.
 bioerosion_stdev <- function(subregion, habitat) {
   if (!bioerosion_uncert_available) {
-    print("Can't find bioerosion rate bounds")
     return(c(NA_real_, NA_real_))
   }
   be_sub <- bioerosion[bioerosion$SUB_REGION == subregion, ]
@@ -1774,7 +1772,7 @@ body <- dashboardBody(
                   fileInput("baseline_upload", NULL, accept = c(".xlsx")
                   ),
                   tags$div(
-                    style = "display: flex; margin-top: -35px; margin-bottom: 20px; gap: 6px",
+                    style = "display: flex; margin-top: -15px; margin-bottom: 20px; gap: 6px",
                     actionButton("baseline_load_example", "Example",
                                 icon = icon("upload"), class = "btn-sm"),
                     actionButton("baseline_load_cache", "Cache",
