@@ -498,22 +498,16 @@ mortality_by_size <- function(size, sp) {
     }
   }
   mort <- mortality_outplant[mortality_outplant$Species == sp, "Mortality"][[1]] / 100 # percent to proportion
+  mort_se <- mortality_outplant[mortality_outplant$Species == sp, "SE"][[1]]
+  mort_lo <- (mort - mort_se) / 100
+  mort_hi <- (mort + mort_se) / 100
+
+  mort_intrvl <- c(mort_lo, mort, mort_hi)
 
   bin <- round(floor(size / 5)) # Determine how many 5-cm bins above the 0-5 bin this colony's size is
   # Reduce mortality by 5% of the original value for each bin above 0-5
   reduc <- bin * 0.05
-  mort <- mort * (1 - reduc)
-
-  # Placeholder function - replace with actual mortality rates by size
-  # if (size < 5) {
-  #   0.35
-  # } else if (size >= 5 && size < 10) {
-  #   0.30
-  # } else if (size >= 10 && size < 15) {
-  #   0.25
-  # } else {
-  # 0.20  # Default: 20% mortality for larger colonies
-  # }
+  mort_intrvl <- mort_intrvl * (1 - reduc)
 }
 
 # Assemblage-porosity selector ----
@@ -587,10 +581,10 @@ baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, mac
 # species lookups (growth rate, DHW slope) from `species` + `bleaching_severity`.
 # Applies Year-1 outplant mortality (group == "outplant" only), per-event
 # bleaching dieoff, post-bleaching growth reduction, and bioerosion.
-# Returns a per-year data.frame (area, calc_accr, calc_budg, RAP, pct_cvr)
+# Returns a per-year data.frame (area, carb_accr, carb_budg, RAP, pct_cvr)
 # plus the final colony count and final area.
 #
-# UNITS NOTE: `contrib` is a whole-patch flux (kg CaCO3/yr). RAP normalizes it to
+# UNITS NOTE: `carb_accr` is a whole-patch flux (kg CaCO3/yr). RAP normalizes it to
 # a per-m2 basis by dividing by site_area before the /2.9/(1-por) conversion.
 # ----------------------------------------------------------------------------
 simulate_growth <- function(group, species, colony_count, colony_diam, duration,
@@ -606,6 +600,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   sp_dhw_mortality <- 0.30 # 30% of the cover loss applied as whole-colony mortality
                            # (generalized default, see about species-specific values later)
   sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
+  sp_growth_rate_lo <- subset(growth_rates, growth_rates["name"] == species)["planar_lwr"][, 1] / 1000
+  sp_growth_rate_hi <- subset(growth_rates, growth_rates["name"] == species)["planar_upr"][, 1] / 1000
 
   # Per-species calcification-rate bounds (kg CaCO3/m2/yr). NA-safe: when
   # unavailable, min/max budget columns mirror the average.
@@ -626,7 +622,17 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     # Apply before growth calculation.
     # Colony numbers rounded at every step.
     if (group == "outplant" && i == 1) {
-      colony_count_thisrun <- round(colony_count_thisrun * (1 - mortality_by_size(colony_diam, species)))
+      mortality_interval <- mortality_by_size(colony_diam, species) # c(low, mean, high) interval
+      mort_lo <- mortality_interval[[1]]
+      mort    <- mortality_interval[[2]]
+      mort_hi <- mortality_interval[[3]]
+
+      colony_count_thisrun    <- round(colony_count_thisrun * (1 - mort))
+      colony_count_thisrun_lo <- round(colony_count_thisrun * (1 - mort_lo))
+      colony_count_thisrun_hi <- round(colony_count_thisrun * (1 - mort_hi))
+    } else {
+      colony_count_thisrun_lo <- colony_count_thisrun
+      colony_count_thisrun_hi <- colony_count_thisrun
     }
 
     # Determine post-bleaching growth reduction from last year's bleaching (if applicable)
@@ -647,7 +653,9 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
         # Apply species-specific dieoff proportion to the colony count:
         bleaching <- TRUE
         last_bleach_year <- i
-        colony_count_thisrun <- round(colony_count_thisrun * (1 - sp_dhw_loss * sp_dhw_mortality))
+        colony_count_thisrun    <- round(colony_count_thisrun * (1 - sp_dhw_loss * sp_dhw_mortality))
+        colony_count_thisrun_lo <- round(colony_count_thisrun_lo * (1 - sp_dhw_loss * sp_dhw_mortality))
+        colony_count_thisrun_hi <- round(colony_count_thisrun_hi * (1 - sp_dhw_loss * sp_dhw_mortality))
     }
 
     # Kill colonies due to chronic whole-colony mortality (Brown et al. 2026)
@@ -660,6 +668,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     this_mortality_whole <- this_mortality_whole / 100 # Convert from percent to proportion
     # Reduce colony count
     colony_count_thisrun <- round(colony_count_thisrun * (1 - this_mortality_whole))
+    colony_count_thisrun_lo <- round(colony_count_thisrun_lo * (1 - this_mortality_whole))
+    colony_count_thisrun_hi <- round(colony_count_thisrun_hi * (1 - this_mortality_whole))
 
     # Shrink colonies due to chronic partial mortality (Brown et al. 2026)
     # Calculate starting area
@@ -680,40 +690,46 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Grow the surviving colonies
     # Apply post-bleaching growth reduction to planar growth rate
-    new_size <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
+    new_size    <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
+    new_size_lo <- new_size + sp_growth_rate_lo * (1 - post_bleach_growth_reduction)
+    new_size_hi <- new_size + sp_growth_rate_hi * (1 - post_bleach_growth_reduction)
 
     # Recalculate the post-growth per-colony area:
-    new_area <- (new_size / 2) ^ 2 * pi
+    new_area    <- (new_size / 2) ^ 2 * pi
+    new_area_lo <- (new_size_lo / 2) ^ 2 * pi
+    new_area_hi <- (new_size_hi / 2) ^ 2 * pi
     # Calculate per-species area:
-    sp_area <- new_area * colony_count_thisrun
+    sp_area    <- new_area * colony_count_thisrun
+    sp_area_lo <- new_area_lo * colony_count_thisrun_lo
+    sp_area_hi <- new_area_hi * colony_count_thisrun_hi
 
     # Calculate the carbonate budget contribution from this species for this year
     sp_rate <- calc_rates$rate[calc_rates$Taxon == species]
-    contrib <- sp_rate * sp_area
-    budget  <- contrib / site_area
+    carb_accr <- sp_rate * sp_area
+    carb_budg  <- carb_accr / site_area
 
     # Bounded budgets (same geometry, bounded calcification rate). Fall back to
     # the average rate when a bound is missing so min/max mirror the mean.
     r_lo <- if (is.finite(rate_lo)) rate_lo else if (length(sp_rate)) sp_rate else NA_real_
     r_hi <- if (is.finite(rate_hi)) rate_hi else if (length(sp_rate)) sp_rate else NA_real_
-    budget_lo <- (r_lo * sp_area) / site_area
-    budget_hi <- (r_hi * sp_area) / site_area
+    budget_lo <- (r_lo * sp_area_lo) / site_area
+    budget_hi <- (r_hi * sp_area_hi) / site_area
 
     # Populate the output dataframe with total values as of this year:
     out_df[i, "area"]      <- sp_area # Calcifier area
-    out_df[i, "calc_accr"] <- contrib # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
-    out_df[i, "calc_budg"] <- budget # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
+    out_df[i, "carb_accr"] <- carb_accr # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
+    out_df[i, "carb_budg"] <- carb_budg # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
     out_df[i, "pct_cvr"]   <- sp_area / site_area * 100 # Calcifier percent cover
 
-    out_df_min[i, "area"]      <- sp_area
-    out_df_min[i, "calc_accr"] <- r_lo * sp_area
-    out_df_min[i, "calc_budg"] <- budget_lo
-    out_df_min[i, "pct_cvr"]   <- sp_area / site_area * 100
+    out_df_min[i, "area"]      <- sp_area_lo
+    out_df_min[i, "carb_accr"] <- r_lo * sp_area_lo
+    out_df_min[i, "carb_budg"] <- budget_lo
+    out_df_min[i, "pct_cvr"]   <- sp_area_lo / site_area * 100
 
-    out_df_max[i, "area"]      <- sp_area
-    out_df_max[i, "calc_accr"] <- r_hi * sp_area
-    out_df_max[i, "calc_budg"] <- budget_hi
-    out_df_max[i, "pct_cvr"]   <- sp_area / site_area * 100
+    out_df_max[i, "area"]      <- sp_area_hi
+    out_df_max[i, "carb_accr"] <- r_hi * sp_area_hi
+    out_df_max[i, "carb_budg"] <- budget_hi
+    out_df_max[i, "pct_cvr"]   <- sp_area_hi / site_area * 100
   }
 
   list(df = out_df, final_count = colony_count_thisrun, final_area = new_area,
@@ -826,9 +842,9 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
 
     #total_rap  <- total_rap  + sim$df$RAP
     total_cvr      <- total_cvr      + sim$df$pct_cvr
-    total_budg     <- total_budg     + sim$df$calc_budg
-    total_budg_min <- total_budg_min + sim$df_min$calc_budg
-    total_budg_max <- total_budg_max + sim$df_max$calc_budg
+    total_budg     <- total_budg     + sim$df$carb_budg
+    total_budg_min <- total_budg_min + sim$df_min$carb_budg
+    total_budg_max <- total_budg_max + sim$df_max$carb_budg
   }
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
              pct_cvr_orig = total_cvr, calc_budg_orig = total_budg,
@@ -904,7 +920,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
     if (length(sp_diam) == 0 || is.na(sp_diam)) next
-    sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
+    sp_growth_rate    <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
     if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
 
     current_sp_m  <- site_area * (current_sp_pct / 100)
@@ -918,10 +934,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                  bleaching_frequency = bleaching_frequency)
     od <- orig_list[[1]] # original df
     area_orig       <- area_orig       + od$area
-    calc_accr_orig  <- calc_accr_orig  + od$calc_accr
-    calc_budg_orig  <- calc_budg_orig  + od$calc_budg
-    calc_budg_orig_min <- calc_budg_orig_min + orig_list$df_min$calc_budg
-    calc_budg_orig_max <- calc_budg_orig_max + orig_list$df_max$calc_budg
+    calc_accr_orig  <- calc_accr_orig  + od$carb_accr
+    calc_budg_orig  <- calc_budg_orig  + od$carb_budg
+    calc_budg_orig_min <- calc_budg_orig_min + orig_list$df_min$carb_budg
+    calc_budg_orig_max <- calc_budg_orig_max + orig_list$df_max$carb_budg
     # RAP_orig        <- RAP_orig        + od$RAP
     pct_cvr_orig    <- pct_cvr_orig    + od$pct_cvr
     any_growth <- TRUE
@@ -1041,10 +1057,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                 bleaching_frequency = bleaching_frequency)
     nd <- new_list[[1]]
     area_new       <- area_new       + nd$area
-    calc_accr_new  <- calc_accr_new  + nd$calc_accr
-    calc_budg_new  <- calc_budg_new  + nd$calc_budg
-    calc_budg_new_min <- calc_budg_new_min + new_list$df_min$calc_budg
-    calc_budg_new_max <- calc_budg_new_max + new_list$df_max$calc_budg
+    calc_accr_new  <- calc_accr_new  + nd$carb_accr
+    calc_budg_new  <- calc_budg_new  + nd$carb_budg
+    calc_budg_new_min <- calc_budg_new_min + new_list$df_min$carb_budg
+    calc_budg_new_max <- calc_budg_new_max + new_list$df_max$carb_budg
     # RAP_new        <- RAP_new        + nd$RAP
     pct_cvr_new    <- pct_cvr_new    + nd$pct_cvr
 
@@ -1096,6 +1112,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Bounded totals: min = low calc + high erosion; max = high calc + low erosion
   budget_df$calc_budg_total_min <- budget_df$calc_budg_total_min - budget_df$microbioerosion - macro_hi
   budget_df$calc_budg_total_max <- budget_df$calc_budg_total_max - budget_df$microbioerosion - macro_lo
+  # Recalculate total bounds with 95% Confidence Interval
+  budget_df$calc_budg_total_min <- budget_df$calc_budg_total_min - ((budget_df$calc_budg_total - budget_df$calc_budg_total_min) * 1.96)
+  budget_df$calc_budg_total_max <- budget_df$calc_budg_total_max - ((budget_df$calc_budg_total - budget_df$calc_budg_total_max) * 1.96)
+
   budget_df$RAP_total_min <- budget_df$calc_budg_total_min / 2.9 / (1 - por)
   budget_df$RAP_total_max <- budget_df$calc_budg_total_max / 2.9 / (1 - por)
 
@@ -1111,6 +1131,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Bounded originals-only
   budget_df$calc_budg_orig_min <- calc_budg_orig_min - budget_df$be_micro_orig - macro_hi
   budget_df$calc_budg_orig_max <- calc_budg_orig_max - budget_df$be_micro_orig - macro_lo
+  # Expand to 95% Confidence Interval
+  budget_df$calc_budg_orig_min <- budget_df$calc_budg_orig_min - ((budget_df$calc_budg_orig - budget_df$calc_budg_orig_min) * 1.96)
+  budget_df$calc_budg_orig_max <- budget_df$calc_budg_orig_max - ((budget_df$calc_budg_orig - budget_df$calc_budg_orig_max) * 1.96)
+  
   budget_df$RAP_orig_min <- budget_df$calc_budg_orig_min / 2.9 / (1 - por)
   budget_df$RAP_orig_max <- budget_df$calc_budg_orig_max / 2.9 / (1 - por)
 
@@ -1380,14 +1404,14 @@ header <- dashboardHeader(
     tags$div(tags$img(src = "noaaLogo_noText.png", style = "height: 50px; padding: 2px 0 2px 0;"))
   ),
   tags$li(class = "dropdown",
-  tags$div(tags$img(src = "usgsLogo.png", style = "height: 50px; padding: 2px 15px 2px 0;"))
+    tags$div(tags$img(src = "usgsLogo.png", style = "height: 50px; padding: 2px 15px 2px 0;"))
   ),
   # Dark Mode toggle lives in the top ribbon (as a right-aligned "dropdown" item)
   tags$li(
     class = "dropdown",
     tags$div(
       class = "dark-mode-switch",
-      style = "padding: 10px 10px 0 0; align-items: center; display: flex; justify-content: flex-end;",
+      style = "padding:0px 10px; margin-top:15px; margin-bottom:-15px; align-items: center; display: flex; justify-content: flex-end;",
       materialSwitch(
         inputId = "dark_mode",
         label = "Dark Mode",
@@ -1857,11 +1881,10 @@ body <- dashboardBody(
                     uiOutput("baseline_cover_inputs")
                   ),
                   tags$hr(),
-                  column(6,
+                  tags$div(
+                    style = "display:flex; gap:4px; align-items:center;",
                     downloadButton("baseline_save_dl", "Save baseline",
-                                  icon = icon("floppy-disk"), class = "btn-sm")
-                  ),
-                  column(6,
+                                  icon = icon("floppy-disk"), class = "btn-sm"),
                     actionButton("baseline_delete_cache", "Clear cache",
                                   icon = icon("trash"), class = "btn-sm")
                   )
@@ -2001,6 +2024,22 @@ body <- dashboardBody(
                     tags$h1(), # Placeholder header to keep the button aligned with the text inputs
                     actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
                   )
+                )
+              ),
+              # Reactive-simulation toggle + manual Run button
+              column(8,
+                tags$div(
+                  style = "display:flex; align-items:center; justify-content:flex-end;
+                          padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
+                  materialSwitch("reactive_sim", HTML("<strong>Reactive simulation</strong>"),
+                    value = FALSE, status = "primary", right = TRUE, inline = TRUE)
+                  )
+                ),
+              column(4,
+                tags$div(
+                  style = "display:flex; align-items:center; justify-content:flex-end;
+                          padding:4px 5px; margin:-10px 0px;",
+                  actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
                 )
               )
             )
@@ -2275,11 +2314,18 @@ body <- dashboardBody(
             shall be held liable for any damages resulting from the authorized or unauthorized
             use of the software.", tags$br(),
           tags$h4(tags$strong("Sources")),
-          "Coral morphologies: ", tags$br(),
-          "Sea-level rise projections: ", tags$br(),
-          "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
-          "Chronic mortality rates: Browne et al. (2026)", tags$br(),
+          "Chronic coral mortality rates: Browne et al. (2026)", tags$br(),
           "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
+          "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
+          "Sea-level rise projections: Sea Level Rise and Coastal Flood Hazard Scenarios and Tools Interagency Task Force (2022)", tags$br(),
+          tags$br(),
+          "Average colony diameter: ??", tags$br(),
+          "Outplant mortality rates: ??", tags$br(),
+          "Assemblage-based reef porosity: ??", tags$br(),
+          "2014-2024 carbonate budget surveys: ??", tags$br(),
+          "Regional bioerosion rates: ??", tags$br(),
+          "Species-specific bioerosion rates: ??", tags$br(),
+          "Species-specific planar growth rates: ??", tags$br(),
           tags$br(),
           tags$h4(tags$strong("Authors")),
           "Connor M. Jenkins, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
@@ -2342,6 +2388,58 @@ server <- function(input, output, session) {
   reef_name       <- reactiveVal()
   reef_year       <- reactiveVal(2019)
   initial_budget  <- reactiveVal(NULL)
+
+  # Manual/reactive simulation gate ----
+  # `sim_token` is the single dependency the projection reactives take. In
+  # reactive mode it bumps on any relevant input change; in manual mode it
+  # bumps only when "Run simulation" is clicked. Projection reactives isolate()
+  # their real inputs so nothing recomputes until the token advances.
+  sim_token <- reactiveVal(0)
+
+  # Inputs that should trigger a recompute when in reactive mode. Listing them
+  # explicitly (rather than depending on `input`) keeps the token from bumping
+  # on unrelated UI (map controls, monitoring tab, etc.).
+  observe({
+    # Depend on every simulation-relevant input:
+    input$site_area_m2
+    input$subregion_choice
+    input$habitat_choice
+    input$outplant_size
+    input$outplant_cost
+    input$rest_horizon
+    input$sim_duration
+    input$dhw
+    input$bleach_events
+    baseline_species_list()
+    # Baseline covers + restoration-mix targets (dynamic ids)
+    for (s in baseline_species_list()) {
+      input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
+    }
+    for (s in restoration_species) {
+      input[[paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))]]
+    }
+    input$base_REQUIRED_Unconsolidated_substrate
+
+    # Only advance automatically when reactive mode is ON.
+    if (isTRUE(input$reactive_sim)) {
+      sim_token(isolate(sim_token()) + 1)
+    }
+  })
+
+  # Manual run: advance the token on click (works regardless of mode, but the
+  # button is disabled while reactive mode is on).
+  observeEvent(input$run_sim, {
+    sim_token(sim_token() + 1)
+  })
+
+  # Disable the Run button while reactive simulation is enabled.
+  observe({
+    if (isTRUE(input$reactive_sim)) {
+      shinyjs::disable("run_sim")
+    } else {
+      shinyjs::enable("run_sim")
+    }
+  })
 
   .safe_num <- function(x) {
     if (is.null(x) || length(x) == 0 || is.na(x)) 0 else as.numeric(x)
@@ -3394,8 +3492,10 @@ server <- function(input, output, session) {
   # Budget uses the area-occupied method: per species, area (m^2) * rate,
   # queried from calc_rates by Taxon, normalized to per-m2, minus bioerosion.
   baseline_metrics <- reactive({
-    req(outplanting_ready())
+    sim_token()            # gate: recompute only when the token advances
+    isolate({
     # If any of these values are empty, baseline metric calculations will not fire.
+    req(outplanting_ready())
     req(nzchar(input$habitat_choice),
         nzchar(input$subregion_choice),
         nzchar(input$site_area_m2)
@@ -3463,11 +3563,14 @@ server <- function(input, output, session) {
     rap_values$baseline <- budget / 2.9 / (1 - bp)
 
     list(cover = total_coral_pct_cvr, budget = budget, rap = rap_values$baseline, sim_duration = sim_duration)
+    })
   })
 
   # Baseline growth series for the timeline (originals only). Available as soon
   # as species + covers + subregion/habitat are set, independent of any target.
   baseline_growth <- reactive({
+    sim_token()
+    isolate({
     req(outplanting_ready())
     habitat       <- input$habitat_choice
     subregion <- input$subregion_choice
@@ -3501,11 +3604,14 @@ server <- function(input, output, session) {
       ),
       error = function(e) NULL
     )
+    })
   })
 
   # Restored (target) cover & carbonate budget (simple linear estimate; the
   # graph + saved values use the full model at the horizon instead).
   restored_metrics <- reactive({
+    sim_token()
+    isolate({
     b <- baseline_metrics()
     slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
     rest_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
@@ -3530,12 +3636,15 @@ server <- function(input, output, session) {
     rap_values$restored <- budget / 2.9 / (1 - rp)
 
     list(cover = total_coral_cover, budget = budget, rap = rap_values$restored)
+    })
   })
 
   # ---- Reactive restoration model ----
   # Derives all parameters from Shiny inputs, builds target_cover_df from the
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
+    sim_token()
+    isolate({
     req(outplanting_ready())
 
     # Derived parameters
@@ -3601,6 +3710,7 @@ server <- function(input, output, session) {
     #     NULL
     #   }
     # )
+    })
   })
 
   # ---- Baseline / restored values at the restoration horizon ----
@@ -4422,7 +4532,7 @@ server <- function(input, output, session) {
       shinyjs::enable("cc_download_report")
     }
   })
-  
+
   # Red warning for any unobserved parrotfish size classes
   output$bioerosion_parrotfish_warning <- renderUI({
     bio <- monitoring_bioerosion_by_year()
@@ -4558,11 +4668,11 @@ server <- function(input, output, session) {
 
       # Net budget = gross - generalized micro - (observed/regional) macro
       # NOTE: COME BACK AND FIX THIS SO MICROBIOEROSION IS APPLIED TO CONSOLIDATED SUBSTRATE
-      net_budget <- gross_budget - be_micro_rate - .safe0(bio_year)
+      net_budget <- gross_budget - (cover_df["REQUIRED Unconsolidated substrate"] * be_micro_rate) - .safe0(bio_year)
       rap <- net_budget / 2.9 / (1 - por)
       # Bounded RAP uses the SAME average bioerosion (calc uncertainty only)
-      net_budget_min <- gross_budget_min - be_micro_rate - .safe0(bio_year)
-      net_budget_max <- gross_budget_max - be_micro_rate - .safe0(bio_year)
+      net_budget_min <- gross_budget_min - (cover_df["REQUIRED Unconsolidated substrate"] * be_micro_rate) - .safe0(bio_year)
+      net_budget_max <- gross_budget_max - (cover_df["REQUIRED Unconsolidated substrate"] * be_micro_rate) - .safe0(bio_year)
       rap_min <- net_budget_min / 2.9 / (1 - por)
       rap_max <- net_budget_max / 2.9 / (1 - por)
       total_coral_pct_cvr <- sum(cover_df$cvr, na.rm = TRUE)
