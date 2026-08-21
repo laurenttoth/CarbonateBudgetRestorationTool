@@ -1134,7 +1134,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Expand to 95% Confidence Interval
   budget_df$calc_budg_orig_min <- budget_df$calc_budg_orig_min - ((budget_df$calc_budg_orig - budget_df$calc_budg_orig_min) * 1.96)
   budget_df$calc_budg_orig_max <- budget_df$calc_budg_orig_max - ((budget_df$calc_budg_orig - budget_df$calc_budg_orig_max) * 1.96)
-  
+
   budget_df$RAP_orig_min <- budget_df$calc_budg_orig_min / 2.9 / (1 - por)
   budget_df$RAP_orig_max <- budget_df$calc_budg_orig_max / 2.9 / (1 - por)
 
@@ -3695,7 +3695,7 @@ server <- function(input, output, session) {
       return(NULL)
     }
 
-    #tryCatch(
+    tryCatch(
       run_restoration_model(
         habitat = habitat, subregion = subregion,
         site_area = site_area, uc_pct = unconsolidated_pct_cvr,
@@ -3704,12 +3704,12 @@ server <- function(input, output, session) {
         bleaching_severity = bleaching_severity,
         bleaching_frequency = bleaching_frequency,
         target_cover_df = target_cover_df
-      ) #,
-    #   error = function(e) {
-    #     showNotification(paste("Model error:", e$message), type = "error")
-    #     NULL
-    #   }
-    # )
+      ),
+      error = function(e) {
+        showNotification(paste("Model error:", e$message), type = "error")
+        NULL
+      }
+    )
     })
   })
 
@@ -3760,10 +3760,11 @@ server <- function(input, output, session) {
     rt_restored_hover(list(cover = parts[1], budget = parts[2], rap = parts[3]))
   }, ignoreInit = TRUE)
 
-  # Reset the Restored readout when the model changes (e.g. new target/site),
+  # Set the Restored readout to the new result when the model changes (e.g. new target/site),
   # so a stale hover value doesn't linger against a different scenario.
   observeEvent(model_result(), {
-    rt_restored_hover(NULL)
+    r <- restored_metrics()
+    rt_restored_hover(list(cover = r$cover, budget = r$budget, rap = r$rap))
   }, ignoreInit = TRUE)
 
   # ---- Reactive graph surrounds ----
@@ -3789,29 +3790,43 @@ server <- function(input, output, session) {
   # Baseline RAP percentile (gray) + restored RAP percentile at horizon (colored)
   output$rap_pctile_baseline <- renderUI({
     pct <- ingested_baseline_pctile()
-    if (is.null(pct) || is.na(pct)) return(NULL)
+    if (is.null(pct) || is.na(pct)) {
+      print("NULL baseline percentile")
+      return(NULL)
+    }
     tags$span(style = "color:#777777;",
       paste0("Baseline RAP percentile: ", round(pct), "%"))
   })
   output$rap_pctile_restored <- renderUI({
     mr <- model_result()
-    if (is.null(mr) || nrow(mr$budget_df) == 0) return(NULL)
-    horizon <- .safe_num(input$rest_horizon)
-    hr <- min(horizon + 1, nrow(mr$budget_df))
-    pct <- rap_percentile(mr$budget_df$RAP_total[hr])
-    if (is.na(pct)) return(NULL)
+    if (is.null(mr) || nrow(mr$budget_df) == 0) {
+      print("NULL model result")
+      return(NULL)
+      } 
+    duration <- .safe_num(input$sim_duration)
+    dr <- min(duration + 1, nrow(mr$budget_df))
+    pct <- rap_percentile(mr$budget_df$RAP_total[dr])
+    if (is.na(pct)) {
+      print("NULL restoration percentile")
+      return(NULL)
+      } 
     tags$span(style = paste0("color:", percentile_color(pct), ";"),
       paste0("RAP percentile at restoration horizon: ", round(pct), "%"))
   })
 
   # ---- Baseline / Restored value boxes beside the timeline ----
   # Baseline: static, from baseline_metrics (Year-0). Restored: reacts to the
-  # last pip hover; before any hover, defaults to the horizon values.
+  # last pip hover; before any hover, defaults to the duration-year values.
   rt_restored_current <- reactive({
     h <- rt_restored_hover()
-    if (!is.null(h)) return(h)
-    hv <- horizon_vals()
-    list(cover = hv$r_cover, budget = hv$r_budget, rap = hv$r_rap)
+    if (!is.null(h)) {
+      if (h$cover != 0) return(h)
+    }
+    # hv <- horizon_vals()
+    rest_mets <- restored_metrics()
+    out <- list(cover = rest_mets$cover, budget = rest_mets$budget, rap = rest_mets$rap)
+    print(out)
+    out
   })
 
   output$rt_baseline_cover <- renderValueBox({
@@ -4233,20 +4248,23 @@ server <- function(input, output, session) {
     shiny::validate(shiny::need(nzchar(input$scenario_name), "Enter a scenario name."))
 
     mr <- model_result()
-    hv <- horizon_vals()   # baseline/restored evaluated at the restoration horizon
+    # hv <- horizon_vals()   # baseline/restored evaluated at the restoration horizon
+    base_mets <- baseline_metrics()
+    rest_mets <- restored_metrics()
 
-    total_coral_pct_cvr  <- hv$r_cover
-    restored_rap <- hv$r_rap
-    baseline_rap <- hv$b_rap
+    total_coral_pct_cvr  <- rest_mets$cover
+    restored_rap <- rest_mets$rap
+    baseline_rap <- base_mets$rap
 
     # Prefer model-derived cost when available; else illustrative fallback
-    added_cover <- hv$r_cover - hv$b_cover
+    added_cover <- rest_mets$cover - base_mets$cover
     cost <- if (!is.null(mr)) mr$cost else added_cover * .safe_num(input$outplant_cost) * 100
     outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
     elev_gain_10yr <- restored_rap * 10 # mm over 10 years
+    
     # Legacy ROI field retained for backward compatibility; the Scenario
     # Comparison plot now recomputes ROI from net kg CaCO3 / cost at render.
-    roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
+    # roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
 
     # Build the scenario, forcing every field to a length-1 scalar
     scalar1 <- function(x) if (is.null(x) || length(x) == 0) NA else x[[1]]
@@ -4258,10 +4276,10 @@ server <- function(input, output, session) {
       habitat = scalar1(input$habitat_choice),
       site_area_m2 = .safe_num(input$site_area_m2),
       total_coral_pct_cvr = scalar1(total_coral_pct_cvr),
-      baseline_cover = scalar1(hv$b_cover),
-      restored_cover = scalar1(hv$r_cover),
-      baseline_budget = scalar1(hv$b_budget),
-      restored_budget = scalar1(hv$r_budget),
+      baseline_cover = scalar1(base_mets$cover),
+      restored_cover = scalar1(rest_mets$cover),
+      baseline_budget = scalar1(base_mets$budget),
+      restored_budget = scalar1(rest_mets$budget),
       baseline_rap = scalar1(baseline_rap),
       restored_rap = scalar1(restored_rap),
       outplants = scalar1(outplants),
@@ -4272,7 +4290,7 @@ server <- function(input, output, session) {
       rest_horizon = .safe_num(input$rest_horizon),
       sim_duration = .safe_num(input$sim_duration),
       cost = scalar1(cost),
-      roi = scalar1(roi),
+      # roi = scalar1(roi),
       elev_gain_10yr = scalar1(elev_gain_10yr),
       saved = as.character(Sys.time())
     )
@@ -4599,6 +4617,7 @@ server <- function(input, output, session) {
     # Require a nonzero unconsolidated-substrate entry; otherwise don't fire.
     if (isFALSE(monitoring_uc_ok())) return(NULL)
 
+    monitoring_uc <- cover
     site <- input$monitoring_selected_site
     req(!is.null(site), nzchar(site))
     cover <- cover[as.character(cover$Unique_Site_ID) == site, , drop = FALSE]
@@ -4667,12 +4686,12 @@ server <- function(input, output, session) {
       if (is.na(bio_year)) bio_year <- reg_total
 
       # Net budget = gross - generalized micro - (observed/regional) macro
-      # NOTE: COME BACK AND FIX THIS SO MICROBIOEROSION IS APPLIED TO CONSOLIDATED SUBSTRATE
-      net_budget <- gross_budget - (cover_df["REQUIRED Unconsolidated substrate"] * be_micro_rate) - .safe0(bio_year)
+      be_micro_effect <- cover_df$cvr[cover_df$taxon == "REQUIRED Unconsolidated substrate"] * be_micro_rate
+      net_budget <- gross_budget - be_micro_effect - .safe0(bio_year)
       rap <- net_budget / 2.9 / (1 - por)
       # Bounded RAP uses the SAME average bioerosion (calc uncertainty only)
-      net_budget_min <- gross_budget_min - (cover_df["REQUIRED Unconsolidated substrate"] * be_micro_rate) - .safe0(bio_year)
-      net_budget_max <- gross_budget_max - (cover_df["REQUIRED Unconsolidated substrate"] * be_micro_rate) - .safe0(bio_year)
+      net_budget_min <- gross_budget_min - be_micro_effect - .safe0(bio_year)
+      net_budget_max <- gross_budget_max - be_micro_effect - .safe0(bio_year)
       rap_min <- net_budget_min / 2.9 / (1 - por)
       rap_max <- net_budget_max / 2.9 / (1 - por)
       total_coral_pct_cvr <- sum(cover_df$cvr, na.rm = TRUE)
