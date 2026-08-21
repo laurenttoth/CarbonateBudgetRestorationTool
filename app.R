@@ -48,11 +48,11 @@ read_excel_quiet <- function(path, ...) {
 }
 
 # Ingest data ----
-# call data for world map
+# World map data for leaflet map
 world_data   <- ggplot2::map_data("world")
 worldcountry <- fortify(world_data)
 
-# Model observational data:
+# Observational data to be fed into the growth model:
 # Assemblage-specific porosity
 porosity     <- read.csv(here("data", "Porosity.csv"))
 # Species-specific growth rates
@@ -63,10 +63,12 @@ calc_rates   <- read.csv(here("data", "Calcification_Rates_Courtney_et_al_2024.c
 diams        <- read.csv(here("data", "NCRMP_Colony_Diam_Florida.csv"))
 # Region- and habitat-specific bioerosion rates
 bioerosion   <- read.csv(here("data", "Bioerosion_Rates_Regional.csv"))
-# Morphology-specific partial mortality rates (for annual growth reduction)
+# Species / morphology-specific Year 1 outplant mortality
+mortality_outplant <- read.csv(here("data", "Mortality_Rates_Outplant_3cm_Mote.csv"))
+# Morph-specific chronic partial mortality rates (for annual growth reduction)
 mortality_partial <- read.csv(here("data", "Mortality_Rates_Partial_Browne_et_al_2026.csv"))
-# Morphology-specific whole-colony mortality rates (for annual colony loss)
-# (Rate is negligible but could make an impact if simulating thousands of colonies)
+# Morphology-specific chronic whole-colony mortality rates (for annual colony loss)
+# (Rate is typically negligible but could make an impact if simulating thousands of colonies)
 mortality_whole <- read.csv(here("data", "Mortality_Rates_WholeColony_Browne_et_al_2026.csv"))
 
 # Species-specific bioerosion rate lookups (Monitoring tab) ----
@@ -103,12 +105,13 @@ nearest_value <- function(vec, target) {
   vec[idx]
 }
 
+# Species-specific bioerosion rates
 species_bioerosion_path <- here("data", "Bioerosion_Rates_Species.xlsx")
 sp_erosion_parrotfish <- read_sheet_safe(species_bioerosion_path, "Parrotfish")
 sp_erosion_urchins    <- read_sheet_safe(species_bioerosion_path, "Urchins")
 sp_erosion_sponges    <- read_sheet_safe(species_bioerosion_path, "Sponges")
 
-# Ingest NCRMP carbonate budget data
+# NCRMP carbonate budget survey data
 df <- read.csv(here("data", "NCRMP_CarbonateBudgets_2014_to_2024.csv"))
 
 # Create unique site IDs in case PRIMARY_SAMPLE_UNIT is reused/not unique
@@ -118,7 +121,6 @@ sites <- sort(df$site_id)
 
 # Ingest regions polygon shapefile
 regions_sf <- sf::st_read(here("data", "regions", "regions.shp"), quiet = TRUE)
-
 # Ensure geographic CRS (WGS84) so it aligns with the leaflet basemap
 regions_sf <- sf::st_transform(regions_sf, 4326)
 
@@ -137,7 +139,6 @@ region_levels <- sort(unique(regions_sf$Region))
 pastel_colors <- colorRampPalette(RColorBrewer::brewer.pal(9, "Pastel1"))(length(region_levels))
 region_pal <- colorFactor(pastel_colors, domain = region_levels)
 
-
 # Ingest baseline cover data template to retrieve list of taxa
 taxa <- read_excel_quiet(here("www", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
 taxa <- taxa$Taxon
@@ -150,7 +151,7 @@ slr_raw <- read_excel_quiet(
 
 # Keep only the median (quantile 50), medium-confidence rows
 slr_med <- slr_raw[slr_raw$quantile == 50, , drop = FALSE]
-# & slr_raw$confidence == "medium", # this criterion only necessary for NASA IPCC data, not Interagency data.
+# & slr_raw$confidence == "medium", # this filter is only necessary for NASA IPCC data, not Interagency data.
 
 # Identify year columns (headers that are purely 4-digit numeric)
 slr_year_cols <- names(slr_med)[grepl("^[0-9]{4}$", names(slr_med))]
@@ -208,7 +209,7 @@ build_slr_timeline <- function(start_year, n_years = 10) {
 # Int annual SLR RATE (mm/yr) at a specific calendar year. Computed as the
 # year-over-year difference of the interpolated cumulative SLR, matching the
 # rate convention used by build_slr_timeline. Used for the Scenario Comparison
-# RAP barplot reference lines (2030 / 2050 / 2100).
+# RAP barplot reference lines (2030 / 2050 / 2070).
 Int_rate_at <- function(cal_year) {
   vec <- slr_by_scenario[["Int"]]
   if (is.null(vec)) return(NA_real_)
@@ -431,23 +432,9 @@ dhw_slope_lookup_fk <- tibble::tribble(
   "Millepora",      0.50
 )
 
-# Post-bleaching production losses:
+# Post-bleaching production-loss vector:
 # Reductions applied the 1st .. 4th years after bleaching occurs
 pbr <- c(0.60, 0.35, 0.15, 0.05)
-
-# Mortality by colony size:
-mortality_by_size <- function(size) {
-  # Placeholder function - replace with actual mortality rates by size
-  if (size < 5) {
-    0.35
-  } else if (size >= 5 && size < 10) {
-    0.30
-  } else if (size >= 10 && size < 15) {
-    0.25
-  } else {
-  0.20  # Default: 20% mortality for larger colonies
-  }
-}
 
 # Species vectors for porosity and partial mortality calculations:
 all_massive_species <- c(
@@ -496,6 +483,38 @@ all_branching_species <- c(
   "Porites porites",
   "Stylaster roseus"
 )
+
+# Mortality by colony size & species:
+mortality_by_size <- function(size, sp) {
+  # Are some species classified differently for mortality than they are for porosity?
+  # Use generic fallback if species-specific outplant dieoff data is not available
+  if (!(sp %in% mortality_outplant$Species)) {
+    if (sp %in% all_branching_species) {
+      sp <- "Acropora"
+    } else if (sp %in% all_massive_species) {
+      sp <- "Massives"
+    } else {
+      sp <- "Weedy"
+    }
+  }
+  mort <- mortality_outplant[mortality_outplant$Species == sp, "Mortality"][[1]] / 100 # percent to proportion
+
+  bin <- round(floor(size / 5)) # Determine how many 5-cm bins above the 0-5 bin this colony's size is
+  # Reduce mortality by 5% of the original value for each bin above 0-5
+  reduc <- bin * 0.05
+  mort <- mort * (1 - reduc)
+
+  # Placeholder function - replace with actual mortality rates by size
+  # if (size < 5) {
+  #   0.35
+  # } else if (size >= 5 && size < 10) {
+  #   0.30
+  # } else if (size >= 10 && size < 15) {
+  #   0.25
+  # } else {
+  # 0.20  # Default: 20% mortality for larger colonies
+  # }
+}
 
 # Assemblage-porosity selector ----
 # Chooses Acropora / Massive / Mixed porosity (as a proportion) from a
@@ -607,7 +626,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     # Apply before growth calculation.
     # Colony numbers rounded at every step.
     if (group == "outplant" && i == 1) {
-      colony_count_thisrun <- round(colony_count_thisrun * (1 - mortality_by_size(colony_diam)))
+      colony_count_thisrun <- round(colony_count_thisrun * (1 - mortality_by_size(colony_diam, species)))
     }
 
     # Determine post-bleaching growth reduction from last year's bleaching (if applicable)
@@ -1324,14 +1343,14 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
     "</p>",
     "<hr>",
     "<p>",
-    if (!is.na(r_rap) && r_rap >= 3.1 && r_rap < 6.3) {
+    if (!is.na(r_rap) && r_rap >= 3.1 && r_rap < Int_rate_at(2030)) {
       "<span style='color:orangered;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2030.</span>"
-    } else if (!is.na(r_rap) && r_rap >= 6.3 && r_rap < 8) {
+    } else if (!is.na(r_rap) && r_rap >= Int_rate_at(2030) && r_rap < Int_rate_at(2050)) {
       "<span style='color:orange;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2050.</span>"
-    } else if (!is.na(r_rap) && r_rap >= 8 && r_rap < 9.2) {
-      "<span style='color:yellow;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2100.</span>"
-    } else if (!is.na(r_rap) && r_rap >= 9.2) {
-      "<span style='color:green;'>Restored accretion exceeds the geologic baseline and will exceed sea-level rise at least until 2100.</span>"
+    } else if (!is.na(r_rap) && r_rap >= Int_rate_at(2050) && r_rap < Int_rate_at(2070)) {
+      "<span style='color:yellow;'>Restored accretion exceeds the geologic baseline, but sea-level rise will exceed restored accretion by 2070.</span>"
+    } else if (!is.na(r_rap) && r_rap >= Int_rate_at(2070)) {
+      "<span style='color:green;'>Restored accretion exceeds the geologic baseline and will exceed sea-level rise at least until 2070.</span>"
     } else {
       "<span style='color:red;'>Restored accretion is still exceeded by the geological baseline and sea-level rise.</span>"
     }, "</p>"
@@ -1736,7 +1755,7 @@ body <- dashboardBody(
       tabName = "projections",
       fluidRow(
         column(10,
-          tags$img(src = "persistenceExample.jpg", width = "1350px", height = "950px")
+          tags$img(src = "persistenceExample.jpg", width = "1300px", height = "900px")
         ),
         column(2,
           HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>")
@@ -1924,15 +1943,16 @@ body <- dashboardBody(
                   ),
 
                   # Timeline parameters
-                  sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
-                    value = 0, min = 0, max = 30, step = 5
+                  sliderInput(
+                    "sim_duration", tags$strong("Simulation duration (years)"),
+                    value = 10, min = 0, max = 30, step = 5
                   ),
+                  
                   # Sim duration shares the horizon's 0-30 domain so tick geometry
                   # lines up natively; a snap-to-10 floor keeps it >= 10 years.
                   tags$div(style = "margin: -10px 0;",
-                    sliderInput(
-                      "sim_duration", tags$strong("Simulation duration (years)"),
-                      value = 10, min = 0, max = 30, step = 5
+                      sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
+                        value = 0, min = 0, max = 30, step = 5
                     )
                   ),
                   # Red warning when horizon exceeds sim duration
@@ -2002,6 +2022,9 @@ body <- dashboardBody(
               style = "display:flex; justify-content:space-between; align-items:center;
                        gap:12px; padding:2px 6px; font-size:14px; font-weight:bold;",
               tags$div(style = "display:flex; gap:16px; align-items:center;",
+                tags$div(style = "font-weight:normal;",
+                  checkboxInput("show_slr", "Display SLR projections", value = TRUE)
+                ),
                 htmlOutput("rap_pctile_baseline", inline = TRUE),
                 htmlOutput("rap_pctile_restored", inline = TRUE),
                 tags$span(style = "color:#2f4f2f; display:flex; gap:16px; align-items:center;",
@@ -2133,7 +2156,7 @@ body <- dashboardBody(
                              icon = icon("upload"), class = "btn-sm")
               )
             ),
-            tags$div(style = "margin-bottom: -30px;",
+            tags$div(style = "margin-bottom: -15px;",
               fileInput("upload_cover", NULL,
                 accept = c(".csv", ".xlsx")
               )
@@ -2150,7 +2173,7 @@ body <- dashboardBody(
                              icon = icon("upload"), class = "btn-sm")
               )
             ),
-            tags$div(style = "margin-bottom: -30px;",
+            tags$div(style = "margin-bottom: -15px;",
               fileInput("upload_bioerosion", NULL,
                 accept = c(".csv", ".xlsx")
               )
@@ -2884,6 +2907,16 @@ server <- function(input, output, session) {
   # Habitat choices ----
   # respond to changes in the selected subregion
   observeEvent(input$subregion_choice, {
+    up <- FALSE
+    hab_val <- FALSE
+    up <- baseline_upload_data()
+    if (!isFALSE(up)) site_rows <- up[as.character(up$Unique_Site_ID) == input$baseline_site, , drop = FALSE]
+    if (nrow(site_rows) > 0) {
+      if ("Habitat" %in% names(site_rows) && any(!is.na(site_rows$Habitat))) {
+        hab_val <- as.character(site_rows$Habitat[!is.na(site_rows$Habitat)][1])
+      }
+    }
+
     hab <- switch(input$subregion_choice,
       "UpperKeys"        = c("Inshore", "Offshore", "MidChannel"),
       "MiddleKeys"       = c("Inshore", "Offshore", "MidChannel"),
@@ -2895,7 +2928,7 @@ server <- function(input, output, session) {
     )
     updateSelectInput(session, "habitat_choice",
       choices = c("\u2013 Select habitat \u2013" = "", hab),
-      selected = if (length(hab) == 1) hab else ""
+      selected = if (!isFALSE(hab_val)) hab_val else ""
     )
   }, ignoreInit = TRUE)
 
@@ -2937,7 +2970,7 @@ server <- function(input, output, session) {
   observeEvent(input$baseline_upload, {
     req(input$baseline_upload)
     ingest_baseline_file(input$baseline_upload$datapath)
-    # Cache a copy for auto-reload on next launch
+    # Cache a copy for next launch
     tryCatch(
       file.copy(input$baseline_upload$datapath, cached_baseline_path, overwrite = TRUE),
       error = function(e) NULL
@@ -2998,7 +3031,7 @@ server <- function(input, output, session) {
   #     }
   # })
 
-  # Download the blank baseline-cover template (.xlsx) from GitHub (raw URL).
+  # Download the blank baseline-cover template (.xlsx) from www resource folder
   output$baseline_template_dl <- downloadHandler(
     filename = function() "Baseline_Cover_TEMPLATE.xlsx",
     content = function(file) {
@@ -3107,12 +3140,12 @@ server <- function(input, output, session) {
     }
 
     # Habitat: read ['Habitat'] directly (deferred so the subregion-driven
-    # habitat choices are in place before we set the selection)
+    # habitat choices are in place before setting the selection)
     if ("Habitat" %in% names(site_rows) && any(!is.na(site_rows$Habitat))) {
       hab_val <- as.character(site_rows$Habitat[!is.na(site_rows$Habitat)][1])
       later::later(function() {
         updateSelectInput(session, "habitat_choice", selected = hab_val)
-      }, delay = 0.2)
+      }, delay = 0.5)
     }
 
     # Species + covers for this site only
@@ -3371,8 +3404,18 @@ server <- function(input, output, session) {
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
     sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
     ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp))
+    # Exclude CCA from cover summation
+    sum_cover_ids <- NULL
+    for (id in ids) {
+      if (id != "base_Crustose_coralline_algae") {
+        sum_cover_ids <- c(sum_cover_ids, id)
+      }
+    }
+    sum_covers <- sapply(sum_cover_ids, function(id) .safe_num(input[[id]]))
+    total_coral_pct_cvr <- sum(sum_covers, na.rm = TRUE)
+
+    # Restoration covers
     covers <- sapply(ids, function(id) .safe_num(input[[id]]))
-    total_coral_pct_cvr <- sum(covers, na.rm = TRUE)
 
     # Per-taxon cover df for porosity + budget
     cover <- uploaded_monitoring_cover()
@@ -3775,6 +3818,15 @@ server <- function(input, output, session) {
     start_year <- as.integer(format(Sys.Date(), "%Y")) + 1
     slr_tl <- build_slr_timeline(start_year, n_years = b$sim_duration)
 
+    # When SLR is hidden, drop it from the y-limit and cap the top at 4 mm/yr
+    # (or the max RAP, whichever is higher).
+    show_slr <- isTRUE(input$show_slr)
+    slr_ymax <- if (show_slr && !is.null(slr_tl) && nrow(slr_tl) > 0) {
+      max(slr_tl$SLR, na.rm = TRUE)
+    } else {
+      -Inf   # excluded from any max(); floor handled per-branch below
+    }
+
     # Line-weight emphasis: Int heaviest, then IntLow & IntHigh, rest light
     slr_weight <- c(
       Low = 0.2, IntLow = 0.4, Int = 0.75,
@@ -3799,7 +3851,7 @@ server <- function(input, output, session) {
       # No restoration target yet: show baseline growth (gray) if available.
       if (is.null(bg_df)) {
         y_lo <- rap_axis_min(-1)
-        y_hi <- 8
+        y_hi <- if (show_slr) 8 else 4
         bands <- status_bands_df(0, dur, y_lo)
         d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
         p <- ggplot(d0, aes(Year, RAP)) +
@@ -3814,12 +3866,11 @@ server <- function(input, output, session) {
           theme_minimal(base_size = 14)
         y0_rap <- b$rap
       } else {
-        print(head(bg_df))
         y_lo <- rap_axis_min(min(bg_df$RAP_orig, na.rm = TRUE))
-        y_hi <- max(max(slr_tl$SLR),
-                    max(c(bg_df$RAP_orig,
-                          if (!is.null(bg_df$RAP_orig_max)) bg_df$RAP_orig_max else NA_real_),
-                        na.rm = TRUE))
+        rap_top <- max(c(bg_df$RAP_orig,
+                         if (!is.null(bg_df$RAP_orig_max)) bg_df$RAP_orig_max else NA_real_),
+                       na.rm = TRUE)
+        y_hi <- if (show_slr) max(slr_ymax, rap_top) else max(4, rap_top)
         bands <- status_bands_df(0, dur, y_lo)
         p <- ggplot(bg_df, aes(x = Year)) +
           geom_rect(data = bands, inherit.aes = FALSE,
@@ -3871,7 +3922,7 @@ server <- function(input, output, session) {
       # Model output exists but baseline growth isn't ready yet (cached-load
       # race). Fall back to an empty placeholder rather than indexing a NULL.
       y_lo <- rap_axis_min(-1)
-      y_hi <- 8
+      y_hi <- if (show_slr) 8 else 4
       bands <- status_bands_df(0, dur, y_lo)
       d0 <- data.frame(Year = 0:dur, RAP = NA_real_)
       p <- ggplot(d0, aes(Year, RAP)) +
@@ -3902,13 +3953,12 @@ server <- function(input, output, session) {
       )
 
       write.csv(d, here("cache", "combined_data.csv"))
-      print(head(d))
 
       pips <- d[d$Year %in% c(1, 5, 10, 20, 50, 100, dur), ]
 
       y_lo <- rap_axis_min(min(d$RAP_orig, na.rm = TRUE))
-      y_hi <- max(max(slr_tl$SLR),
-                  max(c(d$RAP_total, d$RAP_total_max), na.rm = TRUE))
+      rap_top <- max(c(d$RAP_total, d$RAP_total_max), na.rm = TRUE)
+      y_hi <- if (show_slr) max(slr_ymax, rap_top) else max(4, rap_top)
       bands <- status_bands_df(0, dur, y_lo)
 
       p <- ggplot(d, aes(x = Year)) +
@@ -3948,7 +3998,7 @@ server <- function(input, output, session) {
             )
           }
         } +
-        # Total RAP: dark green
+        # Total RAP: dark green line
         geom_line(aes(y = RAP_total, group = 2,
                       text = paste0("<br>Year ", Year,
                                     "<br>Cover: ", round(pct_cvr_total, 1), " %",
@@ -4005,7 +4055,7 @@ server <- function(input, output, session) {
     }
 
     # Add one blue SLR line per scenario, ordered so heavy lines draw on top.
-    if (!is.null(slr_tl) && nrow(slr_tl) > 0) {
+    if (show_slr && !is.null(slr_tl) && nrow(slr_tl) > 0) {
       scn_order <- c("Low", "High", "IntHigh", "IntLow", "Int")
       scn_order <- scn_order[scn_order %in% unique(slr_tl$Scenario)]
       for (scn in scn_order) {
@@ -4323,7 +4373,6 @@ server <- function(input, output, session) {
         }
         pfr <- compute_parrotfish_erosion(rows, sp_erosion_parrotfish)
         pf_val <- pfr$total
-#         print(paste0("pfr Year ", yr, " (", i, ") ", ": ", pf_val))
 
         unobserved_all <- c(unobserved_all, pfr$unobserved)
       } else {
@@ -4524,9 +4573,7 @@ server <- function(input, output, session) {
         stringsAsFactors = FALSE
       ))
     }
-    out <- out[order(out$Year), ]
-    print(head(out))
-    out
+    out[order(out$Year), ]
   })
 
   # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
@@ -4663,7 +4710,7 @@ server <- function(input, output, session) {
     font_col <- if (dark) "#e6e6e6" else "#333333"
     grid_col <- if (dark) "#5a6472" else "#d9d9d9"
 
-    # Int reference rates (mm/yr) at 2030 / 2050 / 2100
+    # Int reference rates (mm/yr) at 2030 / 2050 / 2070
     slr_refs <- c(
       "Int @2030" = Int_rate_at(2030),
       "Int @2050" = Int_rate_at(2050),
@@ -4794,7 +4841,7 @@ server <- function(input, output, session) {
         bgcolor = paper_bg, opacity = 0.9
       )
 
-    # Int reference rates (blue dashed) at 2030 / 2050 / 2100
+    # Int reference rates (blue dashed) at 2030 / 2050 / 2070
     slr_ann_col <- "#1f6fd6"
     for (nm in names(slr_refs)) {
       yv <- slr_refs[[nm]]
@@ -5051,7 +5098,7 @@ server <- function(input, output, session) {
     slr_refs <- c(
       "Int @2030" = Int_rate_at(2030),
       "Int @2050" = Int_rate_at(2050),
-      "Int @2100" = Int_rate_at(2100)
+      "Int @2070" = Int_rate_at(2070)
     )
 
     data_min <- min(c(d$restored_rap, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
