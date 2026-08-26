@@ -330,7 +330,7 @@ abbrev_species_code <- function(s) {
   paste0(substr(parts[1], 1, 1), substr(parts[2], 1, 3))
 }
 
-# Two-line species label for sliders: genus on line 1, remainder on line 2.
+# Two-line species label for target-cover inputs: genus on line 1, remainder on line 2.
 make_species_label <- function(s, split_line = TRUE) {
   parts <- stringr::str_split(s, " ")[[1]]
   if (length(parts) < 2) return(HTML(s))
@@ -1518,7 +1518,7 @@ body <- dashboardBody(
       .mix-weedy     { border: 2px solid #7bc043; margin-right: -10px }  /* lime */
       .mix-weedy     > legend { color: #5a9130; }
       
-      /* Two-line, italic slider labels in the mix sub-boxes */
+      /* Two-line, italic input labels in the mix sub-boxes */
       .mix-fieldset .control-label { font-style: italic; line-height: 1.2; }
       /* Stacked species name above its numeric input in the Restoration Mix */
       .mix-species-stacked { margin-bottom: 12px; }
@@ -1975,7 +1975,7 @@ body <- dashboardBody(
                     "sim_duration", tags$strong("Simulation duration (years)"),
                     value = 10, min = 0, max = 30, step = 5
                   ),
-                  
+
                   # Sim duration shares the horizon's 0-30 domain so tick geometry
                   # lines up natively; a snap-to-10 floor keeps it >= 10 years.
                   tags$div(style = "margin: -10px 0;",
@@ -3013,10 +3013,15 @@ server <- function(input, output, session) {
     up <- FALSE
     hab_val <- FALSE
     up <- baseline_upload_data()
-    if (!isFALSE(up)) site_rows <- up[as.character(up$Unique_Site_ID) == input$baseline_site, , drop = FALSE]
-    if (nrow(site_rows) > 0) {
-      if ("Habitat" %in% names(site_rows) && any(!is.na(site_rows$Habitat))) {
-        hab_val <- as.character(site_rows$Habitat[!is.na(site_rows$Habitat)][1])
+
+    # If baseline data has been uploaded, automatically assign the habitat for the record.
+    if (!isFALSE(up)) {
+      site_rows <- up[as.character(up$Unique_Site_ID) == input$baseline_site, , drop = FALSE]
+      print(site_rows)
+      if (!is.null(site_rows)) { # (nrow(site_rows) > 0) {
+        if ("Habitat" %in% names(site_rows) && any(!is.na(site_rows$Habitat))) {
+          hab_val <- as.character(site_rows$Habitat[!is.na(site_rows$Habitat)][1])
+        }
       }
     }
 
@@ -3354,7 +3359,7 @@ server <- function(input, output, session) {
     tagList(tags$div(style = "margin-top: 6px;", picker), rows)
   })
 
-  # Fixed restoration species sliders (Restoration Mix box) ----
+  # Fixed restoration species target-cover inputs (Restoration Mix box) ----
   restoration_species <- c(
     "Acropora cervicornis",  "Acropora palmata",
     "Colpophyllia natans",   "Diploria labyrinthiformis",
@@ -3364,9 +3369,9 @@ server <- function(input, output, session) {
     "Solenastrea bournoni",  "Stephanocoenia intersepta"
   )
 
-  # Helper: build a column of species sliders for one morphology sub-box.
-  # STATIC: sliders must not depend on model output, or the UI would rebuild
-  # (resetting every slider to 0) whenever the model reruns. Per-species
+  # Helper: build a column of species target-cover inputs for one morphology sub-box.
+  # STATIC: inputs must not depend on model output, or the UI would rebuild
+  # (resetting every input to 0) whenever the model reruns. Per-species
   # outplant counts render in separate, independent outputs below.
   # step = 0.5 (accept half-percent), ticks hidden; two-line italic labels.
   make_mix_inputs <- function(species_vec) {
@@ -3430,8 +3435,8 @@ server <- function(input, output, session) {
     )
   })
 
-  # Populate each per-species outplant caption independently of the sliders,
-  # so updating counts never rebuilds (and thus never resets) the sliders.
+  # Populate each per-species outplant caption independently of the inputs,
+  # so updating counts never rebuilds (and thus never resets) the inputs.
   # Uses the "Gspe" code (1 genus letter + 3 species letters).
   observe({
     op <- model_outplants()   # named vector: species -> outplant count
@@ -3718,17 +3723,17 @@ server <- function(input, output, session) {
     })
   })
 
-  # ---- Baseline / restored values at the restoration horizon ----
+  # ---- Baseline / restored values at the end of the simulation ----
   # Single source of truth for the saved scenario + percentile surrounds, taken
   # from the same model output the graph uses (so saved == graphed). Falls back
   # to the linear metrics estimate when there is no model output.
-  horizon_vals <- reactive({
+  final_vals <- reactive({
     mr <- model_result()
     b  <- baseline_metrics()
     r  <- restored_metrics()
-    horizon <- .safe_num(input$rest_horizon)
+    duration <- .safe_num(input$sim_duration)
     if (!is.null(mr) && nrow(mr$budget_df) > 0) {
-      hr <- min(horizon + 1, nrow(mr$budget_df))
+      hr <- min(duration + 1, nrow(mr$budget_df))
       bd <- mr$budget_df
       list(
         b_cover  = bd$pct_cvr_orig[hr],   r_cover  = bd$pct_cvr_total[hr],
@@ -3767,9 +3772,9 @@ server <- function(input, output, session) {
 
   # Set the Restored readout to the new result when the model changes (e.g. new target/site),
   # so a stale hover value doesn't linger against a different scenario.
-  observeEvent(input$run_sim, {
-    r <- restored_metrics()
-    rt_restored_hover(list(cover = r$cover, budget = r$budget, rap = r$rap))
+  observeEvent(final_vals(), {
+    fv <- final_vals()
+    rt_restored_hover(list(cover = fv$r_cover, budget = fv$r_budget, rap = fv$r_rap))
   }, ignoreInit = TRUE)
 
   # ---- Reactive graph surrounds ----
@@ -3807,33 +3812,33 @@ server <- function(input, output, session) {
     if (is.null(mr) || nrow(mr$budget_df) == 0) {
       print("NULL model result")
       return(NULL)
-      } 
+      }
     duration <- .safe_num(input$sim_duration)
     dr <- min(duration + 1, nrow(mr$budget_df))
     pct <- rap_percentile(mr$budget_df$RAP_total[dr])
     if (is.na(pct)) {
       print("NULL restoration percentile")
       return(NULL)
-      } 
+      }
     tags$span(style = paste0("color:", percentile_color(pct), ";"),
       paste0("RAP percentile at restoration horizon: ", round(pct), "%"))
   })
 
   # ---- Baseline / Restored value boxes beside the timeline ----
-  # Baseline: static, from baseline_metrics (Year-0). Restored: reacts to the
-  # last pip hover; before any hover, defaults to the duration-year values.
+  #  Restored: reacts to the last pip hover;
+  # before any hover, default to the duration-year values.
   rt_restored_current <- reactive({
     h <- rt_restored_hover()
     if (!is.null(h)) {
       if (h$cover != 0) return(h)
     }
-    # hv <- horizon_vals()
-    rest_mets <- restored_metrics()
-    out <- list(cover = rest_mets$cover, budget = rest_mets$budget, rap = rest_mets$rap)
+    fv <- final_vals()
+    out <- list(cover = fv$r_cover, budget = fv$r_budget, rap = fv$r_rap)
     print(out)
     out
   })
 
+  # Baseline: static, from baseline_metrics (Year-0).
   output$rt_baseline_cover <- renderValueBox({
     valueBox(paste0(round(baseline_metrics()$cover, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
@@ -4253,20 +4258,21 @@ server <- function(input, output, session) {
     shiny::validate(shiny::need(nzchar(input$scenario_name), "Enter a scenario name."))
 
     mr <- model_result()
-    # hv <- horizon_vals()   # baseline/restored evaluated at the restoration horizon
+    fv <- final_vals()   # baseline/restored evaluated at the restoration horizon
     base_mets <- baseline_metrics()
-    rest_mets <- restored_metrics()
 
-    total_coral_pct_cvr  <- rest_mets$cover
-    restored_rap <- rest_mets$rap
-    baseline_rap <- base_mets$rap
+    restored_rap <- fv$r_rap
+    baseline_rap <- fv$b_rap
+    restored_cvr <- fv$r_cover
+    baseline_cvr <- fv$b_cover
 
+    # Compare restored cover and baseline cover at the end of the simulation
+    added_cover <- restored_cvr - baseline_cvr
     # Prefer model-derived cost when available; else illustrative fallback
-    added_cover <- rest_mets$cover - base_mets$cover
     cost <- if (!is.null(mr)) mr$cost else added_cover * .safe_num(input$outplant_cost) * 100
     outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
     elev_gain_10yr <- restored_rap * 10 # mm over 10 years
-    
+
     # Legacy ROI field retained for backward compatibility; the Scenario
     # Comparison plot now recomputes ROI from net kg CaCO3 / cost at render.
     # roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
@@ -4280,11 +4286,10 @@ server <- function(input, output, session) {
       subregion = scalar1(input$subregion_choice),
       habitat = scalar1(input$habitat_choice),
       site_area_m2 = .safe_num(input$site_area_m2),
-      total_coral_pct_cvr = scalar1(total_coral_pct_cvr),
-      baseline_cover = scalar1(base_mets$cover),
-      restored_cover = scalar1(rest_mets$cover),
-      baseline_budget = scalar1(base_mets$budget),
-      restored_budget = scalar1(rest_mets$budget),
+      baseline_cover = scalar1(baseline_cvr),
+      restored_cover = scalar1(restored_cvr),
+      baseline_budget = scalar1(fv$b_budget),
+      restored_budget = scalar1(fv$r_budget),
       baseline_rap = scalar1(baseline_rap),
       restored_rap = scalar1(restored_rap),
       outplants = scalar1(outplants),
