@@ -594,11 +594,15 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
   # Per-species lookups
   genus        <- stringr::str_split(species, " ")[[1]][1]
+  # Species-specific slope of the relationship between degree-heating weeks and percent mortality.
   sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
   if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
-  sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100 # % -> proportion
-  sp_dhw_mortality <- 0.30 # 30% of the cover loss applied as whole-colony mortality
-                           # (generalized default, see about species-specific values later)
+  # Total DHW-driven percent loss converted to proportion
+  sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100
+  # 30% of the cover loss applied as whole-colony mortality
+  # (generalized default, see about species-specific values later)
+  sp_dhw_mortality <- 0.30
+  # CCA has no growth rate.
   sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
   sp_growth_rate_lo <- subset(growth_rates, growth_rates["name"] == species)["planar_lwr"][, 1] / 1000
   sp_growth_rate_hi <- subset(growth_rates, growth_rates["name"] == species)["planar_upr"][, 1] / 1000
@@ -630,12 +634,12 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       colony_count_thisrun    <- round(colony_count_thisrun * (1 - mort))
       colony_count_thisrun_lo <- round(colony_count_thisrun * (1 - mort_lo))
       colony_count_thisrun_hi <- round(colony_count_thisrun * (1 - mort_hi))
-    } else {
+    } else { # outplant mortality not applied; bounds unchanged
       colony_count_thisrun_lo <- colony_count_thisrun
       colony_count_thisrun_hi <- colony_count_thisrun
     }
 
-    # Determine post-bleaching growth reduction from last year's bleaching (if applicable)
+    # Determine post-bleaching growth reduction due to the most recent bleaching event (if applicable)
     years_since_last_bleach <- i - last_bleach_year
     if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
         # Apply post-bleaching production losses
@@ -679,8 +683,9 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     this_mortality_partial <- this_mortality_partial / 100 # Convert from percent to proportion
     new_area <- new_area * (1 - this_mortality_partial)
 
-    # If bleaching, apply the remaining bleaching stress that did not cause mortality
-    # as a reduction to the colonies' area:
+    # Shrink colonies due to bleaching partial mortality
+    # If bleaching occurs this year, apply the remaining bleaching stress
+    # that did not cause mortality as a reduction to the colonies' area:
     if (bleaching) {
       new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
     }
@@ -704,7 +709,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     sp_area_hi <- new_area_hi * colony_count_thisrun_hi
 
     # Calculate the carbonate budget contribution from this species for this year
-    sp_rate <- calc_rates$rate[calc_rates$Taxon == species]
+    sp_rate <- calc_rates$rate[calc_rates$Taxon == species] 
     carb_accr <- sp_rate * sp_area
     carb_budg  <- carb_accr / site_area
 
@@ -3762,7 +3767,7 @@ server <- function(input, output, session) {
 
   # Set the Restored readout to the new result when the model changes (e.g. new target/site),
   # so a stale hover value doesn't linger against a different scenario.
-  observeEvent(model_result(), {
+  observeEvent(input$run_sim, {
     r <- restored_metrics()
     rt_restored_hover(list(cover = r$cover, budget = r$budget, rap = r$rap))
   }, ignoreInit = TRUE)
@@ -4145,7 +4150,7 @@ server <- function(input, output, session) {
                                           "<br>RAP: ", round(RAP_total_max, 2), " mm/yr")),
                         color = "darkgreen", alpha = 0.6, linewidth = 0.55),
               geom_ribbon(aes(ymin = RAP_total_min, ymax = RAP_total_max),
-                  fill = "darkgreen", alpha = 0.4
+                  fill = "darkgreen", alpha = 0.20
                 )
             )
           }
@@ -4889,7 +4894,7 @@ server <- function(input, output, session) {
                                           "<br>RAP: ", round(RAP_max, 2), " mm/yr")),
                         color = "forestgreen", alpha = 0.6, linewidth = 0.7),
               geom_ribbon(aes(ymin = RAP_min, ymax = RAP_max),
-                  fill = "forestgreen", alpha = 0.4
+                  fill = "forestgreen", alpha = 0.20
               )
             )
           }
