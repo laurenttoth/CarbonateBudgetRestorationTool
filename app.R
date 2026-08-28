@@ -632,16 +632,23 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     else cat("\n ============================ ")
     cat("\n\n\t", abbrev_species(species),
         # "\n\t", str_pad("Baseline cover:", side="right", width = 28), signif(current_sp_m, 3), "m2",
-        "\n\t", sprintf("Initial count:               %d colonies", colony_count),
-        "\n\t", sprintf("Initial colony diameter:     %.2f m", colony_diam),
-        "\n\t", sprintf("Initial species area:        %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi),
-        "\n\t", sprintf("Planar growth rate interval: %.2f ; %.2f ; %.2f mm/yr", 
-                  sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
-                )
+        "\n\t", sprintf("Initial count:                %d colonies", colony_count),
+        "\n\t", sprintf("Initial colony diameter:      %.2f m", colony_diam),
+        "\n\t", sprintf("Initial species area:         %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi)
     )
-    if (group == "outplant") {
-      cat("\n\t", sprintf("Outplant mortality interval: %.3f ; %.3f ; %.3f", mort_lo, mort, mort_hi))
+    if (bleaching_frequency > 0) {
+    cat("\n\t", sprintf("Bleaching severity:           %d DHW", bleaching_severity),
+        "\n\t", sprintf("Partial bleaching mortality:  %.1f %%", sp_dhw_loss * 100), # Readout as percent
+        "\n\t", sprintf("Complete bleaching mortality: %.1f %%", sp_dhw_loss * sp_dhw_mortality * 100)
+    )
     }
+    if (group == "outplant") {
+    cat("\n\t", sprintf("Outplant mortality interval:  %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
+    }
+    cat("\n\t", sprintf("Planar growth rate interval:  %.2f ; %.2f ; %.2f mm/yr", 
+              sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
+      )
+    )
     # Initialize printout table headers here:
     cat("\n\n\t", "Area (m2)",
         "\t", "Accretion contribution (kg)",
@@ -682,7 +689,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     years_since_last_bleach <- i - last_bleach_year
     if (years_since_last_bleach <= 4 && years_since_last_bleach > 0) {
         # Apply post-bleaching production losses
-        reduction <- pbr[years_since_last_bleach]
+        post_bleach_growth_reduction <- pbr[years_since_last_bleach]
     } else {
         post_bleach_growth_reduction <- 0
     }
@@ -700,7 +707,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
           if (bleach_dieoff == 0) {
             readout <- " BLEACHING: NO MORTALITY "
           } else {
-            readout <- paste0(" BLEACHING DIEOFF: -", dieoff, " COLONIES ")
+            readout <- paste0(" BLEACHING DIEOFF: -", bleach_dieoff, " COLONIES ")
           }
           cat("\n\t", str_pad(readout, width = 70, side = "both", pad = "="))
         }
@@ -743,7 +750,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Grow the surviving colonies
     # Apply post-bleaching growth reduction to planar growth rate
-    new_size    <- new_size + sp_growth_rate * (1 - post_bleach_growth_reduction)
+    new_size    <- new_size + sp_growth_rate    * (1 - post_bleach_growth_reduction)
     new_size_lo <- new_size + sp_growth_rate_lo * (1 - post_bleach_growth_reduction)
     new_size_hi <- new_size + sp_growth_rate_hi * (1 - post_bleach_growth_reduction)
 
@@ -1036,7 +1043,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     # Only species with a positive amount to grow get outplants
     sp_to_grow_pct <- target_sp_pct - current_sp_pct
     if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
+    cat("\n ============================ ")
     cat("\n Simulating", species, "growth to", sp_to_grow_pct, "% cover...")
+    cat("\n ============================ ")
 
     # # Colony-count seeding needs the species diameter (also used by the sim)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
@@ -1105,7 +1114,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         outplant_guess <- max(0, ceiling(sp_to_grow_m / per_colony_area))
       }
 
-      cat("\n", species, "initial outplant guess:", outplant_guess)
+      cat("\n", "Initial outplant guess:", outplant_guess)
 
       # Coarse-to-fine search. `per_colony_area` (final area of ONE surviving
       # colony at the horizon) is stable across guesses because growth/mortality
@@ -1189,7 +1198,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     }
 
-    if (rest_horizon > 0) cat("\n", "Ran", guard, "iterations to solve for", abbrev_species_code(species), "outplants.")
+    if (rest_horizon > 0) cat("\n", "Outplant count solved in", guard, "iterations.")
 
     cat("\n", "Simulating outplanting solution...")
 
