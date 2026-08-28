@@ -621,19 +621,27 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   sp_growth_rate_hi <- subset(growth_rates, growth_rates["name"] == species)["planar_upr"][, 1] / 1000
 
   mortality_interval <- outplant_mortality_by_size(colony_diam, species) # c(low, mean, high) interval
+  mort_lo <- mortality_interval[[1]]
+  mort    <- mortality_interval[[2]]
+  mort_hi <- mortality_interval[[3]]
 
   # Sanity checks for simulation inputs
   if (check_sanity) {
     if (bleaching_frequency == 5) cat("\n ===== ANNUAL BLEACHING ===== ")
-    if (bleaching_frequency == 0) cat("\n ======= NO BLEACHING ======= ")
+    else if (bleaching_frequency == 0) cat("\n ======= NO BLEACHING ======= ")
+    else cat("\n ============================ ")
     cat("\n\n\t", abbrev_species(species),
         # "\n\t", str_pad("Baseline cover:", side="right", width = 28), signif(current_sp_m, 3), "m2",
         "\n\t", sprintf("Initial count:               %d colonies", colony_count),
         "\n\t", sprintf("Initial colony diameter:     %.2f m", colony_diam),
         "\n\t", sprintf("Initial species area:        %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi),
-        "\n\t", sprintf("Planar growth rate interval: %.5f ; %.5f ; %.5f m/yr", sp_growth_rate_lo, sp_growth_rate, sp_growth_rate_hi)
+        "\n\t", sprintf("Planar growth rate interval: %.2f ; %.2f ; %.2f mm/yr", 
+                  sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
+                )
     )
-    if (group == "outplant") cat("\n\t",         "Outplant mortality interval:", mortality_interval)
+    if (group == "outplant") {
+      cat("\n\t", sprintf("Outplant mortality interval: %.3f ; %.3f ; %.3f", mort_lo, mort, mort_hi))
+    }
     # Initialize printout table headers here:
     cat("\n\n\t", "Area (m2)",
         "\t", "Accretion contribution (kg)",
@@ -660,12 +668,11 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     # Apply before growth calculation.
     # Colony numbers rounded at every step.
     if (group == "outplant" && i == 1) {
-      mort_lo <- mortality_interval[[1]]
-      mort    <- mortality_interval[[2]]
-      mort_hi <- mortality_interval[[3]]
+      dieoff <- round(colony_count_thisrun * mort)
       colony_count_thisrun    <- round(colony_count_thisrun * (1 - mort))
       colony_count_thisrun_lo <- round(colony_count_thisrun * (1 - mort_lo))
       colony_count_thisrun_hi <- round(colony_count_thisrun * (1 - mort_hi))
+      if (check_sanity) cat("\n\t", str_pad(paste0(" OUTPLANT MORTALITY: ", dieoff, " COLONIES "), width = 70, side = "both", pad = "="))
     } else { # outplant mortality not applied; bounds unchanged
       colony_count_thisrun_lo <- colony_count_thisrun
       colony_count_thisrun_hi <- colony_count_thisrun
@@ -780,7 +787,9 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     out_df_max[i, "carb_budg"] <- budget_hi
     out_df_max[i, "pct_cvr"]   <- sp_area_hi / site_area * 100
   }
-  cat("\n")
+
+  if (check_sanity) cat("\n")
+
   list(df = out_df, final_count = colony_count_thisrun, final_area = new_area,
        df_min = out_df_min, df_max = out_df_max)
 }
@@ -872,6 +881,8 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_budg_min <- rep(0, n)
   total_budg_max <- rep(0, n)
 
+  cat("\n", str_pad(" Baseline assemblage growth simulation ", side = "both", width = 80, pad = "="), "\n")
+
   for (row_i in seq_len(nrow(baseline_cover_df))) {
     species        <- baseline_cover_df$taxon[row_i]
     current_sp_pct <- baseline_cover_df$current_cvr_pct[row_i]
@@ -885,6 +896,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
     # Round to nearest colony. Does this introduce too much rounding error?
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
 
+    cat("\n ============================ ")
     cat("\n", "Simulating baseline growth:", species, "...")
 
     sim <- simulate_growth(group = "original", species = species,
@@ -894,6 +906,10 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
                            bleaching_severity = bleaching_severity,
                            bleaching_frequency = bleaching_frequency,
                            check_sanity = TRUE)
+
+
+    cat("\n", " Remaining colonies at Year ", sim_duration, ": ", sim$final_count, "\n", sep = "")
+    
 
     #total_rap  <- total_rap  + sim$df$RAP
     total_cvr      <- total_cvr      + sim$df$pct_cvr
@@ -938,6 +954,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                 error = paste0("Total target cover (", round(total_target_pct, 1),
                                "%) exceeds 100%.")))
   }
+
+  cat("\n\n", str_pad(" Restoration scenario simulation ", side = "both", width = 80, pad = "="), "\n")
 
   # Subregion/habitat-specific non-microbioerosion + generalized microbioerosion
   macrobioerosion <- resolve_regional_bioerosion(subregion, habitat)
@@ -1009,8 +1027,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
     # Only species with a positive amount to grow get outplants
     sp_to_grow_pct <- target_sp_pct - current_sp_pct
-    cat("\n Simulating", str_pad(species, width = 25, side = "right"), "growth to", sp_to_grow_pct, "% cover...")
     if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
+    cat("\n Simulating", species, "growth to", sp_to_grow_pct, "% cover...")
 
     # Colony-count seeding needs the species diameter (also used by the sim)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
@@ -1132,6 +1150,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     outplants_by_species[species] <- outplant_guess
     total_cost <- total_cost + outplant_guess * outplant_cost
     any_growth <- TRUE
+
+    cat("\n", " Remaining colonies at Year ", sim_duration, ": ", new_list$final_count, "\n", sep = "")
   }
 
   if (!any_growth) {
@@ -1203,7 +1223,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$RAP_orig_min <- budget_df$calc_budg_orig_min / 2.9 / (1 - por)
   budget_df$RAP_orig_max <- budget_df$calc_budg_orig_max / 2.9 / (1 - por)
 
-  cat("\n", str_pad(" Restoration simulation complete ", side = "both", width = 80, pad = "="), "\n")
+  cat("\n", str_pad(" Restoration simulation complete ", side = "both", width = 80, pad = "="), "\n\n")
 
   list(
     budget_df = budget_df,
@@ -3718,6 +3738,10 @@ server <- function(input, output, session) {
     sim_token()
     isolate({
     req(outplanting_ready())
+
+    # Force the baseline-growth reactive to evaluate (and print its sanity
+    # checks) BEFORE this model's outplanting sanity prints run below.
+    invisible(baseline_growth())
 
     # Derived parameters
     habitat        <- input$habitat_choice
