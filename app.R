@@ -672,7 +672,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       colony_count_thisrun    <- round(colony_count_thisrun * (1 - mort))
       colony_count_thisrun_lo <- round(colony_count_thisrun * (1 - mort_lo))
       colony_count_thisrun_hi <- round(colony_count_thisrun * (1 - mort_hi))
-      if (check_sanity) cat("\n\t", str_pad(paste0(" OUTPLANT MORTALITY: ", dieoff, " COLONIES "), width = 70, side = "both", pad = "="))
+      if (check_sanity) cat("\n\t", str_pad(paste0(" OUTPLANTING DIEOFF: -", dieoff, " COLONIES "), width = 70, side = "both", pad = "="))
     } else { # outplant mortality not applied; bounds unchanged
       colony_count_thisrun_lo <- colony_count_thisrun
       colony_count_thisrun_hi <- colony_count_thisrun
@@ -696,10 +696,16 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
         # Apply species-specific dieoff proportion to the colony count:
         bleaching <- TRUE
         if (check_sanity && bleaching_frequency != 5) {
-          cat("\n\t", str_pad(" BLEACHING EVENT ", width = 70, side = "both", pad = "="))
+          bleach_dieoff <- round(colony_count_thisrun * (sp_dhw_loss * sp_dhw_mortality))
+          if (bleach_dieoff == 0) {
+            readout <- " BLEACHING: NO MORTALITY "
+          } else {
+            readout <- paste0(" BLEACHING DIEOFF: -", dieoff, " COLONIES ")
+          }
+          cat("\n\t", str_pad(readout, width = 70, side = "both", pad = "="))
         }
         last_bleach_year <- i
-        colony_count_thisrun    <- round(colony_count_thisrun * (1 - sp_dhw_loss * sp_dhw_mortality))
+        colony_count_thisrun    <- round(colony_count_thisrun    * (1 - sp_dhw_loss * sp_dhw_mortality))
         colony_count_thisrun_lo <- round(colony_count_thisrun_lo * (1 - sp_dhw_loss * sp_dhw_mortality))
         colony_count_thisrun_hi <- round(colony_count_thisrun_hi * (1 - sp_dhw_loss * sp_dhw_mortality))
     }
@@ -1090,8 +1096,21 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
       cat("\n", species, "initial outplant guess:", outplant_guess)
 
+      # Coarse-to-fine search. `per_colony_area` (final area of ONE surviving
+      # colony at the horizon) is stable across guesses because growth/mortality
+      # are per-colony, so total horizon area is very nearly linear in the count:
+      #   total_area(n) ~= per_colony_area * n
+      # Step the guess by 100, then 10, then 1, reversing direction and
+      # dropping to the next-finer step each time the target is overshot.
       reiterate <- TRUE
-      guard <- 0 # safety cap to prevent runaway loops
+      guard <- 0
+      step_schedule <- c(100, 10, 1)
+      # step_i <- 1
+      # Calbirate starting step according to the magnitude of the initial outplant guess
+      step_i <- if (outplant_guess > 200) 1 else if (outplant_guess > 40) 2 else 3
+      step <- step_schedule[step_i]
+      prev_sign <- 0  # sign of (needed - achieved) on the previous iteration
+
       while (reiterate) {
         guard <- guard + 1
         if (guard > 5000) break
@@ -1099,7 +1118,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         starting_outplant_area <- outplant_guess * (outplant_diam / 2) ^ 2 * pi
         needed_outplant_growth <- sp_to_grow_m - starting_outplant_area
 
-        # Search runs ONLY to the restoration horizon
         search_list <- simulate_growth(group = "outplant", species = species,
                                        colony_count = outplant_guess, colony_diam = outplant_diam,
                                        duration = rest_horizon + 1,
@@ -1108,20 +1126,54 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                        bleaching_frequency = bleaching_frequency)
 
         new_area <- search_list[[3]] * outplant_guess # total area at the horizon
+        diff <- needed_outplant_growth - new_area
+        cur_sign <- if (diff < -0.01) -1 else if (diff > 0.01) 1 else 0
 
-        # Get within the nearest 0.01 m2
-        if (needed_outplant_growth - new_area < -0.01) { #Too much growth by the horizon:
-          # Use fewer outplants
-          outplant_guess <- outplant_guess - 1
-          if (outplant_guess < 0) {
-            outplant_guess <- 0
-            reiterate <- FALSE
-            }
-        } else if (needed_outplant_growth - new_area > 0.01) { # Not enough growth:
-          # Use more outplants
-          outplant_guess <- outplant_guess + 1
+        if (cur_sign == 0) {
+          reiterate <- FALSE           # within tolerance
         } else {
-          reiterate <- FALSE
+          # If the target was crossed (sign flipped) while on a coarse step,
+          # step back and refine at the next-finer resolution.
+          if (prev_sign != 0 && cur_sign != prev_sign && step > 1) {
+            step_i <- step_i + 1
+            step <- step_schedule[step_i]
+          }
+          if (cur_sign > 0) {          # not enough growth -> more outplants
+            outplant_guess <- outplant_guess + step
+          } else {                      # too much growth -> fewer outplants
+            outplant_guess <- outplant_guess - step
+            if (outplant_guess < 0) {
+              outplant_guess <- 0
+              reiterate <- FALSE
+            }
+          }
+          prev_sign <- cur_sign
+        }
+      }
+
+      # Closest-integer refinement: the loop above stops on whichever side it
+      # last stepped to, which may not be the integer count nearest the target.
+      # Evaluate the one-step neighbor on the opposite side and keep whichever
+      # lands total horizon area closer to sp_to_grow_m.
+      horizon_abs_err <- function(n) {
+        if (n < 0) return(Inf)
+        starting_area <- n * (outplant_diam / 2) ^ 2 * pi
+        needed        <- sp_to_grow_m - starting_area
+        sl <- simulate_growth(group = "outplant", species = species,
+                              colony_count = n, colony_diam = outplant_diam,
+                              duration = rest_horizon + 1,
+                              site_area = site_area, uc_pct = uc_pct,
+                              bleaching_severity = bleaching_severity,
+                              bleaching_frequency = bleaching_frequency)
+        achieved <- sl[[3]] * n
+        abs(needed - achieved)
+      }
+      # `prev_sign` records which side of the target the final guess sits on:
+      # +1 = under (try one more), -1 = over (try one less).
+      if (prev_sign != 0) {
+        neighbor <- if (prev_sign > 0) outplant_guess + 1 else outplant_guess - 1
+        if (neighbor >= 0 && horizon_abs_err(neighbor) < horizon_abs_err(outplant_guess)) {
+          outplant_guess <- neighbor
         }
       }
     }
@@ -2039,7 +2091,7 @@ body <- dashboardBody(
                     class = "param-inline-row",
                     tags$span(class = "param-label", tags$strong("Avg. outplant diameter:")),
                     numericInput("outplant_size", label = NULL,
-                      value = 5, min = 1, max = 100, step = 0.1
+                      value = 5, min = 2, max = 100, step = 0.1
                     ),
                     tags$span(class = "param-unit", "cm"),
                   ),
@@ -2062,7 +2114,7 @@ body <- dashboardBody(
                   # lines up natively; a snap-to-10 floor keeps it >= 10 years.
                   tags$div(style = "margin: -10px 0;",
                       sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
-                        value = 0, min = 0, max = 30, step = 5
+                        value = 0, min = 0, max = 30, step = 1
                     )
                   ),
                   # Red warning when horizon exceeds sim duration
@@ -3915,7 +3967,7 @@ server <- function(input, output, session) {
     if (is.na(pct)) {
       return(NULL)
       }
-    writeLines(paste0("\n", "RAP percentile at restoration horizon: ", round(pct), "%", "\n\n"))
+    writeLines(paste0("\n", input$baseline_site, "RAP percentile at restoration horizon: ", round(pct), "%", "\n\n"))
     tags$span(style = paste0("color:", percentile_color(pct), ";"),
       paste0("RAP percentile at restoration horizon: ", round(pct), "%")
     )
