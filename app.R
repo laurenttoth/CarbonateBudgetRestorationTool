@@ -3756,10 +3756,16 @@ server <- function(input, output, session) {
       target_cvr_pct = numeric(),
       stringsAsFactors = FALSE
     )
+    # Species whose baseline row currently exists in the UI. A species left over
+    # from a previously-selected site is NOT in this set, so its stale base_
+    # input must not contribute a current cover (which would incorrectly reduce
+    # sp_to_grow_pct in the restoration solve).
+    active_base_sp <- baseline_species_list()
+
     for (s in all_sp) {
       base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
       rest_id <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
-      current_sp_pct <- .safe_num(input[[base_id]])
+      current_sp_pct <- if (s %in% active_base_sp) .safe_num(input[[base_id]]) else 0
       target_sp_pct  <- .safe_num(input[[rest_id]])
       target_cover_df[nrow(target_cover_df) + 1, ] <- list(s, current_sp_pct, target_sp_pct)
     }
