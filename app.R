@@ -887,7 +887,8 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_budg_min <- rep(0, n)
   total_budg_max <- rep(0, n)
 
-  cat("\n", str_pad(" Baseline assemblage growth simulation ", side = "both", width = 80, pad = "="), "\n")
+  cat("\n", str_pad(" Baseline assemblage growth simulation ", side = "both", width = 80, pad = "="), "\n\n")
+  print(baseline_cover_df)
 
   for (row_i in seq_len(nrow(baseline_cover_df))) {
     species        <- baseline_cover_df$taxon[row_i]
@@ -961,7 +962,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                "%) exceeds 100%.")))
   }
 
-  cat("\n\n", str_pad(" Restoration scenario simulation ", side = "both", width = 80, pad = "="), "\n")
+  cat("\n\n", str_pad(" Restoration scenario simulation ", side = "both", width = 80, pad = "="), "\n\n")
+  print(subset(target_cover_df, target_cvr_pct - target_cover_df$current_cvr_pct > 0))
 
   # Subregion/habitat-specific non-microbioerosion + generalized microbioerosion
   macrobioerosion <- resolve_regional_bioerosion(subregion, habitat)
@@ -1036,25 +1038,34 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
     cat("\n Simulating", species, "growth to", sp_to_grow_pct, "% cover...")
 
-    # Colony-count seeding needs the species diameter (also used by the sim)
+    # # Colony-count seeding needs the species diameter (also used by the sim)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
-    if (length(sp_diam) == 0 || is.na(sp_diam)) next
-    # Skip species with no growth-rate record (sim would produce NA)
+    # Use placeholder average diameter instead of skipping:
+    if (length(sp_diam) == 0 || is.na(sp_diam)) {# next
+      sp_diam <- 10
+    }
+    # # Additional sanity checks to track down missing data
+    # cat("\n Average adult sp_diam", sp_diam)
+
+    # # Skip species with no growth-rate record (sim would produce NA)
     sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
+    # cat("\n sp_growth_rate", sp_growth_rate)
     if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
 
     current_sp_m <- site_area * (current_sp_pct / 100)
+    # cat("\n current_sp_m", current_sp_m)
     target_sp_m  <- site_area * (target_sp_pct / 100)
+    # cat("\n target_sp_m", target_sp_m)
 
     # Remaining target size to grow, after original growth to the HORIZON.
     # Grow this species' originals once to read its area at the horizon year.
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
     orig_only <- simulate_growth(group = "original", species = species,
-                                 colony_count = orig_colonies, colony_diam = sp_diam,
-                                 duration = n,
-                                 site_area = site_area, uc_pct = uc_pct,
-                                 bleaching_severity = bleaching_severity,
-                                 bleaching_frequency = bleaching_frequency)
+                                colony_count = orig_colonies, colony_diam = sp_diam,
+                                duration = n,
+                                site_area = site_area, uc_pct = uc_pct,
+                                bleaching_severity = bleaching_severity,
+                                bleaching_frequency = bleaching_frequency)
     orig_area_at_horizon <- orig_only[[1]][["area"]][min(rest_horizon + 1, n)]
     sp_to_grow_m <- target_sp_m - orig_area_at_horizon
 
@@ -2552,9 +2563,18 @@ server <- function(input, output, session) {
     baseline_species_list()
     # Baseline covers + restoration-mix targets (dynamic ids)
     for (s in baseline_species_list()) {
+      # s <- gsub("[^A-Za-z0-9]", "_", s)
+      # # If last element is an underscore, replace it with "." to restore "spp_" to "spp."
+      # if (substr(s, -1, -1) == "_") {
+      #   n <- nchar(s)
+      #   s <- str_sub(s, end = n - 1)
+      #   s <- paste0(s, ".")
+      # }
+      # cat("\n Input:", paste0("base_", gsub("[^A-Za-z0-9]", "_", s)))
       input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
     }
     for (s in restoration_species) {
+      #s <- gsub(".", "", s)
       input[[paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))]]
     }
     input$base_REQUIRED_Unconsolidated_substrate
