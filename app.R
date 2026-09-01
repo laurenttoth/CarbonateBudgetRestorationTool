@@ -572,19 +572,19 @@ baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, mac
     # Apply bioerosion to baseline growth df:
     bg_df$consol_area_orig <- site_area - (site_area * uc_pct / 100) - (site_area * bg_df$pct_cvr_orig / 100)
     bg_df$microbioerosion  <- (bg_df$consol_area_orig / site_area) * be_micro_rate # Multiply the general microbioerosion rate by the proportion of available consolidated sediment
-    bg_df$calc_budg_orig   <- bg_df$calc_budg_orig - bg_df$microbioerosion - macrobioerosion
-    bg_df$RAP_orig         <- bg_df$calc_budg_orig / 2.9 / (1 - bp)
+    bg_df$carb_budg_orig   <- bg_df$carb_budg_orig - bg_df$microbioerosion - macrobioerosion
+    bg_df$RAP_orig         <- bg_df$carb_budg_orig / 2.9 / (1 - bp)
 
     # Bounded RAP. min = low calcification + HIGH erosion (macro + +1 SD);
     # max = high calcification + LOW erosion (macro + -1 SD). When bounds/SDs
     # are unavailable the min/max columns mirror the mean.
-    if ("calc_budg_orig_min" %in% names(bg_df) && "calc_budg_orig_max" %in% names(bg_df)) {
+    if ("carb_budg_orig_min" %in% names(bg_df) && "carb_budg_orig_max" %in% names(bg_df)) {
       macro_hi <- macrobioerosion + (if (is.finite(be_sd_hi)) be_sd_hi else 0)
       macro_lo <- macrobioerosion + (if (is.finite(be_sd_lo)) be_sd_lo else 0)
-      bg_df$calc_budg_orig_min <- bg_df$calc_budg_orig_min - bg_df$microbioerosion - macro_hi
-      bg_df$calc_budg_orig_max <- bg_df$calc_budg_orig_max - bg_df$microbioerosion - macro_lo
-      bg_df$RAP_orig_min <- bg_df$calc_budg_orig_min / 2.9 / (1 - bp)
-      bg_df$RAP_orig_max <- bg_df$calc_budg_orig_max / 2.9 / (1 - bp)
+      bg_df$carb_budg_orig_min <- bg_df$carb_budg_orig_min - bg_df$microbioerosion - macro_hi
+      bg_df$carb_budg_orig_max <- bg_df$carb_budg_orig_max - bg_df$microbioerosion - macro_lo
+      bg_df$RAP_orig_min <- bg_df$carb_budg_orig_min / 2.9 / (1 - bp)
+      bg_df$RAP_orig_max <- bg_df$carb_budg_orig_max / 2.9 / (1 - bp)
     }
 
     bg_df
@@ -974,9 +974,9 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   cat("\n", str_pad(" Baseline growth simulation complete ", side = "both", width = 80, pad = "="), "\n")
 
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
-             pct_cvr_orig = total_cvr, calc_budg_orig = total_budg,
-             calc_budg_orig_min = total_budg_min,
-             calc_budg_orig_max = total_budg_max)
+             pct_cvr_orig = total_cvr, carb_budg_orig = total_budg,
+             carb_budg_orig_min = total_budg_min,
+             carb_budg_orig_max = total_budg_max)
 }
 
 # ----------------------------------------------------------------------------
@@ -1027,16 +1027,16 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Originals (all baseline species) and new outplant growth (restored only).
   area_orig       <- rep(0, n)
   calc_accr_orig  <- rep(0, n)
-  calc_budg_orig  <- rep(0, n)
-  calc_budg_orig_min <- rep(0, n)
-  calc_budg_orig_max <- rep(0, n)
+  carb_budg_orig  <- rep(0, n)
+  carb_budg_orig_min <- rep(0, n)
+  carb_budg_orig_max <- rep(0, n)
   # RAP_orig        <- rep(0, n)
   pct_cvr_orig    <- rep(0, n)
   area_new        <- rep(0, n)
   calc_accr_new   <- rep(0, n)
-  calc_budg_new   <- rep(0, n)
-  calc_budg_new_min  <- rep(0, n)
-  calc_budg_new_max  <- rep(0, n)
+  carb_budg_new   <- rep(0, n)
+  carb_budg_new_min  <- rep(0, n)
+  carb_budg_new_max  <- rep(0, n)
   # RAP_new         <- rep(0, n)
   pct_cvr_new     <- rep(0, n)
   pct_cvr_max     <- rep(0, n)
@@ -1069,9 +1069,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     od <- orig_list[[1]] # original df
     area_orig       <- area_orig       + od$area
     calc_accr_orig  <- calc_accr_orig  + od$carb_accr
-    calc_budg_orig  <- calc_budg_orig  + od$carb_budg
-    calc_budg_orig_min <- calc_budg_orig_min + orig_list$df_min$carb_budg
-    calc_budg_orig_max <- calc_budg_orig_max + orig_list$df_max$carb_budg
+    carb_budg_orig  <- carb_budg_orig  + od$carb_budg
+    carb_budg_orig_min <- carb_budg_orig_min + orig_list$df_min$carb_budg
+    carb_budg_orig_max <- carb_budg_orig_max + orig_list$df_max$carb_budg
     # RAP_orig        <- RAP_orig        + od$RAP
     pct_cvr_orig    <- pct_cvr_orig    + od$pct_cvr
     any_growth <- TRUE
@@ -1260,9 +1260,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
     area_new       <- area_new       + nd$area
     calc_accr_new  <- calc_accr_new  + nd$carb_accr
-    calc_budg_new  <- calc_budg_new  + nd$carb_budg
-    calc_budg_new_min <- calc_budg_new_min + nd_min$carb_budg
-    calc_budg_new_max <- calc_budg_new_max + nd_max$carb_budg
+    carb_budg_new  <- carb_budg_new  + nd$carb_budg
+    carb_budg_new_min <- carb_budg_new_min + nd_min$carb_budg
+    carb_budg_new_max <- carb_budg_new_max + nd_max$carb_budg
     # RAP_new        <- RAP_new        + nd$RAP
     pct_cvr_new    <- pct_cvr_new    + nd$pct_cvr
     pct_cvr_max    <- pct_cvr_max    + nd_max$pct_cvr
@@ -1282,24 +1282,24 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
   budget_df <- data.frame(
     area_orig = area_orig, calc_accr_orig = calc_accr_orig,
-    calc_budg_orig = calc_budg_orig, # RAP_orig = RAP_orig,
+    carb_budg_orig = carb_budg_orig, # RAP_orig = RAP_orig,
     pct_cvr_orig = pct_cvr_orig,
     area_new = area_new, calc_accr_new = calc_accr_new,
-    calc_budg_new = calc_budg_new, # RAP_new = RAP_new,
+    carb_budg_new = carb_budg_new, # RAP_new = RAP_new,
     pct_cvr_new = pct_cvr_new,
     pct_cvr_max = pct_cvr_max # Used for growth cap determination
   )
 
   budget_df$area_total       <- budget_df$area_orig       + budget_df$area_new
   budget_df$calc_accr_total  <- budget_df$calc_accr_orig  + budget_df$calc_accr_new
-  budget_df$calc_budg_total  <- budget_df$calc_budg_orig  + budget_df$calc_budg_new
+  budget_df$carb_budg_total  <- budget_df$carb_budg_orig  + budget_df$carb_budg_new
   budget_df$pct_cvr_total    <- budget_df$pct_cvr_orig    + budget_df$pct_cvr_new
   # budget_df$RAP_total        <- budget_df$RAP_orig        + budget_df$RAP_new
 
 
   # Bounded gross totals (calcification bounds only, so far)
-  budget_df$calc_budg_total_min <- calc_budg_orig_min + calc_budg_new_min
-  budget_df$calc_budg_total_max <- calc_budg_orig_max + calc_budg_new_max
+  budget_df$carb_budg_total_min <- carb_budg_orig_min + carb_budg_new_min
+  budget_df$carb_budg_total_max <- carb_budg_orig_max + carb_budg_new_max
 
   # Bioerosion +/-1 SD band (NA -> 0 offset when unavailable)
   be_sd <- bioerosion_stdev(subregion, habitat)   # c(-sd, +sd)
@@ -1312,36 +1312,36 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Multiply the general microbioerosion rate by the proportion of available consolidated substrate
   budget_df$microbioerosion   <- (budget_df$consol_area_total / site_area) * be_micro_rate
   # Recalculate carbonate budget, accounting for bioerosion
-  budget_df$calc_budg_total     <- budget_df$calc_budg_total - budget_df$microbioerosion - macrobioerosion
+  budget_df$carb_budg_total     <- budget_df$carb_budg_total - budget_df$microbioerosion - macrobioerosion
   # Recalculate RAP from adjusted carbonate budget
-  budget_df$RAP_total         <- budget_df$calc_budg_total / 2.9 / (1 - por)
+  budget_df$RAP_total         <- budget_df$carb_budg_total / 2.9 / (1 - por)
 
   # Bounded totals: min = low calc + high erosion; max = high calc + low erosion
-  budget_df$calc_budg_total_min <- budget_df$calc_budg_total_min - budget_df$microbioerosion - macro_hi
-  budget_df$calc_budg_total_max <- budget_df$calc_budg_total_max - budget_df$microbioerosion - macro_lo
-  # Recalculate total bounds with 95% Confidence Interval
-  budget_df$calc_budg_total_min <- budget_df$calc_budg_total_min - ((budget_df$calc_budg_total - budget_df$calc_budg_total_min) * 1.96)
-  budget_df$calc_budg_total_max <- budget_df$calc_budg_total_max - ((budget_df$calc_budg_total - budget_df$calc_budg_total_max) * 1.96)
+  budget_df$carb_budg_total_min <- budget_df$carb_budg_total_min - budget_df$microbioerosion - macro_hi
+  budget_df$carb_budg_total_max <- budget_df$carb_budg_total_max - budget_df$microbioerosion - macro_lo
+  # # Recalculate total bounds with 95% Confidence Interval
+  # budget_df$carb_budg_total_min <- budget_df$carb_budg_total_min - ((budget_df$carb_budg_total - budget_df$carb_budg_total_min) * 1.96)
+  # budget_df$carb_budg_total_max <- budget_df$carb_budg_total_max - ((budget_df$carb_budg_total - budget_df$carb_budg_total_max) * 1.96)
 
-  budget_df$RAP_total_min <- budget_df$calc_budg_total_min / 2.9 / (1 - por)
-  budget_df$RAP_total_max <- budget_df$calc_budg_total_max / 2.9 / (1 - por)
+  budget_df$RAP_total_min <- budget_df$carb_budg_total_min / 2.9 / (1 - por)
+  budget_df$RAP_total_max <- budget_df$carb_budg_total_max / 2.9 / (1 - por)
 
   # Apply bioerosion to the baseline budget so RAP_orig is net
   # (matches baseline_bioerosion_RAP)
   budget_df$consol_area_orig <- site_area - (site_area * uc_pct / 100) - (site_area * budget_df$pct_cvr_orig / 100)
   budget_df$be_micro_orig    <- (budget_df$consol_area_orig / site_area) * be_micro_rate
-  budget_df$calc_budg_orig   <- budget_df$calc_budg_orig - budget_df$be_micro_orig - macrobioerosion
-  budget_df$RAP_orig         <- budget_df$calc_budg_orig / 2.9 / (1 - por)
+  budget_df$carb_budg_orig   <- budget_df$carb_budg_orig - budget_df$be_micro_orig - macrobioerosion
+  budget_df$RAP_orig         <- budget_df$carb_budg_orig / 2.9 / (1 - por)
 
   # Bounded originals-only
-  budget_df$calc_budg_orig_min <- calc_budg_orig_min - budget_df$be_micro_orig - macro_hi
-  budget_df$calc_budg_orig_max <- calc_budg_orig_max - budget_df$be_micro_orig - macro_lo
+  budget_df$carb_budg_orig_min <- carb_budg_orig_min - budget_df$be_micro_orig - macro_hi
+  budget_df$carb_budg_orig_max <- carb_budg_orig_max - budget_df$be_micro_orig - macro_lo
   # Expand to 95% Confidence Interval
-  budget_df$calc_budg_orig_min <- budget_df$calc_budg_orig_min - ((budget_df$calc_budg_orig - budget_df$calc_budg_orig_min) * 1.96)
-  budget_df$calc_budg_orig_max <- budget_df$calc_budg_orig_max - ((budget_df$calc_budg_orig - budget_df$calc_budg_orig_max) * 1.96)
+  # budget_df$carb_budg_orig_min <- budget_df$carb_budg_orig_min - ((budget_df$carb_budg_orig - budget_df$carb_budg_orig_min) * 1.96)
+  # budget_df$carb_budg_orig_max <- budget_df$carb_budg_orig_max - ((budget_df$carb_budg_orig - budget_df$carb_budg_orig_max) * 1.96)
 
-  budget_df$RAP_orig_min <- budget_df$calc_budg_orig_min / 2.9 / (1 - por)
-  budget_df$RAP_orig_max <- budget_df$calc_budg_orig_max / 2.9 / (1 - por)
+  budget_df$RAP_orig_min <- budget_df$carb_budg_orig_min / 2.9 / (1 - por)
+  budget_df$RAP_orig_max <- budget_df$carb_budg_orig_max / 2.9 / (1 - por)
 
   cat("\n", str_pad(" Restoration simulation complete ", side = "both", width = 80, pad = "="), "\n\n")
 
@@ -1769,9 +1769,6 @@ body <- dashboardBody(
       text-shadow: -1px -1px 0 black, 1px -1px 0 black,
                           -1px 1px 0 black, 1px 1px 0 black;
       }
-
-      /* Red warning under the bioerosion upload widget */
-      .bioerosion-warning { color: #d9534f; font-size: 12px; font-weight: bold; margin-top: -15px; margin-bottom: 15px; }
 
       /* Inline upload label + Download template button */
       .upload-label-row {
@@ -3476,10 +3473,10 @@ server <- function(input, output, session) {
       for (s in sp) {
         cvr <- covers_vec[[s]]
         if (is.na(cvr)) next
-        sp_area_m2 <- area_val_num * (cvr / 100)               # occupied area (m2)
-        rate <- calc_rates$rate[calc_rates$Taxon == s]     # query by Taxon
+        sp_area_m2 <- area_val_num * (cvr / 100)        # occupied area (m2)
+        rate <- calc_rates$rate[calc_rates$Taxon == s]  # query by Taxon
         if (length(rate) == 0 || is.na(rate[1])) next
-        sp_budget <- sp_budget + sp_area_m2 * rate[1]          # kg CaCO3/yr (patch)
+        sp_budget <- sp_budget + sp_area_m2 * rate[1]   # kg CaCO3/yr (patch)
       }
       hab_now <- if ("Habitat" %in% names(site_rows) && any(!is.na(site_rows$Habitat))) {
         as.character(site_rows$Habitat[!is.na(site_rows$Habitat)][1])
@@ -3879,8 +3876,8 @@ server <- function(input, output, session) {
       return(NULL)
     }
 
-    # Refuse to run when the horizon exceeds the simulation duration (a red
-    # warning shows below the sim-duration slider).
+    # Refuse to run when the horizon exceeds the simulation duration,
+    # and display an error message.
     if (rest_horizon > sim_duration) {
       cat("\n---- Error: Simulation duration must meet or exceed restoration horizon. ----")
       showNotification("Error: Simulation duration must meet or exceed restoration horizon.", type = "error")
@@ -3981,7 +3978,7 @@ server <- function(input, output, session) {
       bd <- mr$budget_df
       list(
         b_cover  = bd$pct_cvr_orig[hr],   r_cover  = bd$pct_cvr_total[hr],
-        b_budget = bd$calc_budg_orig[hr], r_budget = bd$calc_budg_total[hr],
+        b_budget = bd$carb_budg_orig[hr], r_budget = bd$carb_budg_total[hr],
         b_rap    = bd$RAP_orig[hr],       r_rap    = bd$RAP_total[hr]
       )
     } else {
@@ -4263,7 +4260,7 @@ server <- function(input, output, session) {
                                       "<br>Year ", Year,
                                       "<br>Cover:  ", round(pct_cvr_orig, 1), " %",
                                       "<br>RAP:    ", round(RAP_orig, 2), " mm/yr",
-                                      "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
+                                      "<br>Budget: ", round(carb_budg_orig, 2), " kg/m\u00b2/yr")),
                     linetype = "longdash",
                     color = orig_col, linewidth = 0.7) +
           {
@@ -4325,8 +4322,8 @@ server <- function(input, output, session) {
         pct_cvr_orig  = bd$pct_cvr_orig,
         pct_cvr_total = bd$pct_cvr_total,
         pct_cvr_max   = bd$pct_cvr_max,
-        calc_budg_orig  = bd$calc_budg_orig,
-        calc_budg_total = bd$calc_budg_total,
+        carb_budg_orig  = bd$carb_budg_orig,
+        carb_budg_total = bd$carb_budg_total,
         RAP_total_min = if (!is.null(bd$RAP_total_min)) bd$RAP_total_min else NA_real_,
         RAP_total_max = if (!is.null(bd$RAP_total_max)) bd$RAP_total_max else NA_real_
       )
@@ -4351,7 +4348,7 @@ server <- function(input, output, session) {
                       text = paste0("<br>Year ", Year,
                                     "<br>Cover:  ", round(pct_cvr_orig, 1), " %",
                                     "<br>RAP:    ", round(RAP_orig, 2), " mm/yr",
-                                    "<br>Budget: ", round(calc_budg_orig, 2), " kg/m\u00b2/yr")),
+                                    "<br>Budget: ", round(carb_budg_orig, 2), " kg/m\u00b2/yr")),
                    linetype = "longdash",
                    color = orig_col, linewidth = 0.7) +
           {
@@ -4381,7 +4378,7 @@ server <- function(input, output, session) {
                       text = paste0("<br>Year ", Year,
                                     "<br>Cover:  ", round(pct_cvr_total, 1), " %",
                                     "<br>RAP:    ", round(RAP_total, 2), " mm/yr",
-                                    "<br>Budget: ", round(calc_budg_total, 2), " kg/m\u00b2/yr")),
+                                    "<br>Budget: ", round(carb_budg_total, 2), " kg/m\u00b2/yr")),
                   color = "darkgreen", linewidth = 1.1) +
         {
           if (calc_uncert_available &&
@@ -4410,10 +4407,10 @@ server <- function(input, output, session) {
             "Year ", Year,
             "<br>Projected cover:  ", round(pct_cvr_total, 1), "%",
             "<br>Projected RAP:    ", round(RAP_total, 2), " mm/yr",
-            "<br>Projected budget: ", round(calc_budg_total, 2), " kg CaCO3/m\u00b2/yr"
+            "<br>Projected budget: ", round(carb_budg_total, 2), " kg CaCO3/m\u00b2/yr"
           ),
           customdata = paste(round(pct_cvr_total, 4),
-                             round(calc_budg_total, 4),
+                             round(carb_budg_total, 4),
                              round(RAP_total, 4), sep = "|")),
           size = 4, color = "darkgreen"
         ) +
@@ -4794,8 +4791,10 @@ server <- function(input, output, session) {
   # Red error when an uploaded cover file lacks a nonzero UC substrate value.
     output$monitoring_cover_uc_warning <- renderUI({
       if (isFALSE(monitoring_uc_ok())) {
-        tags$div(class = "bioerosion-warning",
-          "Error: Uploaded coral cover data does not include unconsolidated substrate.")
+        showNotification(
+          "Error: Uploaded coral cover data does not include unconsolidated substrate.",
+          type = "error"
+        )
       }
     })
 
@@ -4813,12 +4812,11 @@ server <- function(input, output, session) {
     bio <- monitoring_bioerosion_by_year()
     if (is.null(bio) || length(bio$unobserved) == 0) return(NULL)
     msgs <- vapply(bio$unobserved, function(u) {
-      paste0("An unobserved parrotfish size class has been entered: ", u,
-             ". Ensure parrotfish bioerosion data has been entered accurately.")
+      paste0("An unobserved parrotfish size class has been entered: ", u)
     }, character(1))
-    tags$div(class = "bioerosion-warning",
-      lapply(msgs, function(m) tags$div(m))
-    )
+    for (m in msgs) {
+      showNotification(m, type = "error")
+    }
   })
 
   # Nearest-year bioerosion substitution: for a requested year, return the
