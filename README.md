@@ -10,6 +10,8 @@ The Reef Persistence Tool was adapted by Connor M. Jenkins at the U.S. Geologica
 
 Use the `☰` button in the header bar to show/hide the navigation sidebar. Click on the sidebar tabs to navigate between pages.
 
+If the display is poorly scaled, adjust the zoom level in the browser (if using the website) or RStudio (if running locally).
+
 ### Reef Site Map
 
 Use this tab to view National Coral Reef Monitoring Program (NCRMP) reef survey data from 2014-2024. Select a reef site and view its metadata by clicking on a point.
