@@ -955,7 +955,7 @@ bioerosion_stdev <- function(subregion, habitat) {
 # baseline assemblage.
 run_baseline_growth <- function(site_area, uc_pct, sim_duration,
                                 bleaching_severity, bleaching_frequency,
-                                baseline_cover_df) {
+                                baseline_cover_df, progress_cb = NULL) {
 
   n <- sim_duration + 1
   total_rap  <- rep(0, n)
@@ -982,6 +982,9 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
 
     cat("\n ============================ ")
     cat("\n", "Simulating baseline growth:", species, "...")
+    if (is.function(progress_cb)) {
+      progress_cb(paste0("Simulating baseline ", abbrev_species(species), "..."))
+    }
 
     sim <- simulate_growth(group = "original", species = species,
                            colony_count = orig_colonies,
@@ -1023,7 +1026,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                   sim_duration, rest_horizon,
                                   outplant_diam, outplant_cost,
                                   bleaching_severity, bleaching_frequency,
-                                  target_cover_df, exceedance = NULL) {
+                                  target_cover_df, exceedance = NULL,
+                                  progress_cb = NULL) {
 
   # Guard: refuse if total target cover exceeds 100% of the site.
   total_target_pct <- sum(target_cover_df$target_cvr_pct, na.rm = TRUE)
@@ -1269,6 +1273,12 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     }
 
     if (rest_horizon > 0) cat("\n", "Outplant count solved in", guard, "iterations.")
+
+    if (is.function(progress_cb)) {
+      iters <- if (rest_horizon > 0) guard else 0L
+      progress_cb(paste0("Simulating restored ", abbrev_species(species),
+                         " (", iters, " iterations)..."))
+    }
 
     cat("\n", "Simulating outplanting solution...")
 
@@ -1899,6 +1909,67 @@ body <- dashboardBody(
       Shiny.addCustomMessageHandler('toggle_dark', function(on) {
         document.body.classList.toggle('dark-mode', on);
       });
+    ")),
+    # Native-title tooltips keyed by input id. Re-applied on a short interval so
+    # dynamically-rendered inputs (tabs, uiOutput) also receive their titles.
+    tags$script(HTML("
+      var RPT_TIPS = {
+        'baseline_site': 'Select an uploaded survey site, or type a name to build a scenario from scratch.',
+        'site_area_m2': 'Total planar area of the reef patch being modeled, in square meters.',
+        'site_latitude': 'Site latitude in decimal degrees (optional; used for mapping).',
+        'site_longitude': 'Site longitude in decimal degrees (optional; used for mapping).',
+        'subregion_choice': 'Florida reef subregion, used to look up region-specific bioerosion rates.',
+        'habitat_choice': 'Habitat type within the subregion, used to refine bioerosion rates.',
+        'outplant_size': 'Average starting diameter of outplanted coral fragments, in centimeters.',
+        'outplant_cost': 'Estimated cost per outplant, used to compute total project cost.',
+        'sim_duration': 'Number of years to project reef growth into the future.',
+        'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting.',
+        'dhw': 'Thermal-stress severity of each bleaching event, in degree-heating weeks.',
+        'bleach_events': 'How often bleaching occurs, expressed as events per five-year period.',
+        'scenario_project': 'Name grouping related scenarios together for comparison.',
+        'scenario_name': 'A label for this specific parameter combination.',
+        'reactive_sim': 'When on, the projection recomputes automatically as inputs change.',
+        'target_cover_increase': 'Hypothetical increase in coral cover, used to preview restored reef status on the map.',
+        'symbolize_by': 'Choose which metric colors the site markers.',
+        'show_named_reefs': 'Overlay labeled named-reef polygons on the map.',
+        'show_slr': 'Overlay projected sea-level-rise rates on the timeline.',
+        'monitoring_selected_site': 'Choose a site to display observed post-restoration monitoring data.'
+      };
+      function rptSetTitle(el, txt) {
+        if (el) el.setAttribute('title', txt);
+      }
+      function rptApplyTips() {
+        for (var id in RPT_TIPS) {
+          var txt = RPT_TIPS[id];
+          // The element carrying the id (often a hidden <input>/<select> for
+          // sliders and selectize, or the visible <input> for numericInput).
+          var el = document.getElementById(id);
+          if (!el) continue;
+
+          rptSetTitle(el, txt);
+
+          // Walk up to the enclosing .form-group so the LABEL is covered too.
+          var grp = el.closest ? el.closest('.form-group') : null;
+          rptSetTitle(grp, txt);
+
+          // Slider (ionRangeSlider): the visible widget is a sibling .irs block,
+          // usually within the same .form-group. Title every piece so any hover
+          // target works.
+          var scope = grp || el.parentNode;
+          if (scope) {
+            scope.querySelectorAll('.irs, .irs-line, .irs-bar, .irs-handle, .irs-single, .js-irs-0')
+                 .forEach(function(n){ rptSetTitle(n, txt); });
+            // Selectize: the visible control replaces the hidden <select>.
+            scope.querySelectorAll('.selectize-control, .selectize-input')
+                 .forEach(function(n){ rptSetTitle(n, txt); });
+            // materialSwitch / checkbox visible parts.
+            scope.querySelectorAll('.bootstrap-switch, .material-switch, label')
+                 .forEach(function(n){ rptSetTitle(n, txt); });
+          }
+        }
+      }
+      $(document).on('shiny:idle shiny:value', rptApplyTips);
+      setInterval(rptApplyTips, 1500);
     "))
   ),
 
@@ -2163,6 +2234,14 @@ body <- dashboardBody(
                         class = "mix-fieldset mix-massive",
                         tags$legend(tags$strong("Massive")),
                         uiOutput("mix_massive")
+                      )
+                    )
+                  ),
+                  fluidRow(
+                    column(12,
+                      tags$div(style = "text-align:right; margin-top:4px;",
+                        actionButton("reset_mix", "Reset mix",
+                                     icon = icon("eraser"), class = "btn-sm")
                       )
                     )
                   )
@@ -2669,7 +2748,6 @@ server <- function(input, output, session) {
   # button is disabled while reactive mode is on).
   observeEvent(input$run_sim, {
     sim_token(sim_token() + 1)
-    showNotification("Simulating restoration scenario...", type = "message")
   })
 
   # Disable the Run button while reactive simulation is enabled.
@@ -3490,6 +3568,15 @@ server <- function(input, output, session) {
       )
       uploaded_covers(covers_vec)
 
+      # Push the new site's covers into any existing base_ inputs so the
+      # value-preservation logic in baseline_cover_inputs reads the NEW site's
+      # values (not stale typed values carried over from the previous site).
+      for (s in sp) {
+        bid <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
+        v <- covers_vec[[s]]
+        updateNumericInput(session, bid, value = if (is.na(v)) 0 else v)
+      }
+
       # When baseline cover data is ingested, calculate the current carbonate
       # budget by area occupied per species. For each species, convert its
       # percent cover to occupied area (m2), then multiply that area by the
@@ -3545,10 +3632,16 @@ server <- function(input, output, session) {
     sp <- baseline_species_list()
     covers <- uploaded_covers()
 
-    # Build one compact row (name + squished input) per species
+    # Build one compact row (name + squished input) per species.
+    # Preserve any value the user has already typed: a live input value takes
+    # precedence over the uploaded cover, so adding a species doesn't reset the
+    # rest of the list back to their upload/zero defaults.
     rows <- lapply(sp, function(s) {
       id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-      val <- if (!is.null(covers) && s %in% names(covers) && !is.na(covers[[s]])) {
+      live <- isolate(input[[id]])
+      val <- if (!is.null(live) && !is.na(live)) {
+        live
+      } else if (!is.null(covers) && s %in% names(covers) && !is.na(covers[[s]])) {
         covers[[s]]
       } else {
         0
@@ -3608,7 +3701,9 @@ server <- function(input, output, session) {
                    title = s, HTML(make_species_label(s, split_line = FALSE))),
           fluidRow(
             column(6,
-              numericInput(id, label = NULL, value = 0,
+              # Blank by default (value = NA renders empty). A blank target is
+              # treated as "no target" in the model, not a forced-zero target.
+              numericInput(id, label = NULL, value = NA,
                           min = 0, max = 100, step = 0.1)
             ),
             column(6,
@@ -3658,6 +3753,15 @@ server <- function(input, output, session) {
     )
   })
 
+  # Reset every Species-Mix target input back to blank (NA).
+  observeEvent(input$reset_mix, {
+    for (s in restoration_species) {
+      rid <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
+      updateNumericInput(session, rid, value = NA)
+    }
+    showNotification("Cleared Species Mix targets.", type = "message")
+  })
+
   # Populate each per-species outplant caption independently of the inputs,
   # so updating counts never rebuilds (and thus never resets) the inputs.
   # Uses the "Gspe" code (1 genus letter + 3 species letters).
@@ -3675,51 +3779,23 @@ server <- function(input, output, session) {
     }
   })
 
-  # Seed restoration-mix sliders from matching baseline values.
-  # Re-fires whenever the baseline species set OR any per-species baseline
-  # numericInput changes, so the mix keeps honoring the baseline cover input.
-  observeEvent(
-    {
-      # Depend on the species set and on every dynamic base_ input value
-      sel <- baseline_species_list()
-      vals <- lapply(restoration_species, function(s) {
-        input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
-      })
-      list(sel, vals)
-    },
-    {
-      sel <- baseline_species_list()
-      # brief defer so the dynamic base_ inputs exist before they are read
-      later::later(function() {
-        for (s in restoration_species) {
-          rest_id <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
-          if (s %in% sel) {
-            base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-            isolate({
-              updateNumericInput(session, rest_id, value = .safe_num(input[[base_id]]))
-            })
-          } else {
-            # Species not in the active site: clear any leftover target value
-            isolate({
-              updateNumericInput(session, rest_id, value = 0)
-            })
-          }
-        }
-      }, delay = 0.2)
-    },
-    ignoreNULL = FALSE
-  )
-
   ## ---------------------------------------------------------------------------
   ## Restoration Planning ----
   ## baseline / restored metrics + plotly timeline
   ## ---------------------------------------------------------------------------
 
-  # Reactive store of RAP values (shared with Monitoring tab)
-  rap_values <- reactiveValues(
-    baseline = NULL,
-    restored = NULL
-  )
+  # Holds the active Shiny Progress object during a simulation run, so both the
+  # baseline_growth() reactive and model_result() can advance the same bar.
+  sim_progress <- reactiveVal(NULL)
+
+  # Convenience: push a message to the active progress bar if one exists.
+  progress_say <- function(msg) {
+    pr <- sim_progress()
+    if (!is.null(pr)) {
+      tryCatch(pr$inc(amount = 0.05, message = "Simulating", detail = msg),
+               error = function(e) NULL)
+    }
+  }
 
   # Baseline cover & carbonate budget from the entered/uploaded data.
   # Budget uses the area-occupied method: per species, area (m2) * rate,
@@ -3793,9 +3869,9 @@ server <- function(input, output, session) {
     base_cover_df$cvr[is.na(base_cover_df$cvr)] <- 0
     bp <- assemblage_porosity(base_cover_df, "cvr")
 
-    rap_values$baseline <- budget / 2.9 / (1 - bp)
+    rap_baseline <- budget / 2.9 / (1 - bp)
 
-    list(cover = total_coral_pct_cvr, budget = budget, rap = rap_values$baseline, sim_duration = sim_duration)
+    list(cover = total_coral_pct_cvr, budget = budget, rap = rap_baseline, sim_duration = sim_duration)
     })
   })
 
@@ -3832,7 +3908,8 @@ server <- function(input, output, session) {
           sim_duration = sim_duration,
           bleaching_severity  = .safe_num(input$dhw),
           bleaching_frequency = .safe_num(input$bleach_events),
-          baseline_cover_df = bdf
+          baseline_cover_df = bdf,
+          progress_cb = progress_say
         ),
         porosity = por
       ) # ,
@@ -3867,9 +3944,9 @@ server <- function(input, output, session) {
     rest_cover_df <- data.frame(taxon = all_sp, cvr = combined_cvr, stringsAsFactors = FALSE)
     rp <- assemblage_porosity(rest_cover_df, "cvr")
 
-    rap_values$restored <- budget / 2.9 / (1 - rp)
+    rap_restored <- budget / 2.9 / (1 - rp)
 
-    list(cover = total_coral_cover, budget = budget, rap = rap_values$restored)
+    list(cover = total_coral_cover, budget = budget, rap = rap_restored)
     })
   })
 
@@ -3880,6 +3957,19 @@ server <- function(input, output, session) {
     sim_token()
     isolate({
     req(outplanting_ready())
+
+    # Progress bar for the whole simulation. Created here, advanced by
+    # progress_say() (baseline + restoration species), closed on exit.
+    pr <- shiny::Progress$new(session, min = 0, max = 1)
+    pr$set(message = "Simulating", detail = "Starting...", value = 0.02)
+    sim_progress(pr)
+    on.exit({
+      tryCatch(pr$set(message = "Simulation complete", detail = "", value = 1),
+               error = function(e) NULL)
+      # Brief pause so "complete" is visible, then close.
+      later::later(function() tryCatch(pr$close(), error = function(e) NULL), 0.6)
+      sim_progress(NULL)
+    }, add = TRUE)
 
     # Force the baseline-growth reactive to evaluate (and print its sanity
     # checks) BEFORE this model's outplanting sanity prints run below.
@@ -3958,7 +4048,8 @@ server <- function(input, output, session) {
       outplant_diam = outplant_diam, outplant_cost = outplant_cost,
       bleaching_severity = bleaching_severity,
       bleaching_frequency = bleaching_frequency,
-      target_cover_df = target_cover_df
+      target_cover_df = target_cover_df,
+      progress_cb = progress_say
     )#,
       #error = function(e) {
        # print(paste("Model error:", e$message))#, type = "error")
@@ -3983,7 +4074,8 @@ server <- function(input, output, session) {
         bleaching_severity = bleaching_severity,
         bleaching_frequency = bleaching_frequency,
         target_cover_df = target_cover_df,
-        exceedance = list(year = x_yr, residual = x_over) # Pass the first year in which cover exceeded 100%, and the proportion by which it was exceeded
+        exceedance = list(year = x_yr, residual = x_over), # Pass the first year in which cover exceeded 100%, and the proportion by which it was exceeded
+        progress_cb = progress_say
       )
     }
     res
@@ -4400,31 +4492,31 @@ server <- function(input, output, session) {
             )
           }
         } +
-        # Total RAP: dark green line
+        # Total RAP: purple line
         geom_line(aes(y = RAP_total, group = 2,
                       text = paste0("<br>Year ", Year,
                                     "<br>Coral cover:  ", round(pct_cvr_total, 1), " %",
                                     "<br>RAP:    ", round(RAP_total, 2), " mm/yr",
                                     "<br>Budget: ", round(carb_budg_total, 2), " kg/m\u00b2/yr")),
-                  color = "darkgreen", linewidth = 1.1) +
+                  color = "#7b3fbf", linewidth = 1.1) +
         {
           if (calc_uncert_available &&
               all(c("RAP_total_min", "RAP_total_max") %in% names(d))) {
             list(
               geom_ribbon(aes(ymin = RAP_total_min, ymax = RAP_total_max),
-                  fill = "darkgreen", alpha = 0.20
+                  fill = "#7b3fbf", alpha = 0.20
               ),
               geom_line(aes(y = RAP_total_min, group = 21,
                             text = paste0("Lower bound",
                                           "<br>Year ", Year,
                                           "<br>RAP: ", round(RAP_total_min, 2), " mm/yr")),
-                        color = "darkgreen", alpha = 0.6, linewidth = 0.55),
+                        color = "#7b3fbf", alpha = 0.6, linewidth = 0.55),
               geom_line(aes(y = RAP_total_max, group = 22,
                             text = paste0("Upper bound",
                                           "<br>Year   ", Year,
                                           "<br>Coral cover: ", round(pct_cvr_max, 1), " %",
                                           "<br>RAP:   ", round(RAP_total_max, 2), " mm/yr")),
-                        color = "darkgreen", alpha = 0.6, linewidth = 0.55)
+                        color = "#7b3fbf", alpha = 0.6, linewidth = 0.55)
             )
           }
         } +
@@ -4439,7 +4531,7 @@ server <- function(input, output, session) {
           customdata = paste(round(pct_cvr_total, 4),
                              round(carb_budg_total, 4),
                              round(RAP_total, 4), sep = "|")),
-          size = 4, color = "darkgreen"
+          size = 4, color = "#7b3fbf"
         ) +
         scale_x_continuous(breaks = x_breaks) +
         scale_y_continuous(limits = c(y_lo, y_hi),
@@ -4454,6 +4546,28 @@ server <- function(input, output, session) {
       p <- p + geom_vline(
         aes(xintercept = horizon, text = "Restoration horizon"),
         linetype = "dashed", color = "gray50"
+      )
+    }
+
+    # Bleaching-event markers: thin red vertical lines at the years bleaching
+    # occurs, matching simulate_growth's frequency rule (loop i -> Year i-1).
+    bfreq <- .safe_num(input$bleach_events)
+    bleach_years <- integer(0)
+    if (bfreq > 0) {
+      for (i in 1:(dur + 1)) {
+        if ((bfreq == 1 && (i + 1) %% 4 == 0) ||
+            (bfreq == 2 && (i + 1) %% 2 == 0) ||
+            (bfreq == 5)) {
+          bleach_years <- c(bleach_years, i - 1)  # Year = loop index - 1
+        }
+      }
+    }
+    if (length(bleach_years)) {
+      p <- p + geom_vline(
+        data = data.frame(bx = bleach_years),
+        aes(xintercept = bx, text = "Bleaching event"),
+        inherit.aes = FALSE,
+        linetype = "solid", color = "red", linewidth = 0.3, alpha = 0.3
       )
     }
 
@@ -4506,29 +4620,84 @@ server <- function(input, output, session) {
         line = list(color = "gold", width = 2, dash = "dash"),
         showlegend = FALSE,
         inherit = FALSE
-      ) |>
-      plotly::add_annotations(
-        x = 0.92, y = 3.1, xref = "paper", yref = "y",
-        text = "Geologic baseline RAP: 3.1 mm/yr",
-        showarrow = FALSE, yshift = 9,
-        font = list(color = "#b8860b", size = 11),
-        bgcolor = paper_bg, opacity = 0.9
       )
 
+    # Manual legend: each entry is a real two-point line placed far outside the
+    # visible x-range (so it never renders in-panel) but still registers a
+    # legend swatch. NA-only traces get culled by plotly, so use real coords.
+    off_x <- c(-1e6, -1e6 + 1)
+    legend_entry <- function(g, name, color, dash = "solid") {
+      plotly::add_trace(
+        g, x = off_x, y = c(0, 0), type = "scatter", mode = "lines",
+        line = list(color = color, dash = dash, width = 2),
+        name = name, showlegend = TRUE, inherit = FALSE,
+        hoverinfo = "skip"
+      )
+    }
+    gp <- gp |>
+      legend_entry("Baseline RAP    ", "gray", dash = "dash") |>
+      legend_entry("Restored RAP    ", "#7b3fbf") |>
+      legend_entry("Geologic baseline    ", "gold", dash = "dash")
+    if (show_slr) gp <- legend_entry(gp, "Sea-level rise    ", "#1f6fd6", dash = "dash")
+    if (length(bleach_years)) gp <- legend_entry(gp, "Bleaching event    ", "red")
+
+    # ggplotly defaults showlegend to FALSE at the layout level; force it on and
+    # fix the x-range so the off-canvas legend traces don't expand the axis.
+    gp <- gp |> plotly::layout(
+      showlegend = TRUE,
+      legend = list(orientation = "h", x = 0.05, y = 1.08),
+      xaxis = list(range = c(0, dur))
+    )
+
     gp
+  })
+
+  ## ---------------------------------------------------------------------------
+  ## Auto-populated scenario naming ----
+  ## Project name mirrors the selected baseline site. Scenario name follows:
+  ##   <Gspe(highest-cover restoration species)>_<freq>B_<dhw>DHW_<horizon>_<duration>
+  ## Both refresh as their driving inputs change.
+  ## ---------------------------------------------------------------------------
+  observeEvent(input$baseline_site, {
+    if (nzchar(.safe_num_chr(input$baseline_site))) {
+      updateTextInput(session, "scenario_project", value = input$baseline_site)
+    }
+  }, ignoreInit = TRUE)
+
+  observe({
+    # Highest-target-cover species in the restoration mix (Gspe code)
+    targets <- vapply(restoration_species, function(s) {
+      .safe_num(input[[paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))]])
+    }, numeric(1))
+    top_sp <- if (any(targets > 0)) restoration_species[which.max(targets)] else NA_character_
+    sp_code <- if (!is.na(top_sp)) abbrev_species_code(top_sp) else "NA"
+
+    freq <- .safe_num(input$bleach_events)
+    dhw  <- .safe_num(input$dhw)
+    hz   <- .safe_num(input$rest_horizon)
+    dur  <- .safe_num(input$sim_duration)
+
+    suggested <- paste0(sp_code, "_", freq, "B_", dhw, "DHW_", hz, "_", dur)
+    updateTextInput(session, "scenario_name", value = suggested)
   })
 
   ## ---------------------------------------------------------------------------
   ## Save scenario (Restoration Planning) ----
   ## ---------------------------------------------------------------------------
   observeEvent(input$save_scenario, {
-    shiny::validate(shiny::need(nzchar(input$scenario_project), "Enter a project name."))
-    shiny::validate(shiny::need(nzchar(input$scenario_name), "Enter a scenario name."))
+    # Evaluate name inputs independently:
+    if (input$scenario_project == "") {
+      showNotification("Enter a project name.", type = "error")
+      return(NULL)
+    }
+    if (input$scenario_name == "") {
+      showNotification("Enter a scenario name.", type = "error")
+      return(NULL)
+    }
 
     # Wire the "Save scenario" button press to also run the simulation,
     # so the appropriate simulated values for the current slider values are saved.
     sim_token(sim_token() + 1)
-    showNotification("Simulating restoration scenario...", type = "message")
     base_mets <- baseline_metrics()
     mr <- model_result()
     fv <- final_vals()   # baseline/restored evaluated at the restoration horizon
@@ -5269,13 +5438,6 @@ server <- function(input, output, session) {
         showlegend = FALSE, inherit = FALSE,
         hoverinfo = "text",
         text = paste0("Geologic baseline RAP: ", geo_baseline, " mm/yr")
-      ) |>
-      plotly::add_annotations(
-        x = 0.98, y = geo_baseline, xref = "paper", yref = "y",
-        text = paste0("Geologic baseline RAP: ", geo_baseline, " mm/yr"),
-        showarrow = FALSE, yshift = 9, xanchor = "right",
-        font = list(color = "#b8860b", size = 11),
-        bgcolor = paper_bg, opacity = 0.9
       )
 
     # Int reference rates (blue dashed) at 2030 / 2050 / 2070
