@@ -47,6 +47,34 @@ read_excel_quiet <- function(path, ...) {
   readxl::read_excel(path, .name_repair = "unique_quiet", ...)
 }
 
+# ---- Global log buffer + writer ----
+# log_msg() is callable from ANY scope (top-level model functions included),
+# because it lives in the global environment. It appends to a plain-environment
+# buffer; the server drains that buffer into a reactiveVal for the log panel.
+# A version counter lets the server know when new lines have arrived.
+.LOG_ENV <- new.env(parent = emptyenv())
+.LOG_ENV$lines   <- character(0)
+.LOG_ENV$version <- 0L
+
+log_msg <- function(..., console = TRUE) {
+  msg <- paste0(...)
+  # stamped <- paste0("[", format(Sys.time(), "%H:%M:%S"), "] ", msg)
+  .LOG_ENV$lines   <- c(.LOG_ENV$lines, msg) #stamped)
+  # Cap to the most recent 1000 lines to bound memory over long sessions.
+  if (length(.LOG_ENV$lines) > 1000) {
+    .LOG_ENV$lines <- utils::tail(.LOG_ENV$lines, 1000)
+  }
+  .LOG_ENV$version <- .LOG_ENV$version + 1L
+  if (console) cat(msg, "\n")
+  invisible(NULL)
+}
+
+log_clear_buffer <- function() {
+  .LOG_ENV$lines   <- character(0)
+  .LOG_ENV$version <- .LOG_ENV$version + 1L
+  invisible(NULL)
+}
+
 # Ingest data ----
 # World map data for leaflet map
 world_data   <- ggplot2::map_data("world")
@@ -630,25 +658,25 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
   # Sanity checks for simulation inputs
   if (check_sanity) {
-    if (bleaching_frequency == 5) cat("\n ===== ANNUAL BLEACHING ===== ")
-    else if (bleaching_frequency == 0) cat("\n ======= NO BLEACHING ======= ")
-    else cat("\n ============================ ")
-    cat("\n\n\t", abbrev_species(species),
+    if (bleaching_frequency == 5) log_msg(" ===== ANNUAL BLEACHING ===== ")
+    else if (bleaching_frequency == 0) log_msg(" ======= NO BLEACHING ======= ")
+    else log_msg(" ============================ ")
+    log_msg("\t", abbrev_species(species),
         # "\n\t", str_pad("Baseline cover:", side="right", width = 28), signif(current_sp_m, 3), "m2",
         "\n\t", sprintf("Initial count:                 %d colonies", colony_count),
         "\n\t", sprintf("Initial colony diameter:       %.1f cm", colony_diam * 100), # Readout in centimeters
         "\n\t", sprintf("Initial species area:          %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi)
     )
     if (bleaching_frequency > 0) {
-    cat("\n\t", sprintf("Bleaching severity:            %d DHW", bleaching_severity),
+    log_msg("\t",sprintf("Bleaching severity:            %d DHW", bleaching_severity),
         "\n\t", sprintf("Partial bleaching mortality:   %.1f %%", sp_dhw_loss * 100), # Readout as percent
         "\n\t", sprintf("Whole-colony bleach mortality: %.1f %%", sp_dhw_loss * sp_dhw_mortality * 100)
     )
     }
     if (group == "outplant") {
-    cat("\n\t", sprintf("Outplant mortality interval:   %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
+    log_msg("\t",sprintf("Outplant mortality interval:   %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
     }
-    cat("\n\t", sprintf("Planar growth rate interval:   %.2f ; %.2f ; %.2f mm/yr", 
+    log_msg("\t",sprintf("Planar growth rate interval:   %.2f ; %.2f ; %.2f mm/yr", 
               sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
       )
     )
@@ -679,8 +707,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       colony_count_thisrun_lo <- round(colony_count_thisrun * (1 - mort_hi)) # Apply high mortality to yield low-range colony count
       colony_count_thisrun_hi <- round(colony_count_thisrun * (1 - mort_lo)) # Vice-versa
       if (check_sanity) {
-        cat(
-          "\n\t",
+        log_msg(
+          "\t",
           sprintf(
           "Outplanting dieoff:            -%d colonies ", dieoff
           )
@@ -693,7 +721,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     if (check_sanity && i == 1) {
       # Initialize printout table headers here:
-      cat("\n\n\t", "|",
+      log_msg("\n\t", "|",
           str_pad("Area",             width = 8),  "|",
           str_pad("Accretion",        width = 18), "|",
           str_pad("Site-wide budget", width = 20), "|",
@@ -707,7 +735,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
           str_pad("remaining",           width = 12), "|",
           str_pad("(m2)",                width = 23),
           "\n",
-          str_pad("-", pad = "-",  width = 110, side = "both")
+          str_pad("-", pad = "-",  width = 90, side = "both")
       )
     }
 
@@ -737,7 +765,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
         #   } else {
         #     readout <- paste0(" BLEACHING DIEOFF: -", bleach_dieoff, " COLONIES ")
         #   }
-        #   cat("\n\t", str_pad(readout, width = 70, side = "both", pad = "="))
+        #   log_msg("\t",str_pad(readout, width = 70, side = "both", pad = "="))
         # }
         last_bleach_year <- i
         colony_count_thisrun    <- round(colony_count_thisrun    * (1 - sp_dhw_loss * sp_dhw_mortality))
@@ -787,8 +815,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       if (i == exceedance$year) {
         cap_size <- new_size_hi
         cap_size <- cap_size - (cap_size * exceedance$residual) # Adjust for the residual overage
-        cat(
-          "\n\t",
+        log_msg(
+          "\t",
           str_pad(
             sprintf(
               " Colony diameter cap reached: %.3f m ", cap_size
@@ -830,8 +858,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Sanity check: growth table printout
     if (check_sanity) {
-      cat(
-        "\n",
+      log_msg(
         str_pad(paste0("Y", i - 1),                  width = 7),  "|",
         str_pad(sprintf("%.2f", sp_area),            width = 8),  "|",
         str_pad(sprintf("%.3f", carb_accr),          width = 18), "|",
@@ -871,7 +898,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     out_df_max[i, "pct_cvr"]   <- pct_cvr_hi
   }
 
-  if (check_sanity) cat("\n")
+  if (check_sanity) log_msg("\n")
 
   list(df = out_df, final_count = colony_count_thisrun, final_area = new_area,
        df_min = out_df_min, df_max = out_df_max)
@@ -964,7 +991,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_budg_min <- rep(0, n)
   total_budg_max <- rep(0, n)
 
-  cat("\n", str_pad(" Baseline assemblage growth simulation ", side = "both", width = 110, pad = "="), "\n\n")
+  log_msg(str_pad(" Baseline assemblage growth simulation ", side = "both", width = 90, pad = "="), "\n\n")
   print(baseline_cover_df)
 
   for (row_i in seq_len(nrow(baseline_cover_df))) {
@@ -980,8 +1007,8 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
     # Round to nearest colony. Does this introduce too much rounding error?
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
 
-    cat("\n ============================ ")
-    cat("\n", "Simulating baseline growth:", species, "...")
+    log_msg(" ============================ ")
+    log_msg("Simulating baseline growth:", species, "...")
     if (is.function(progress_cb)) {
       progress_cb(paste0("Simulating baseline ", abbrev_species(species), "..."))
     }
@@ -1001,7 +1028,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
     total_budg_max <- total_budg_max + sim$df_max$carb_budg
   }
 
-  cat("\n", str_pad(" Baseline growth simulation complete ", side = "both", width = 110, pad = "="), "\n")
+  log_msg(str_pad(" Baseline growth simulation complete ", side = "both", width = 90, pad = "="), "\n")
 
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
              pct_cvr_orig = total_cvr, carb_budg_orig = total_budg,
@@ -1032,7 +1059,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Guard: refuse if total target cover exceeds 100% of the site.
   total_target_pct <- sum(target_cover_df$target_cvr_pct, na.rm = TRUE)
   if (is.finite(total_target_pct) && total_target_pct > 100) {
-    cat("\n---- Error: Target cover cannot exceed 100%. ----")
+    log_msg("---- Error: Target cover cannot exceed 100%. ----")
     showNotification("Error: Target cover cannot exceed 100%.", type = "error")
     return(NULL)
     # return(list(budget_df = data.frame(),
@@ -1042,7 +1069,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     #                            "%) exceeds 100%.")))
   }
 
-  cat("\n\n", str_pad(" Restoration scenario simulation ", side = "both", width = 110, pad = "="), "\n\n")
+  log_msg(str_pad(" Restoration scenario simulation ", side = "both", width = 90, pad = "="), "\n\n")
   print(subset(target_cover_df, target_cvr_pct - target_cover_df$current_cvr_pct > 0))
 
   # Subregion/habitat-specific non-microbioerosion + generalized microbioerosion
@@ -1117,9 +1144,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     # Only species with a positive amount to grow get outplants
     sp_to_grow_pct <- target_sp_pct - current_sp_pct
     if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
-    cat("\n ============================ ")
-    cat("\n Simulating", species, "growth to", target_sp_pct, "% cover...")
-    cat("\n ============================ ")
+    log_msg(" ============================ ")
+    log_msg(" Simulating", species, "growth to", target_sp_pct, "% cover...")
+    log_msg(" ============================ ")
 
     # # Colony-count seeding needs the species diameter (also used by the sim)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
@@ -1128,17 +1155,17 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       sp_diam <- 10
     }
     # # Additional sanity checks to track down missing data
-    # cat("\n Average adult sp_diam", sp_diam)
+    # log_msg(" Average adult sp_diam", sp_diam)
 
     # # Skip species with no growth-rate record (sim would produce NA)
     sp_growth_rate <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000
-    # cat("\n sp_growth_rate", sp_growth_rate)
+    # log_msg(" sp_growth_rate", sp_growth_rate)
     if (length(sp_growth_rate) == 0 || is.na(sp_growth_rate)) next
 
     current_sp_m <- site_area * (current_sp_pct / 100)
-    # cat("\n current_sp_m", current_sp_m)
+    # log_msg(" current_sp_m", current_sp_m)
     target_sp_m  <- site_area * (target_sp_pct / 100)
-    # cat("\n target_sp_m", target_sp_m)
+    # log_msg(" target_sp_m", target_sp_m)
 
     # Remaining target size to grow, after original growth to the HORIZON.
     # Grow this species' originals once to read its area at the horizon year.
@@ -1188,7 +1215,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         outplant_guess <- max(0, ceiling(sp_to_grow_m / per_colony_area))
       }
 
-      cat("\n", "Initial outplant guess:", outplant_guess)
+      log_msg("Initial outplant guess:", outplant_guess)
 
       # Coarse-to-fine search. `per_colony_area` (final area of ONE surviving
       # colony at the horizon) is stable across guesses because growth/mortality
@@ -1272,7 +1299,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     }
 
-    if (rest_horizon > 0) cat("\n", "Outplant count solved in", guard, "iterations.")
+    if (rest_horizon > 0) log_msg("Outplant count solved in", guard, "iterations.")
 
     if (is.function(progress_cb)) {
       iters <- if (rest_horizon > 0) guard else 0L
@@ -1280,7 +1307,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                          " (", iters, " iterations)..."))
     }
 
-    cat("\n", "Simulating outplanting solution...")
+    log_msg("Simulating outplanting solution...")
 
     # ---- PHASE 2: run the solved outplant count for the FULL simulation duration ----
     new_list <- simulate_growth(group = "outplant", species = species,
@@ -1378,7 +1405,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$RAP_orig_min <- budget_df$carb_budg_orig_min / 2.9 / (1 - por)
   budget_df$RAP_orig_max <- budget_df$carb_budg_orig_max / 2.9 / (1 - por)
 
-  cat("\n", str_pad(" Restoration simulation complete ", side = "both", width = 110, pad = "="), "\n\n")
+  log_msg(str_pad(" Restoration simulation complete ", side = "both", width = 90, pad = "="), "\n\n")
 
   list(
     budget_df = budget_df,
@@ -1811,6 +1838,32 @@ body <- dashboardBody(
         gap: 8px; margin-bottom: 4px;
       }
       .upload-label-row .control-label { margin: 0; font-weight: bold; }
+
+      /* ---- Right-side log panel ---- */
+      .log-panel {
+        position: fixed; top: 0; right: 0; height: 100vh; width: 650px;
+        background: #f4f4f4; border-left: 2px solid #3c8dbc; z-index: 1200;
+        box-shadow: -2px 0 6px rgba(0,0,0,0.2);
+        transform: translateX(100%); transition: transform 0.25s ease;
+        display: flex; flex-direction: column;
+      }
+      .log-panel.open { transform: translateX(0); }
+      .log-panel-header {
+        padding: 8px 12px; font-weight: bold; background: #3c8dbc; color: white;
+        display: flex; justify-content: space-between; align-items: center;
+      }
+      .log-panel-body { padding: 8px 12px; overflow-y: auto; flex: 1 1 auto; }
+      .log-toggle-tab {
+        position: fixed; top: 120px; right: 0; z-index: 1201;
+        background: #3c8dbc; color: white; cursor: pointer;
+        padding: 8px 6px; border-radius: 6px 0 0 6px; writing-mode: vertical-rl;
+        font-weight: bold; box-shadow: -1px 1px 4px rgba(0,0,0,0.3);
+      }
+      body.dark-mode .log-panel { background: #232a33; border-left-color: #8fb8d8; }
+      body.dark-mode .log-panel-body,
+      body.dark-mode .log-panel-body pre { color: #e6e6e6; }
+
+      /* ---- Responsive uniform scaling for smaller screens ---- */
 
       /* ---- Responsive uniform scaling for smaller screens ---- */
       /* Shrink the whole layout proportionally so a laptop looks like a
@@ -2680,6 +2733,26 @@ body <- dashboardBody(
         )
       )
     )
+  ),
+
+  # ---- Right-side collapsible log panel (available on all tabs) ----
+  tags$div(class = "log-toggle-tab",
+    onclick = "document.getElementById('log_panel').classList.toggle('open');",
+    "Log"
+  ),
+  tags$div(id = "log_panel", class = "log-panel",
+    tags$div(class = "log-panel-header",
+      tags$span("Console Log"),
+      tags$div(
+        actionButton("log_clear", "Clear", class = "btn-xs"),
+        tags$span(style = "cursor:pointer; margin-left:8px;",
+          onclick = "document.getElementById('log_panel').classList.remove('open');",
+          icon("xmark"))
+      )
+    ),
+    tags$div(class = "log-panel-body",
+      uiOutput("log_panel_content")
+    )
   )
 )
 
@@ -2696,6 +2769,49 @@ server <- function(input, output, session) {
   reef_name       <- reactiveVal()
   reef_year       <- reactiveVal(2019)
   initial_budget  <- reactiveVal(NULL)
+
+  # ---- Log panel: drain the global buffer into a reactiveVal for display ----
+  # A short poller watches the global version counter; when it changes, the
+  # displayed lines refresh. This bridges the non-reactive global writer (usable
+  # from top-level functions) to the reactive UI.
+  log_lines <- reactiveVal(character(0))
+  log_seen  <- reactiveVal(-1L)
+
+  observe({
+    invalidateLater(400, session)
+    v <- .LOG_ENV$version
+    if (!identical(isolate(log_seen()), v)) {
+      log_seen(v)
+      log_lines(.LOG_ENV$lines)
+    }
+  })
+
+  observeEvent(input$log_clear, {
+    log_clear_buffer()
+    log_lines(character(0))
+  })
+
+  output$log_panel_content <- renderUI({
+    lines <- log_lines()
+    if (length(lines) == 0) {
+      return(tags$em(style = "color:#888;", "No messages yet."))
+    }
+    tags$pre(
+      style = "white-space: pre-wrap; word-break: break-word; font-size: 11px; margin: 0;",
+      paste(lines, collapse = "\n")
+    )
+  })
+
+  # Condition-capture wrapper for reactives (errors/warnings -> log).
+  with_logged_conditions <- function(expr) {
+    withCallingHandlers(
+      tryCatch(expr,
+        error = function(e) { log_msg("ERROR: ", conditionMessage(e)); NULL }),
+      warning = function(w) {
+        log_msg("WARNING: ", conditionMessage(w)); invokeRestart("muffleWarning")
+      }
+    )
+  }
 
   # Manual/reactive simulation gate ----
   # `sim_token` is the single dependency the projection reactives take. In
@@ -2729,7 +2845,7 @@ server <- function(input, output, session) {
       #   s <- str_sub(s, end = n - 1)
       #   s <- paste0(s, ".")
       # }
-      # cat("\n Input:", paste0("base_", gsub("[^A-Za-z0-9]", "_", s)))
+      # log_msg(" Input:", paste0("base_", gsub("[^A-Za-z0-9]", "_", s)))
       input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
     }
     for (s in restoration_species) {
@@ -3988,7 +4104,7 @@ server <- function(input, output, session) {
     rest_horizon  <- .safe_num(input$rest_horizon)
 
     if (outplant_diam < 0.02) {
-      cat("\n---- Error: Outplant diameter must be at least 2 cm. ----")
+      log_msg("---- Error: Outplant diameter must be at least 2 cm. ----")
       showNotification("Error: Outplant diameter must be at least 2 cm.", type = "error")
       return(NULL)
     }
@@ -3996,7 +4112,7 @@ server <- function(input, output, session) {
     # Refuse to run when the horizon exceeds the simulation duration,
     # and display an error message.
     if (rest_horizon > sim_duration) {
-      cat("\n---- Error: Simulation duration must meet or exceed restoration horizon. ----")
+      log_msg("---- Error: Simulation duration must meet or exceed restoration horizon. ----")
       showNotification("Error: Simulation duration must meet or exceed restoration horizon.", type = "error")
       return(NULL)
       }
@@ -4036,7 +4152,7 @@ server <- function(input, output, session) {
     # Nothing present to grow, or no target-cover increase -> no model output
     if (all(target_cover_df$current_cvr_pct <= 0 & target_cover_df$target_cvr_pct <= 0) ||
         all(target_cover_df$target_cvr_pct - target_cover_df$current_cvr_pct <= 0)) {
-      cat("\n", "No target percent-cover increases submitted; no additional growth to simulate.", "\n")
+      log_msg("No target percent-cover increases submitted; no additional growth to simulate.", "\n")
       return(NULL)
     }
 
@@ -4063,8 +4179,8 @@ server <- function(input, output, session) {
       x_yr <- x_idx[[1]]
       x_over <- (res$budget_df$pct_cvr_max[[x_yr]] - 100) / 100 # Proportion by which the maximum cover exceeded 100%
 
-      cat("\n", sprintf("Coral cover could exceed 100%% in year %s by a factor of %.3f.", x_yr - 1, x_over))
-      cat("\n", "Re-running simulation with growth cap...")
+      log_msg(sprintf("Coral cover could exceed 100%% in year %s by a factor of %.3f.", x_yr - 1, x_over))
+      log_msg("Re-running simulation with growth cap...")
 
       res <- run_restoration_model(
         habitat = habitat, subregion = subregion,
@@ -5057,7 +5173,7 @@ server <- function(input, output, session) {
               input$monitoring_selected_site,
               " does not have an 'Unconsolidated sediment' entry."
             )
-      cat("\n", msg)
+      log_msg(msg)
       showNotification(msg, type = "error")
       return(FALSE)
     }
@@ -5071,18 +5187,18 @@ server <- function(input, output, session) {
     cover <- uploaded_monitoring_cover()
     if (is.null(cover)) return(NULL)
 
-    cat("\n ============================ ")
-    cat("\n",
+    log_msg(" ============================ ")
+    log_msg(
       paste0("Plotting Restoration Monitoring series: ",
         input$monitoring_selected_site,
         " ... "
         )
       )
-    cat("\n ============================ \n")
+    log_msg(" ============================ \n")
 
     needed <- c("Years_Post_Restoration", "Taxon", "Percent_Cover", "Unique_Site_ID")
     if (!all(needed %in% names(cover))) {
-      cat("\n Error: Restoration Monitoring Coral cover .xlsx is missing a required field.")
+      log_msg("Error: Restoration Monitoring Coral cover .xlsx is missing a required field.")
       showNotification("Error: Restoration Monitoring Coral cover .xlsx is missing a required field.",
       type = "error")
       return(NULL)
