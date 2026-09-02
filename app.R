@@ -635,28 +635,22 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     else cat("\n ============================ ")
     cat("\n\n\t", abbrev_species(species),
         # "\n\t", str_pad("Baseline cover:", side="right", width = 28), signif(current_sp_m, 3), "m2",
-        "\n\t", sprintf("Initial count:                %d colonies", colony_count),
-        "\n\t", sprintf("Initial colony diameter:      %.1f cm", colony_diam * 100), # Readout in centimeters
-        "\n\t", sprintf("Initial species area:         %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi)
+        "\n\t", sprintf("Initial count:                 %d colonies", colony_count),
+        "\n\t", sprintf("Initial colony diameter:       %.1f cm", colony_diam * 100), # Readout in centimeters
+        "\n\t", sprintf("Initial species area:          %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi)
     )
     if (bleaching_frequency > 0) {
-    cat("\n\t", sprintf("Bleaching severity:           %d DHW", bleaching_severity),
-        "\n\t", sprintf("Partial bleaching mortality:  %.1f %%", sp_dhw_loss * 100), # Readout as percent
-        "\n\t", sprintf("Whole-colony bleaching mortality: %.1f %%", sp_dhw_loss * sp_dhw_mortality * 100)
+    cat("\n\t", sprintf("Bleaching severity:            %d DHW", bleaching_severity),
+        "\n\t", sprintf("Partial bleaching mortality:   %.1f %%", sp_dhw_loss * 100), # Readout as percent
+        "\n\t", sprintf("Whole-colony bleach mortality: %.1f %%", sp_dhw_loss * sp_dhw_mortality * 100)
     )
     }
     if (group == "outplant") {
-    cat("\n\t", sprintf("Outplant mortality interval:  %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
+    cat("\n\t", sprintf("Outplant mortality interval:   %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
     }
-    cat("\n\t", sprintf("Planar growth rate interval:  %.2f ; %.2f ; %.2f mm/yr", 
+    cat("\n\t", sprintf("Planar growth rate interval:   %.2f ; %.2f ; %.2f mm/yr", 
               sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
       )
-    )
-    # Initialize printout table headers here:
-    cat("\n\n\t", "Area (m2)",
-        "\t", "Accretion contribution (kg)",
-        "\t", "Site-wide budget contrib. (kg/m2/yr)",
-        "\t", "Area interval"
     )
   }
 
@@ -687,17 +681,34 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
       if (check_sanity) {
         cat(
           "\n\t",
-          str_pad(
-            sprintf(
-            " OUTPLANTING DIEOFF: - %d COLONIES ", dieoff
-            ),
-          width = 70, side = "both", pad = "="
+          sprintf(
+          "Outplanting dieoff:            -%d colonies ", dieoff
           )
         )
       }
     } else { # outplant mortality not applied; bounds unchanged
       colony_count_thisrun_lo <- colony_count_thisrun
       colony_count_thisrun_hi <- colony_count_thisrun
+    }
+
+    if (check_sanity && i == 1) {
+      # Initialize printout table headers here:
+      cat("\n\n\t", "|",
+          str_pad("Area",             width = 8),  "|",
+          str_pad("Accretion",        width = 18), "|",
+          str_pad("Site-wide budget", width = 20), "|",
+          str_pad("Colonies",         width = 12), "|",
+          str_pad("Area interval",    width = 23),
+          # Linebreak + units
+          "\n\t", "|",
+          str_pad("(m2)",                width = 8),  "|",
+          str_pad("contribution (kg)",   width = 18), "|",
+          str_pad("contrib. (kg/m2/yr)", width = 20), "|",
+          str_pad("remaining",           width = 12), "|",
+          str_pad("(m2)",                width = 23),
+          "\n",
+          str_pad("-", pad = "-",  width = 110, side = "both")
+      )
     }
 
     # Determine post-bleaching growth reduction due to the most recent bleaching event (if applicable)
@@ -711,21 +722,23 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Will bleaching occur this year?:
     bleaching <- FALSE
+    bleach_dieoff <- 0
     if ((bleaching_frequency == 1 && i %% 4 == 0)    # Every 4th year
      || (bleaching_frequency == 2 && i %% 2 == 0)    # Even years
      || (bleaching_frequency == 5 && i %% 1 == 0)) { # Every year
         # If so, kill colonies before growth if bleaching occurs
         # Apply species-specific dieoff proportion to the colony count:
         bleaching <- TRUE
-        if (check_sanity && bleaching_frequency != 5) {
-          bleach_dieoff <- round(colony_count_thisrun * (sp_dhw_loss * sp_dhw_mortality))
-          if (bleach_dieoff == 0) {
-            readout <- " BLEACHING: NO MORTALITY "
-          } else {
-            readout <- paste0(" BLEACHING DIEOFF: -", bleach_dieoff, " COLONIES ")
-          }
-          cat("\n\t", str_pad(readout, width = 70, side = "both", pad = "="))
-        }
+        bleach_dieoff <- round(colony_count_thisrun * (sp_dhw_loss * sp_dhw_mortality))
+        # if (check_sanity && bleaching_frequency != 5) {
+        #   bleach_dieoff <- round(colony_count_thisrun * (sp_dhw_loss * sp_dhw_mortality))
+        #   if (bleach_dieoff == 0) {
+        #     readout <- " BLEACHING: NO MORTALITY "
+        #   } else {
+        #     readout <- paste0(" BLEACHING DIEOFF: -", bleach_dieoff, " COLONIES ")
+        #   }
+        #   cat("\n\t", str_pad(readout, width = 70, side = "both", pad = "="))
+        # }
         last_bleach_year <- i
         colony_count_thisrun    <- round(colony_count_thisrun    * (1 - sp_dhw_loss * sp_dhw_mortality))
         colony_count_thisrun_lo <- round(colony_count_thisrun_lo * (1 - sp_dhw_loss * sp_dhw_mortality))
@@ -817,28 +830,45 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
 
     # Sanity check: growth table printout
     if (check_sanity) {
-      cat("\n", str_pad(paste0("Y", i - 1), width = 6),
-        sprintf(" %.4f     \t %.4f \t\t\t %.4f \t\t\t\t %.2f | %.2f | %.2f",
-          sp_area, carb_accr, carb_budg, sp_area_lo, sp_area, sp_area_hi
-        )
+      cat(
+        "\n",
+        str_pad(paste0("Y", i - 1),                  width = 7),  "|",
+        str_pad(sprintf("%.2f", sp_area),            width = 8),  "|",
+        str_pad(sprintf("%.3f", carb_accr),          width = 18), "|",
+        str_pad(sprintf("%.3f", carb_budg),          width = 20), "|",
+        str_pad(sprintf("%d", colony_count_thisrun), width = 12), "|",
+        str_pad(sprintf("%.2f", sp_area_lo),         width = 6, side = "both"),  "|",
+        str_pad(sprintf("%.2f", sp_area),            width = 6, side = "both"),  "|",
+        str_pad(sprintf("%.2f", sp_area_hi),         width = 6, side = "both")
       )
     }
 
     # Populate the output dataframe with total values as of this year:
+    # Exclude CCA from coral cover
+    if (str_detect(species, "algae")) {
+      pct_cvr    <- 0
+      pct_cvr_lo <- 0
+      pct_cvr_hi <- 0
+    } else {
+      pct_cvr    <- sp_area / site_area * 100
+      pct_cvr_lo <- sp_area_lo / site_area * 100
+      pct_cvr_hi <- sp_area_hi / site_area * 100
+    }
+
     out_df[i, "area"]      <- sp_area # Calcifier area
     out_df[i, "carb_accr"] <- carb_accr # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
     out_df[i, "carb_budg"] <- carb_budg # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
-    out_df[i, "pct_cvr"]   <- sp_area / site_area * 100 # Calcifier percent cover
+    out_df[i, "pct_cvr"]   <- pct_cvr   # Hard coral percent cover
 
     out_df_min[i, "area"]      <- sp_area_lo
     out_df_min[i, "carb_accr"] <- r_lo * sp_area_lo
     out_df_min[i, "carb_budg"] <- budget_lo
-    out_df_min[i, "pct_cvr"]   <- sp_area_lo / site_area * 100
+    out_df_min[i, "pct_cvr"]   <- pct_cvr_lo
 
     out_df_max[i, "area"]      <- sp_area_hi
     out_df_max[i, "carb_accr"] <- r_hi * sp_area_hi
     out_df_max[i, "carb_budg"] <- budget_hi
-    out_df_max[i, "pct_cvr"]   <- sp_area_hi / site_area * 100
+    out_df_max[i, "pct_cvr"]   <- pct_cvr_hi
   }
 
   if (check_sanity) cat("\n")
@@ -934,7 +964,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_budg_min <- rep(0, n)
   total_budg_max <- rep(0, n)
 
-  cat("\n", str_pad(" Baseline assemblage growth simulation ", side = "both", width = 80, pad = "="), "\n\n")
+  cat("\n", str_pad(" Baseline assemblage growth simulation ", side = "both", width = 110, pad = "="), "\n\n")
   print(baseline_cover_df)
 
   for (row_i in seq_len(nrow(baseline_cover_df))) {
@@ -961,9 +991,6 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
                            bleaching_frequency = bleaching_frequency,
                            check_sanity = TRUE)
 
-
-    cat("\n", " Remaining colonies at Year ", sim_duration, ": ", sim$final_count, "\n", sep = "")
-
     #total_rap  <- total_rap  + sim$df$RAP
     total_cvr      <- total_cvr      + sim$df$pct_cvr
     total_budg     <- total_budg     + sim$df$carb_budg
@@ -971,7 +998,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
     total_budg_max <- total_budg_max + sim$df_max$carb_budg
   }
 
-  cat("\n", str_pad(" Baseline growth simulation complete ", side = "both", width = 80, pad = "="), "\n")
+  cat("\n", str_pad(" Baseline growth simulation complete ", side = "both", width = 110, pad = "="), "\n")
 
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
              pct_cvr_orig = total_cvr, carb_budg_orig = total_budg,
@@ -1011,7 +1038,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     #                            "%) exceeds 100%.")))
   }
 
-  cat("\n\n", str_pad(" Restoration scenario simulation ", side = "both", width = 80, pad = "="), "\n\n")
+  cat("\n\n", str_pad(" Restoration scenario simulation ", side = "both", width = 110, pad = "="), "\n\n")
   print(subset(target_cover_df, target_cvr_pct - target_cover_df$current_cvr_pct > 0))
 
   # Subregion/habitat-specific non-microbioerosion + generalized microbioerosion
@@ -1270,8 +1297,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     outplants_by_species[species] <- outplant_guess
     total_cost <- total_cost + outplant_guess * outplant_cost
     any_growth <- TRUE
-
-    cat("\n", " Remaining colonies at Year ", sim_duration, ": ", new_list$final_count, "\n", sep = "")
   }
 
   if (!any_growth) {
@@ -1343,7 +1368,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$RAP_orig_min <- budget_df$carb_budg_orig_min / 2.9 / (1 - por)
   budget_df$RAP_orig_max <- budget_df$carb_budg_orig_max / 2.9 / (1 - por)
 
-  cat("\n", str_pad(" Restoration simulation complete ", side = "both", width = 80, pad = "="), "\n\n")
+  cat("\n", str_pad(" Restoration simulation complete ", side = "both", width = 110, pad = "="), "\n\n")
 
   list(
     budget_df = budget_df,
@@ -2335,7 +2360,7 @@ body <- dashboardBody(
           # Collapsible per-scenario Impact Summary (below Scenario Selection).
           # Each scenario is a nested collapsible panel within this box.
           shinydashboard::box(
-            title = HTML("Impact Summary at<br/>Restoration Horizon"), width = 12,
+            title = HTML("Impact Summary at<br/>End of Simulation"), width = 12,
             status = "info", solidHeader = TRUE,
             collapsible = TRUE,
             uiOutput("sc_impact_summaries")
@@ -2596,8 +2621,9 @@ server <- function(input, output, session) {
   # Manual/reactive simulation gate ----
   # `sim_token` is the single dependency the projection reactives take. In
   # reactive mode it bumps on any relevant input change; in manual mode it
-  # bumps only when "Run simulation" is clicked. Projection reactives isolate()
-  # their real inputs so nothing recomputes until the token advances.
+  # bumps only when "Run simulation" or "Save scenario" is clicked.
+  # Projection reactives isolate() their real inputs so nothing
+  # recomputes until the token advances.
   sim_token <- reactiveVal(0)
 
   # Inputs that should trigger a recompute when in reactive mode. Listing them
@@ -2643,6 +2669,7 @@ server <- function(input, output, session) {
   # button is disabled while reactive mode is on).
   observeEvent(input$run_sim, {
     sim_token(sim_token() + 1)
+    showNotification("Simulating restoration scenario...", type = "message")
   })
 
   # Disable the Run button while reactive simulation is enabled.
@@ -4038,7 +4065,7 @@ server <- function(input, output, session) {
     }
   })
 
-  # Baseline RAP percentile (gray) + restored RAP percentile at horizon (colored)
+  # Baseline RAP percentile (gray) + restored RAP percentile at simulation end (colored)
   output$rap_pctile_baseline <- renderUI({
     pct <- ingested_baseline_pctile()
     if (is.null(pct) || is.na(pct)) {
@@ -4059,9 +4086,9 @@ server <- function(input, output, session) {
     if (is.na(pct)) {
       return(NULL)
       }
-    writeLines(paste0("\n", input$baseline_site, "RAP percentile at restoration horizon: ", round(pct), "%", "\n\n"))
+    writeLines(paste0("\n", input$baseline_site, "RAP percentile at simulation end: ", round(pct), "%", "\n\n"))
     tags$span(style = paste0("color:", percentile_color(pct), ";"),
-      paste0("RAP percentile at restoration horizon: ", round(pct), "%")
+      paste0("RAP percentile at simulation end: ", round(pct), "%")
     )
   })
 
@@ -4258,7 +4285,7 @@ server <- function(input, output, session) {
           geom_line(aes(y = RAP_orig, group = 1,
                         text = paste0("Baseline growth",
                                       "<br>Year ", Year,
-                                      "<br>Cover:  ", round(pct_cvr_orig, 1), " %",
+                                      "<br>Coral cover:  ", round(pct_cvr_orig, 1), " %",
                                       "<br>RAP:    ", round(RAP_orig, 2), " mm/yr",
                                       "<br>Budget: ", round(carb_budg_orig, 2), " kg/m\u00b2/yr")),
                     linetype = "longdash",
@@ -4346,7 +4373,7 @@ server <- function(input, output, session) {
         # Original RAP contribution (all baseline species' originals)
         geom_line(aes(y = RAP_orig, group = 1,
                       text = paste0("<br>Year ", Year,
-                                    "<br>Cover:  ", round(pct_cvr_orig, 1), " %",
+                                    "<br>Coral cover:  ", round(pct_cvr_orig, 1), " %",
                                     "<br>RAP:    ", round(RAP_orig, 2), " mm/yr",
                                     "<br>Budget: ", round(carb_budg_orig, 2), " kg/m\u00b2/yr")),
                    linetype = "longdash",
@@ -4376,7 +4403,7 @@ server <- function(input, output, session) {
         # Total RAP: dark green line
         geom_line(aes(y = RAP_total, group = 2,
                       text = paste0("<br>Year ", Year,
-                                    "<br>Cover:  ", round(pct_cvr_total, 1), " %",
+                                    "<br>Coral cover:  ", round(pct_cvr_total, 1), " %",
                                     "<br>RAP:    ", round(RAP_total, 2), " mm/yr",
                                     "<br>Budget: ", round(carb_budg_total, 2), " kg/m\u00b2/yr")),
                   color = "darkgreen", linewidth = 1.1) +
@@ -4395,7 +4422,7 @@ server <- function(input, output, session) {
               geom_line(aes(y = RAP_total_max, group = 22,
                             text = paste0("Upper bound",
                                           "<br>Year   ", Year,
-                                          "<br>Cover: ", round(pct_cvr_max, 1), " %",
+                                          "<br>Coral cover: ", round(pct_cvr_max, 1), " %",
                                           "<br>RAP:   ", round(RAP_total_max, 2), " mm/yr")),
                         color = "darkgreen", alpha = 0.6, linewidth = 0.55)
             )
@@ -4501,6 +4528,7 @@ server <- function(input, output, session) {
     # Wire the "Save scenario" button press to also run the simulation,
     # so the appropriate simulated values for the current slider values are saved.
     sim_token(sim_token() + 1)
+    showNotification("Simulating restoration scenario...", type = "message")
     base_mets <- baseline_metrics()
     mr <- model_result()
     fv <- final_vals()   # baseline/restored evaluated at the restoration horizon
@@ -5153,7 +5181,7 @@ server <- function(input, output, session) {
         geom_line(aes(y = RAP, group = 1,
                       text = paste0(ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
                                     "<br>RAP: ", round(RAP, 2), " mm/yr",
-                                    "<br>Cover: ", round(cover, 1), " %",
+                                    "<br>Coral cover: ", round(cover, 1), " %",
                                     "<br>Budget: ", round(budget, 2), " kg/m\u00b2/yr")),
                   color = "forestgreen", linewidth = 1.4) +
         {
