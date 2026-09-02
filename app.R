@@ -646,8 +646,8 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100
   # 30% of the cover loss applied as whole-colony mortality
   # (generalized default, see about species-specific values later)
-  sp_dhw_mortality <- 0.30
-  sp_growth_rate   <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
+  sp_dhw_mortality  <- 0.30
+  sp_growth_rate    <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
   sp_growth_rate_lo <- subset(growth_rates, growth_rates["name"] == species)["planar_lwr"][, 1] / 1000
   sp_growth_rate_hi <- subset(growth_rates, growth_rates["name"] == species)["planar_upr"][, 1] / 1000
 
@@ -661,22 +661,24 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     if (bleaching_frequency == 5) log_msg(" ===== ANNUAL BLEACHING ===== ")
     else if (bleaching_frequency == 0) log_msg(" ======= NO BLEACHING ======= ")
     else log_msg(" ============================ ")
-    log_msg("\t", abbrev_species(species),
+    log_msg(
+        "\t", abbrev_species(species),
         # "\n\t", str_pad("Baseline cover:", side="right", width = 28), signif(current_sp_m, 3), "m2",
         "\n\t", sprintf("Initial count:                 %d colonies", colony_count),
         "\n\t", sprintf("Initial colony diameter:       %.1f cm", colony_diam * 100), # Readout in centimeters
         "\n\t", sprintf("Initial species area:          %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi)
     )
     if (bleaching_frequency > 0) {
-    log_msg("\t",sprintf("Bleaching severity:            %d DHW", bleaching_severity),
+    log_msg(
+        "\t", sprintf("Bleaching severity:            %d DHW", bleaching_severity),
         "\n\t", sprintf("Partial bleaching mortality:   %.1f %%", sp_dhw_loss * 100), # Readout as percent
         "\n\t", sprintf("Whole-colony bleach mortality: %.1f %%", sp_dhw_loss * sp_dhw_mortality * 100)
     )
     }
     if (group == "outplant") {
-    log_msg("\t",sprintf("Outplant mortality interval:   %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
+    log_msg("\t", sprintf("Outplant mortality interval:   %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
     }
-    log_msg("\t",sprintf("Planar growth rate interval:   %.2f ; %.2f ; %.2f mm/yr", 
+    log_msg("\t", sprintf("Planar growth rate interval:   %.2f ; %.2f ; %.2f mm/yr",
               sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
       )
     )
@@ -765,7 +767,7 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
         #   } else {
         #     readout <- paste0(" BLEACHING DIEOFF: -", bleach_dieoff, " COLONIES ")
         #   }
-        #   log_msg("\t",str_pad(readout, width = 70, side = "both", pad = "="))
+        #   log_msg("\t", str_pad(readout, width = 70, side = "both", pad = "="))
         # }
         last_bleach_year <- i
         colony_count_thisrun    <- round(colony_count_thisrun    * (1 - sp_dhw_loss * sp_dhw_mortality))
@@ -993,7 +995,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
   total_budg_max <- rep(0, n)
 
   log_msg(str_pad(" Baseline assemblage growth simulation ", side = "both", width = 90, pad = "="), "\n\n")
-  print(baseline_cover_df)
+  # print(baseline_cover_df)
 
   for (row_i in seq_len(nrow(baseline_cover_df))) {
     species        <- baseline_cover_df$taxon[row_i]
@@ -1009,7 +1011,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
 
     log_msg(" ============================ ")
-    log_msg("Simulating baseline growth:", species, "...")
+    log_msg(" Simulating baseline growth: ", species, "...")
     if (is.function(progress_cb)) {
       progress_cb(paste0("Simulating baseline ", abbrev_species(species), "..."))
     }
@@ -1071,7 +1073,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   }
 
   log_msg(str_pad(" Restoration scenario simulation ", side = "both", width = 90, pad = "="), "\n\n")
-  print(subset(target_cover_df, target_cvr_pct - target_cover_df$current_cvr_pct > 0))
+  # print(subset(target_cover_df, target_cvr_pct - target_cover_df$current_cvr_pct > 0))
 
   # Subregion/habitat-specific non-microbioerosion + generalized microbioerosion
   macrobioerosion <- resolve_regional_bioerosion(subregion, habitat)
@@ -1146,7 +1148,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     sp_to_grow_pct <- target_sp_pct - current_sp_pct
     if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
     log_msg(" ============================ ")
-    log_msg(" Simulating", species, "growth to", target_sp_pct, "% cover...")
+    log_msg(" Simulating ", species, " growth to ", target_sp_pct, "% cover...")
     log_msg(" ============================ ")
 
     # # Colony-count seeding needs the species diameter (also used by the sim)
@@ -1308,7 +1310,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                          " (", iters, " iterations)..."))
     }
 
-    log_msg("Simulating outplanting solution...")
+    log_msg(" Simulating outplanting solution...")
 
     # ---- PHASE 2: run the solved outplant count for the FULL simulation duration ----
     new_list <- simulate_growth(group = "outplant", species = species,
@@ -4295,7 +4297,7 @@ server <- function(input, output, session) {
     if (is.na(pct)) {
       return(NULL)
       }
-    writeLines(paste0("\n", input$baseline_site, "RAP percentile at simulation end: ", round(pct), "%", "\n\n"))
+    log_msg(paste0(" ", input$baseline_site, "RAP percentile at simulation end: ", round(pct), "%", "\n\n"))
     tags$span(style = paste0("color:", percentile_color(pct), ";"),
       paste0("RAP percentile at simulation end: ", round(pct), "%")
     )
@@ -4660,6 +4662,7 @@ server <- function(input, output, session) {
 
     # Restoration-horizon marker: gray dashed vertical line + hover
     if (dur > horizon) {
+      sim_token()
       p <- p + geom_vline(
         aes(xintercept = horizon, text = "Restoration horizon"),
         linetype = "dashed", color = "gray50"
@@ -4672,8 +4675,8 @@ server <- function(input, output, session) {
     bleach_years <- integer(0)
     if (bfreq > 0) {
       for (i in 1:(dur + 1)) {
-        if ((bfreq == 1 && (i + 1) %% 4 == 0) ||
-            (bfreq == 2 && (i + 1) %% 2 == 0) ||
+        if ((bfreq == 1 && i %% 4 == 0) ||
+            (bfreq == 2 && i %% 2 == 0) ||
             (bfreq == 5)) {
           bleach_years <- c(bleach_years, i - 1)  # Year = loop index - 1
         }
@@ -5294,8 +5297,8 @@ server <- function(input, output, session) {
       ))
     }
     out <- out[order(out$Year), ]
-    print(out)
-    out
+    # print(out)
+    # out
   })
 
   # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
