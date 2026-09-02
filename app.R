@@ -5,6 +5,7 @@
 
 # Call Packages ----
 library(sf)
+library(DT)
 library(png)
 library(jpeg)
 library(maps)
@@ -512,6 +513,7 @@ all_branching_species <- c(
   "Acropora cervicornis",
   "Acropora palmata",
   "Acropora prolifera",
+  "Acropora spp.",
   "Cladocora arbuscula",
   "Madracis auretenra",
   "Madracis carmabi",
@@ -525,6 +527,88 @@ all_branching_species <- c(
   "Porites porites",
   "Stylaster roseus"
 )
+
+# Compiled per-species calcifier data table (Calcifier Data tab) ----
+# Joins the species-keyed reference tables (calcification, growth, diameter) by
+# species name, then attaches morphology-class values (outplant + chronic
+# mortality) using the same branching/massive/weedy classification the model
+# uses. Built once at startup; displayed as a sortable DT table.
+build_calcifier_table <- function() {
+  # Union of all species appearing in any species-keyed table.
+  sp_all <- sort(unique(c(
+    calc_rates$Taxon,
+    growth_rates$name,
+    diams$name
+  )))
+  sp_all <- sp_all[!is.na(sp_all) & nzchar(sp_all)]
+
+  # Morphology class per species (mirrors outplant_mortality_by_size fallback).
+  morph_class <- function(s) {
+    if (s %in% all_branching_species) "Branching"
+    else if (s %in% all_massive_species) "Massive"
+    else "Weedy / Other"
+  }
+  # Outplant mortality group key used by mortality_outplant.
+  outplant_group <- function(s) {
+    if (s %in% mortality_outplant$Species) s
+    else if (s %in% all_branching_species) "Acropora"
+    else if (s %in% all_massive_species) "Massives"
+    else "Weedy"
+  }
+
+  get1 <- function(df, key_col, key, val_col) {
+    v <- df[[val_col]][df[[key_col]] == key]
+    if (length(v) == 0 || all(is.na(v))) NA_real_ else suppressWarnings(as.numeric(v[1]))
+  }
+
+  rows <- lapply(sp_all, function(s) {
+    grp <- outplant_group(s)
+    om  <- get1(mortality_outplant, "Species", grp, "Mortality")
+    ose <- get1(mortality_outplant, "Species", grp, "SE")
+    genus        <- stringr::str_split(s, " ")[[1]][1]
+    sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
+    if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
+
+    data.frame(
+      Species             = s,
+      Morphology          = morph_class(s),
+      Calc_rate_kg_m2_yr  = get1(calc_rates, "Taxon", s, "rate"),
+      Calc_rate_lo        = if ("lower_bound" %in% names(calc_rates)) get1(calc_rates, "Taxon", s, "lower_bound") else NA_real_,
+      Calc_rate_hi        = if ("upper_bound" %in% names(calc_rates)) get1(calc_rates, "Taxon", s, "upper_bound") else NA_real_,
+      Planar_growth_mm_yr = get1(growth_rates, "name", s, "planar_mean"),
+      Planar_growth_lo    = get1(growth_rates, "name", s, "planar_lwr"),
+      Planar_growth_hi    = get1(growth_rates, "name", s, "planar_upr"),
+      Avg_colony_diam_cm  = get1(diams, "name", s, "length_mean"),
+      dhw_loss_pct        = sp_dhw_slope,
+      Outplant_mort_pct   = om,
+      Outplant_mort_SE    = ose,
+      stringsAsFactors = FALSE
+    )
+  })
+  out <- do.call(rbind, rows)
+  # Round numeric columns for display.
+  num_cols <- vapply(out, is.numeric, logical(1))
+  # Pretty column names
+  col_names <- c(
+    "Species",
+    "Morphology",
+    "Calc. Rate\n(kg/m2/yr)",
+    "Calc. Rate\n(Low)",
+    "Calc. Rate\n(High)",
+    "Planar growth\n(mm/yr)",
+    "Planar growth\n(Low)",
+    "Planar growth\n(High)",
+    "Avg. Colony Diam.\n(cm)",
+    "Mortality per DHW\n(%)",
+    "Outplant Mortality\n(%)",
+    "Outplant Mortality\nSE"
+  )
+  colnames(out) <- col_names
+  out[num_cols] <- lapply(out[num_cols], function(x) round(x, 3))
+  out
+}
+
+calcifier_table <- build_calcifier_table()
 
 # Mortality by colony size & species:
 outplant_mortality_by_size <- function(size, sp) {
@@ -1705,7 +1789,8 @@ sidebar <- dashboardSidebar(
     menuItem(("Management Interventions"), icon = icon("flask"),
       menuSubItem("Outplanting Scenarios", tabName = "outplanting", icon = icon("seedling")),
       menuSubItem("Scenario Comparison", tabName = "comparison", icon = icon("scale-balanced")),
-      menuSubItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column"))
+      menuSubItem("Restoration Monitoring", tabName = "monitoring", icon = icon("chart-column")),
+      menuSubItem("Calcifier Data", tabName = "calcifier", icon = icon("table"))
     ),
     menuItem("About this App", tabName = "about", icon = icon("circle-info"))
   )
@@ -2426,7 +2511,7 @@ body <- dashboardBody(
                        gap:12px; padding:2px 6px; font-size:14px; font-weight:bold;",
               tags$div(style = "display:flex; gap:16px; align-items:center;",
                 tags$div(style = "font-weight:normal;",
-                  checkboxInput("show_slr", "Display SLR projections", value = TRUE)
+                  checkboxInput("show_slr", "Display SLR projections", value = FALSE)
                 ),
                 htmlOutput("rap_pctile_baseline", inline = TRUE),
                 htmlOutput("rap_pctile_restored", inline = TRUE),
@@ -2642,6 +2727,19 @@ body <- dashboardBody(
       )
     ),
 
+    # Calcifier Data Tab ----
+    tabItem(
+      tabName = "calcifier",
+      shinydashboard::box(
+        title = "Per-Species Calcifier Input Data", width = 12,
+        status = "primary", solidHeader = TRUE,
+        tags$p("All per-species reference data feeding the growth model. ",
+               "Click any column header to sort. Species without a direct ",
+               "record inherit morphology-class values where applicable."),
+        DT::DTOutput("calcifier_dt")
+      )
+    ),
+
     # "About this Site" Tab ----
     tabItem(
       tabName = "about",
@@ -2802,6 +2900,20 @@ server <- function(input, output, session) {
     tags$pre(
       style = "white-space: pre-wrap; word-break: break-word; font-size: 11px; margin: 0;",
       paste(lines, collapse = "\n")
+    )
+  })
+
+  # Calcifier Data tab: sortable reference table.
+  output$calcifier_dt <- DT::renderDT({
+    DT::datatable(
+      calcifier_table,
+      rownames = FALSE,
+      filter = "top",
+      options = list(
+        pageLength = 25,
+        scrollX = TRUE,
+        order = list(list(0, "asc"))  # default sort by Species
+      )
     )
   })
 
@@ -4677,7 +4789,7 @@ server <- function(input, output, session) {
         if ((bfreq == 1 && i %% 4 == 0) ||
             (bfreq == 2 && i %% 2 == 0) ||
             (bfreq == 5)) {
-          bleach_years <- c(bleach_years, i - 1)  # Year = loop index - 1
+          bleach_years <- c(bleach_years, i - 1.5)  # Year = loop index - 1.5 (display "mid-year")
         }
       }
     }
@@ -4755,12 +4867,12 @@ server <- function(input, output, session) {
       )
     }
     gp <- gp |>
-      legend_entry("Baseline RAP    ", "darkgray", dash = "dash") |>
-      legend_entry("Restored RAP    ", "#7b3fbf") |>
-      legend_entry("Geologic baseline    ", "gold", dash = "dash") |>
-      legend_entry("Restoration horizon    ", "gray", dash = "dash")
-    if (show_slr) gp <- legend_entry(gp, "Sea-level rise    ", "#1f6fd6", dash = "dash")
-    if (length(bleach_years)) gp <- legend_entry(gp, "Bleaching event    ", "red")
+      legend_entry("Baseline RAP  ", "gray", dash = "dash") |>
+      legend_entry("Restored RAP  ", "#7b3fbf") |>
+      legend_entry("Geologic baseline RAP  ", "gold", dash = "dash") |>
+      legend_entry("Restoration horizon  ", "gray", dash = "dash")
+      if (show_slr) gp <- legend_entry(gp, "Sea-level rise  ", "#1f6fd6", dash = "dash")
+      if (length(bleach_years)) gp <- legend_entry(gp, "Bleaching event  ", "red")
 
     # ggplotly defaults showlegend to FALSE at the layout level; force it on and
     # fix the x-range so the off-canvas legend traces don't expand the axis.
