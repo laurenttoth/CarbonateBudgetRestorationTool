@@ -56,13 +56,13 @@ read_excel_quiet <- function(path, ...) {
 .LOG_ENV$lines   <- character(0)
 .LOG_ENV$version <- 0L
 
-log_msg <- function(..., console = TRUE) {
+log_msg <- function(..., console = FALSE) {
   msg <- paste0(...)
   # stamped <- paste0("[", format(Sys.time(), "%H:%M:%S"), "] ", msg)
   .LOG_ENV$lines   <- c(.LOG_ENV$lines, msg) #stamped)
-  # Cap to the most recent 1000 lines to bound memory over long sessions.
-  if (length(.LOG_ENV$lines) > 1000) {
-    .LOG_ENV$lines <- utils::tail(.LOG_ENV$lines, 1000)
+  # Cap to the most recent 2000 lines to bound memory over long sessions.
+  if (length(.LOG_ENV$lines) > 2000) {
+    .LOG_ENV$lines <- utils::tail(.LOG_ENV$lines, 2000)
   }
   .LOG_ENV$version <- .LOG_ENV$version + 1L
   if (console) cat(msg, "\n")
