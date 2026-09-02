@@ -4282,7 +4282,7 @@ server <- function(input, output, session) {
     if (is.null(pct) || is.na(pct)) {
       return(NULL)
     }
-    writeLines(paste0("\n", input$baseline_site, " Baseline RAP percentile: ", round(pct), "%"))
+    log_msg(paste0(" ", input$baseline_site, " Baseline RAP percentile: ", round(pct), "%"))
     tags$span(style = "color:#777777;",
       paste0("Baseline RAP percentile: ", round(pct), "%"))
   })
@@ -4662,7 +4662,6 @@ server <- function(input, output, session) {
 
     # Restoration-horizon marker: gray dashed vertical line + hover
     if (dur > horizon) {
-      sim_token()
       p <- p + geom_vline(
         aes(xintercept = horizon, text = "Restoration horizon"),
         linetype = "dashed", color = "gray50"
@@ -4747,17 +4746,19 @@ server <- function(input, output, session) {
     # legend swatch. NA-only traces get culled by plotly, so use real coords.
     off_x <- c(-1e6, -1e6 + 1)
     legend_entry <- function(g, name, color, dash = "solid") {
+      w <- if (any(str_detect(name, c("Bleach", "horizon")))) 1 else 2
       plotly::add_trace(
         g, x = off_x, y = c(0, 0), type = "scatter", mode = "lines",
-        line = list(color = color, dash = dash, width = 2),
+        line = list(color = color, dash = dash, width = w),
         name = name, showlegend = TRUE, inherit = FALSE,
         hoverinfo = "skip"
       )
     }
     gp <- gp |>
-      legend_entry("Baseline RAP    ", "gray", dash = "dash") |>
+      legend_entry("Baseline RAP    ", "darkgray", dash = "dash") |>
       legend_entry("Restored RAP    ", "#7b3fbf") |>
-      legend_entry("Geologic baseline    ", "gold", dash = "dash")
+      legend_entry("Geologic baseline    ", "gold", dash = "dash") |>
+      legend_entry("Restoration horizon    ", "gray", dash = "dash")
     if (show_slr) gp <- legend_entry(gp, "Sea-level rise    ", "#1f6fd6", dash = "dash")
     if (length(bleach_years)) gp <- legend_entry(gp, "Bleaching event    ", "red")
 
