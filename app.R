@@ -726,14 +726,14 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
           str_pad("Accretion",        width = 18), "|",
           str_pad("Site-wide budget", width = 20), "|",
           str_pad("Colonies",         width = 12), "|",
-          str_pad("Area interval",    width = 23),
+          str_pad("Area interval",    width = 22),
           # Linebreak + units
           "\n\t", "|",
           str_pad("(m2)",                width = 8),  "|",
           str_pad("contribution (kg)",   width = 18), "|",
           str_pad("contrib. (kg/m2/yr)", width = 20), "|",
           str_pad("remaining",           width = 12), "|",
-          str_pad("(m2)",                width = 23),
+          str_pad("(m2)",                width = 22),
           "\n",
           str_pad("-", pad = "-",  width = 90, side = "both")
       )
@@ -859,11 +859,12 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
     # Sanity check: growth table printout
     if (check_sanity) {
       log_msg(
-        str_pad(paste0("Y", i - 1),                  width = 7),  "|",
+        str_pad(paste0("Y", i - 1),                  width = 8),  "|",
         str_pad(sprintf("%.2f", sp_area),            width = 8),  "|",
         str_pad(sprintf("%.3f", carb_accr),          width = 18), "|",
         str_pad(sprintf("%.3f", carb_budg),          width = 20), "|",
         str_pad(sprintf("%d", colony_count_thisrun), width = 12), "|",
+        "  ", # Space area interval a bit further
         str_pad(sprintf("%.2f", sp_area_lo),         width = 6, side = "both"),  "|",
         str_pad(sprintf("%.2f", sp_area),            width = 6, side = "both"),  "|",
         str_pad(sprintf("%.2f", sp_area_hi),         width = 6, side = "both")
