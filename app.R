@@ -4728,7 +4728,7 @@ output$restoration_mix_inputs <- renderUI({
 
     mix_suppress(TRUE)
     # Release suppression after the updates have round-tripped to the client.
-    later::later(function() mix_suppress(FALSE), delay = 2.0) # 2 ms delay
+    later::later(function() mix_suppress(FALSE), delay = 3.0) # 3 ms delay
 
     for (s in mix_species()) {
       s_  <- gsub("[^A-Za-z0-9]", "_", s)

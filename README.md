@@ -129,7 +129,7 @@ install.packages(c("Rtools", "rsconnect", "shiny", "bslib", "shinydashboard", "s
                    "ggplot2", "dplyr", "tidyr", "leaflet", "leaflegend", "jsonlite",
                    "tidyverse", "ggforce", "png", "RCurl", "jpeg", "sf", "magrittr",
                    "maps", "reshape2", "RColorBrewer", "plotly", "geojsonio", "shinyWidgets",
-                   "shinyjs", "shinyBS", "here", "readxl", "writexl", "tidyr", "dplyr"))
+                   "shinyjs", "shinyBS", "here", "readxl", "writexl", "tidyr", "dplyr", "DT", "terra=1.9-0"))
 ```
 
 If the package installation times out, adjust the timeout setting. For example, to increase the timeout from the default 60 seconds to 120 seconds:
