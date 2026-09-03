@@ -506,7 +506,8 @@ all_massive_species <- c(
   "Siderastrea radians",
   "Siderastrea siderea",
   "Solenastrea bournoni",
-  "Solenastrea hyades"
+  "Solenastrea hyades",
+  "Hard Coral (massive)"
 )
 
 all_branching_species <- c(
@@ -525,8 +526,21 @@ all_branching_species <- c(
   "Porites divaricata",
   "Porites furcata",
   "Porites porites",
-  "Stylaster roseus"
+  "Stylaster roseus",
+  "Hard Coral (branching)"
 )
+
+# Outplant defaults (used to auto-fill per-species cells when a target is set) ----
+OUTPLANT_DIAM_DEFAULT <- 5    # cm
+OUTPLANT_COST_DEFAULT <- 100  # $
+
+# Morphology class for a species (branching / massive / weedy-other) ----
+# Hoisted from build_calcifier_table so the Restoration Mix grid can reuse it.
+morph_class <- function(s) {
+  if (s %in% all_branching_species) "Branching"
+  else if (s %in% all_massive_species) "Massive"
+  else "Weedy / Other"
+}
 
 # Compiled per-species calcifier data table (Calcifier Data tab) ----
 # Joins the species-keyed reference tables (calcification, growth, diameter) by
@@ -542,12 +556,6 @@ build_calcifier_table <- function() {
   )))
   sp_all <- sp_all[!is.na(sp_all) & nzchar(sp_all)]
 
-  # Morphology class per species (mirrors outplant_mortality_by_size fallback).
-  morph_class <- function(s) {
-    if (s %in% all_branching_species) "Branching"
-    else if (s %in% all_massive_species) "Massive"
-    else "Weedy / Other"
-  }
   # Outplant mortality group key used by mortality_outplant.
   outplant_group <- function(s) {
     if (s %in% mortality_outplant$Species) s
@@ -1138,7 +1146,6 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
 # ----------------------------------------------------------------------------
 run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                   sim_duration, rest_horizon,
-                                  outplant_diam, outplant_cost,
                                   bleaching_severity, bleaching_frequency,
                                   target_cover_df, exceedance = NULL,
                                   progress_cb = NULL) {
@@ -1228,14 +1235,32 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     target_sp_pct  <- target_cover_df$target_cvr_pct[row_i]
     current_sp_pct <- target_cover_df$current_cvr_pct[row_i]
 
-    # Only species with a positive amount to grow get outplants
+    # Two solve modes:
+    #   count-driven  -> outplant_count given (>0); simulate it, report cover.
+    #   target-driven -> target > current;       solve the count to hit target.
+    row_count <- target_cover_df$outplant_count[row_i]
+    count_driven <- !is.na(row_count) && row_count > 0
+
     sp_to_grow_pct <- target_sp_pct - current_sp_pct
-    if (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0) next
+    if (!count_driven && (is.na(sp_to_grow_pct) || sp_to_grow_pct <= 0)) next
     log_msg(" ============================ ")
-    log_msg(" Simulating ", species, " growth to ", target_sp_pct, "% cover...")
+    if (count_driven) {
+      log_msg(" Simulating ", species, " with ", row_count, " outplants...")
+    } else {
+      log_msg(" Simulating ", species, " growth to ", target_sp_pct, "% cover...")
+    }
     log_msg(" ============================ ")
 
-    # # Colony-count seeding needs the species diameter (also used by the sim)
+    # Per-species outplant geometry/cost (blank -> don't outplant this species).
+    row_diam_cm  <- target_cover_df$outplant_diam_cm[row_i]
+    row_cost     <- target_cover_df$outplant_cost[row_i]
+    if (is.na(row_diam_cm) || row_diam_cm <= 0 || is.na(row_cost)) {
+      log_msg(" Skipping ", species, ": no outplant diameter/cost set.")
+      next
+    }
+    outplant_diam <- row_diam_cm / 100  # cm -> m (local to this species)
+
+    # Baseline colony-count seeding needs the species diameter (also used by the sim)
     sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
     # Use placeholder average diameter instead of skipping:
     if (length(sp_diam) == 0 || is.na(sp_diam)) {# next
@@ -1266,11 +1291,14 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     orig_area_at_horizon <- orig_only[[1]][["area"]][min(rest_horizon + 1, n)]
     sp_to_grow_m <- target_sp_m - orig_area_at_horizon
 
-    # ---- PHASE 1: solve outplant count to hit target ----
-    if (rest_horizon == 0) {
+    # ---- PHASE 1: determine outplant count ----
+    if (count_driven) {
+      # Count given directly; no solve.
+      outplant_guess <- round(row_count)
+      guard <- 0
+    } else if (rest_horizon == 0) {
       # Immediate coverage: enough outplants of the given size to hit the target
-      # % cover at Year 0. No growth search needed -- divide the remaining area
-      # to fill by a single outplant's footprint and round up.
+      # % cover at Year 0.
       outplant_area <- (outplant_diam / 2) ^ 2 * pi
       outplant_guess <- if (outplant_area > 0) {
         max(0, ceiling(sp_to_grow_m / outplant_area))
@@ -1279,12 +1307,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     } else {
       # Iterative solve: find the count that reaches target by the HORIZON year.
-      # Strategy: run one trial, measure the per-outplant area yield at the
-      # horizon, jump the guess to the theoretical count needed to fill
-      # sp_to_grow_m, then refine with a bounded +/-1 loop.
-      #
-      # NOTE: simulate_growth's final_area (index [[3]]) is the per-COLONY area
-      # at the horizon, so total yielded area = final_area * outplant_guess.
       outplant_guess <- 50
 
       trial <- simulate_growth(group = "outplant", species = species,
@@ -1293,31 +1315,20 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                site_area = site_area, uc_pct = uc_pct,
                                bleaching_severity = bleaching_severity,
                                bleaching_frequency = bleaching_frequency)
-      per_colony_area <- trial[[3]]          # area of ONE surviving colony at horizon
+      per_colony_area <- trial[[3]]
 
-      # Seed from the theoretical count. Each outplant occupies its starting
-      # footprint immediately and grows to per_colony_area by the horizon, so
-      # total horizon area ~= per_colony_area * n. Solve n for sp_to_grow_m.
       if (is.finite(per_colony_area) && per_colony_area > 0) {
         outplant_guess <- max(0, ceiling(sp_to_grow_m / per_colony_area))
       }
 
       log_msg("Initial outplant guess:", outplant_guess)
 
-      # Coarse-to-fine search. `per_colony_area` (final area of ONE surviving
-      # colony at the horizon) is stable across guesses because growth/mortality
-      # are per-colony, so total horizon area is very nearly linear in the count:
-      #   total_area(n) ~= per_colony_area * n
-      # Step the guess by 100, then 10, then 1, reversing direction and
-      # dropping to the next-finer step each time the target is overshot.
       reiterate <- TRUE
       guard <- 0
       step_schedule <- c(100, 10, 1)
-      # step_i <- 1
-      # Calbirate starting step according to the magnitude of the initial outplant guess
       step_i <- if (outplant_guess > 200) 1 else if (outplant_guess > 40) 2 else 3
       step <- step_schedule[step_i]
-      prev_sign <- 0  # sign of (needed - achieved) on the previous iteration
+      prev_sign <- 0
 
       while (reiterate) {
         guard <- guard + 1
@@ -1333,22 +1344,20 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                        bleaching_severity = bleaching_severity,
                                        bleaching_frequency = bleaching_frequency)
 
-        new_area <- search_list[[3]] * outplant_guess # total area at the horizon
+        new_area <- search_list[[3]] * outplant_guess
         diff <- needed_outplant_growth - new_area
         cur_sign <- if (diff < -0.01) -1 else if (diff > 0.01) 1 else 0
 
         if (cur_sign == 0) {
-          reiterate <- FALSE           # within tolerance
+          reiterate <- FALSE
         } else {
-          # If the target was crossed (sign flipped) while on a coarse step,
-          # step back and refine at the next-finer resolution.
           if (prev_sign != 0 && cur_sign != prev_sign && step > 1) {
             step_i <- step_i + 1
             step <- step_schedule[step_i]
           }
-          if (cur_sign > 0) {          # not enough growth -> more outplants
+          if (cur_sign > 0) {
             outplant_guess <- outplant_guess + step
-          } else {                      # too much growth -> fewer outplants
+          } else {
             outplant_guess <- outplant_guess - step
             if (outplant_guess < 0) {
               outplant_guess <- 0
@@ -1359,10 +1368,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         }
       }
 
-      # Closest-integer refinement: the loop above stops on whichever side it
-      # last stepped to, which may not be the integer count nearest the target.
-      # Evaluate the one-step neighbor on the opposite side and keep whichever
-      # lands total horizon area closer to sp_to_grow_m.
       horizon_abs_err <- function(n) {
         if (n < 0) return(Inf)
         starting_area <- n * (outplant_diam / 2) ^ 2 * pi
@@ -1376,8 +1381,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         achieved <- sl[[3]] * n
         abs(needed - achieved)
       }
-      # `prev_sign` records which side of the target the final guess sits on:
-      # +1 = under (try one more), -1 = over (try one less).
       if (prev_sign != 0) {
         neighbor <- if (prev_sign > 0) outplant_guess + 1 else outplant_guess - 1
         if (neighbor >= 0 && horizon_abs_err(neighbor) < horizon_abs_err(outplant_guess)) {
@@ -1386,8 +1389,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     }
 
-    if (rest_horizon > 0) log_msg("Outplant count solved in", guard, "iterations.")
-
+    if (!count_driven && rest_horizon > 0) log_msg("Outplant count solved in", guard, "iterations.")
     if (is.function(progress_cb)) {
       iters <- if (rest_horizon > 0) guard else 0L
       progress_cb(paste0("Simulating restored ", abbrev_species(species),
@@ -1419,7 +1421,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     pct_cvr_max    <- pct_cvr_max    + nd_max$pct_cvr
 
     outplants_by_species[species] <- outplant_guess
-    total_cost <- total_cost + outplant_guess * outplant_cost
+    total_cost <- total_cost + outplant_guess * row_cost
     any_growth <- TRUE
   }
 
@@ -1772,6 +1774,7 @@ header <- dashboardHeader(
         inputId = "dark_mode",
         label = "Dark Mode",
         status = "primary",
+        # value = TRUE, 
         right = TRUE,
         inline = TRUE
       )
@@ -1948,8 +1951,10 @@ body <- dashboardBody(
         font-weight: bold; box-shadow: -1px 1px 4px rgba(0,0,0,0.3);
       }
       body.dark-mode .log-panel { background: #232a33; border-left-color: #8fb8d8; }
+      body.dark-mode .log-panel-body { background: #232a33; }
       body.dark-mode .log-panel-body,
-      body.dark-mode .log-panel-body pre { color: #e6e6e6; }
+      body.dark-mode .log-panel-body pre { color: #e6e6e6; background: #232a33; }
+      body.dark-mode .log-panel-header { background: #10141a; color: #e6e6e6; }
 
       /* ---- Responsive uniform scaling for smaller screens ---- */
 
@@ -2074,6 +2079,8 @@ body <- dashboardBody(
         'symbolize_by': 'Choose which metric colors the site markers.',
         'show_named_reefs': 'Overlay labeled named-reef polygons on the map.',
         'show_slr': 'Overlay projected sea-level-rise rates on the timeline.',
+        'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
+        'monitoring_show_slr': 'Overlay projected sea-level-rise reference rates on the timeline.',
         'monitoring_selected_site': 'Choose a site to display observed post-restoration monitoring data.'
       };
       function rptSetTitle(el, txt) {
@@ -2235,16 +2242,16 @@ body <- dashboardBody(
       # `outplant-toprow` class tightens the inter-box gutters.
       fluidRow(
         class = "outplant-toprow",
-        # ---- Input element 1: Baseline cover ----
-        column(4,
+        # ---- Restoration Scenario (baseline cover + per-species mix) ----
+        column(8,
           shinydashboard::box(
-            title = "Baseline Cover",
+            title = "Restoration Scenario",
             width = 12, status = "primary", solidHeader = TRUE,
             column(width = 12,
               fluidRow(
-                # Left column: controls
+                # Left: site controls
                 column(
-                  width = 6,
+                  width = 3,
                   tags$div(
                     class = "upload-label-row",
                     tags$span(class = "control-label", tags$strong("Load .xlsx")),
@@ -2253,8 +2260,7 @@ body <- dashboardBody(
                       downloadButton("baseline_template_dl", "Template", class = "btn-sm"),
                     )
                   ),
-                  fileInput("baseline_upload", NULL, accept = c(".xlsx")
-                  ),
+                  fileInput("baseline_upload", NULL, accept = c(".xlsx")),
                   tags$div(
                     style = "display: flex; margin-top: -15px; margin-bottom: 20px; gap: 6px",
                     actionButton("baseline_load_example", "Example",
@@ -2262,7 +2268,6 @@ body <- dashboardBody(
                     actionButton("baseline_load_cache", "Cache",
                                 icon = icon("upload"), class = "btn-sm")
                   ),
-                  # Typed input allowed (create = TRUE) for scratch-built scenarios
                   selectizeInput(
                     "baseline_site",
                     label = tags$strong("Site"),
@@ -2309,23 +2314,34 @@ body <- dashboardBody(
                   )
                 ),
 
-                # Right column: baseline species cover list + add-species dropdown
+                # Right: 4-column Restoration mix grid
                 column(
-                  width = 6,
-                  tags$strong("Baseline species cover (%)"),
-                  # Auto-populated rows (from .xlsx) + manually added rows, with
-                  # the species-picker dropdown rendered below the list.
+                  width = 9,
+                  tags$strong("Restoration mix"),
+                  # Column headers
+                  tags$div(
+                    class = "mix-grid-header",
+                    style = "display:flex; align-items:flex-end; gap:6px; padding: 0 0 8px 0;
+                             font-weight:bold; font-size:12px; margin:4px 0 2px 0;",
+                    tags$div(style = "flex:0 0 auto; width:28px;", ""),
+                    tags$div(style = "flex: 2 1 0;", ""),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Baseline<br/>cover (%)")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", uiOutput("mix_target_header")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>diameter (cm)")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>cost ($)")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", "Outplants")
+                  ),
                   div(
-                    # This container will scroll vertically if more species are listed 
-                    # than the Baseline Cover box can hold
                     style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
-                    uiOutput("baseline_cover_inputs")
+                    uiOutput("restoration_mix_inputs")
                   ),
                   tags$hr(),
                   tags$div(
                     style = "display:flex; gap:4px; align-items:center;",
                     downloadButton("baseline_save_dl", "Save baseline",
                                   icon = icon("floppy-disk"), class = "btn-sm"),
+                    actionButton("reset_mix", "Reset targets",
+                                  icon = icon("eraser"), class = "btn-sm"),
                     actionButton("baseline_delete_cache", "Clear cache",
                                   icon = icon("trash"), class = "btn-sm")
                   )
@@ -2335,161 +2351,73 @@ body <- dashboardBody(
           )
         ),
 
-        column(8,
-          # ---- Input element 2: Restoration parameters ----
+        # ---- Left stack: Target Years / Bleaching / Save Scenario ----
+        column(4,
+          # Target Years
           shinydashboard::box(
-            title = "Restoration Parameters",
-            width = 12, height = "360px",
-            status = "success", solidHeader = TRUE,
-            # div(tags$strong("Target cover (%) post-restoration:")),
-            # Top row: Branching (2 cols) + Weedy/Other (2 cols), split evenly
-            fluidRow(
-              column(8,
-                tags$fieldset(
-                  style = "border: 2px solid seagreen; border-radius: 6px;
-                        padding: 8px; margin-top: 3px; margin-right: -15px;",
-                  tags$legend(
-                    style = "width: auto; font-size: 15px; font-weight: bold;
-                            color: seagreen; padding: 0 3px; border: none;
-                            margin-bottom: 0;",
-                    "Species Mix: Target cover (%) post-restoration"
-                    ),
-                  column(6,
-                    tags$fieldset(
-                      class = "mix-fieldset mix-branching",
-                      tags$legend(tags$strong("Branching")),
-                      uiOutput("mix_branching")
-                    )
-                  ),
-                  column(6,
-                    tags$fieldset(
-                      class = "mix-fieldset mix-weedy",
-                      tags$legend(tags$strong("Weedy / Other")),
-                      uiOutput("mix_weedy")
-                    )
-                  ),
-                  # Bottom row: Massive across all 4 columns
-                  fluidRow(
-                    column(12,
-                      tags$fieldset(
-                        class = "mix-fieldset mix-massive",
-                        tags$legend(tags$strong("Massive")),
-                        uiOutput("mix_massive")
-                      )
-                    )
-                  ),
-                  fluidRow(
-                    column(12,
-                      tags$div(style = "text-align:right; margin-top:4px;",
-                        actionButton("reset_mix", "Reset mix",
-                                     icon = icon("eraser"), class = "btn-sm")
-                      )
-                    )
-                  )
-                )
-              ),
-              column(4,
-                tags$fieldset(
-                  style = "border: 2px solid lightseagreen; border-radius: 6px;
-                        padding: 0 10px; margin: 0 0 -10px -4px;",
-                  tags$legend(
-                    style = "width: auto; font-size: 15px; font-weight: bold;
-                            color: lightseagreen; padding: 1px; border: none; margin-bottom: 0",
-                    "Outplanting strategy"
-                    ),
-                  tags$div(
-                    class = "param-inline-row",
-                    tags$span(class = "param-label", tags$strong("Avg. outplant diameter:")),
-                    numericInput("outplant_size", label = NULL,
-                      value = 5, min = 2, max = 100, step = 0.1
-                    ),
-                    tags$span(class = "param-unit", "cm"),
-                  ),
-                  tags$div(
-                    class = "param-inline-row",
-                    tags$span(class = "param-label", tags$strong("Avg. outplant cost: ")),
-                    numericInput("outplant_cost", label = NULL,
-                      value = 100, min = 1, max = 1000, step = 10
-                    ),
-                    tags$span(class = "param-unit", "$")
-                  ),
+            title = "Target Years",
+            width = 12, status = "success", solidHeader = TRUE,
+            sliderInput(
+              "sim_duration", tags$strong("Simulation duration (years)"),
+              value = 10, min = 0, max = 30, step = 5
+            ),
+            tags$div(style = "margin: -10px 0;",
+              sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
+                value = 0, min = 0, max = 30, step = 1
+              )
+            ),
+            uiOutput("sim_duration_warning")
+          ),
 
-                  # Timeline parameters
-                  sliderInput(
-                    "sim_duration", tags$strong("Simulation duration (years)"),
-                    value = 10, min = 0, max = 30, step = 5
-                  ),
-
-                  # Sim duration shares the horizon's 0-30 domain so tick geometry
-                  # lines up natively; a snap-to-10 floor keeps it >= 10 years.
-                  tags$div(style = "margin: -10px 0;",
-                      sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
-                        value = 0, min = 0, max = 30, step = 1
-                    )
-                  ),
-                  # Red warning when horizon exceeds sim duration
-                  uiOutput("sim_duration_warning")
-                )
+          # Bleaching Scenario
+          shinydashboard::box(
+            title = "Bleaching Scenario",
+            width = 12, status = "danger", solidHeader = TRUE,
+            column(6,
+              sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
+                min = 8, max = 24, value = 8, step = 1
+              )
+            ),
+            column(6,
+              sliderTextInput(
+                inputId = "bleach_events",
+                label = tags$strong("Events / 5 years"),
+                choices = c(0, 1, 2, 5),
+                selected = 0,
+                grid = TRUE
               )
             )
           ),
 
-          # ---- Input element 3: Bleaching scenario ----
-          fluidRow(
-            column(7,
-              shinydashboard::box(
-                title = "Bleaching Scenario",
-                width = 12, height = "140px",
-                status = "danger", solidHeader = TRUE,
-                column(6,
-                  sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
-                    min = 8, max = 24, value = 8, step = 1
-                    )
-                  ),
-                column(6,
-                  sliderTextInput(
-                    inputId = "bleach_events",
-                    label = tags$strong("Events / 5 years"),
-                    choices = c(0, 1, 2, 5),
-                    selected = 0,
-                    grid = TRUE
-                  )
-                )
+          # Save Restoration Scenario
+          shinydashboard::box(
+            title = "Save Restoration Scenario",
+            width = 12, solidHeader = TRUE, status = "primary",
+            column(width = 4,
+                textInput("scenario_project", tags$strong("Project name"), value = "")
+            ),
+            column(width = 5,
+                textInput("scenario_name", tags$strong("Scenario name"), value = "")
+            ),
+            column(width = 3,
+              fluidRow(
+                tags$h1(),
+                actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
               )
             ),
-            # ---- Input element 4: Save restoration scenario ----
-            column(5,
-              shinydashboard::box(
-                title = "Save Restoration Scenario",
-                width = 12, solidHeader = TRUE, status = "primary",
-                column(width = 4,
-                    textInput("scenario_project", tags$strong("Project name"), value = "")
-                ),
-                column(width = 5,
-                    textInput("scenario_name", tags$strong("Scenario name"), value = "")
-                ),
-                column(width = 3,
-                  fluidRow(
-                    tags$h1(), # Placeholder header to keep the button aligned with the text inputs
-                    actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
-                  )
-                )
-              ),
-              # Reactive-simulation toggle + manual Run button
-              column(8,
-                tags$div(
-                  style = "display:flex; align-items:center; justify-content:flex-end;
-                          padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
-                  materialSwitch("reactive_sim", HTML("<strong>Reactive simulation</strong>"),
-                    value = FALSE, status = "primary", right = TRUE, inline = TRUE)
-                  )
-                ),
-              column(4,
-                tags$div(
-                  style = "display:flex; align-items:center; justify-content:flex-end;
-                          padding:4px 5px; margin:-10px 0px;",
-                  actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
-                )
+            column(8,
+              tags$div(
+                style = "display:flex; align-items:center; justify-content:flex-end;
+                        padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
+                materialSwitch("reactive_sim", HTML("<strong>Reactive simulation</strong>"),
+                  value = FALSE, status = "primary", right = TRUE, inline = TRUE)
+              )
+            ),
+            column(4,
+              tags$div(
+                style = "display:flex; align-items:center; justify-content:flex-end;
+                        padding:4px 5px; margin:-10px 0px;",
+                actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
               )
             )
           )
@@ -2613,6 +2541,9 @@ body <- dashboardBody(
               shinydashboard::box(
                 title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
                 status = "success", solidHeader = TRUE,
+                tags$div(style = "font-weight:normal; margin-bottom:4px;",
+                  checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
+                ),
                 plotly::plotlyOutput("sc_rap_bar", height = "350px")
               )
             )
@@ -2721,6 +2652,9 @@ body <- dashboardBody(
           shinydashboard::box(
             title = "Reef Accretion Potential", width = 12,
             status = "success", solidHeader = TRUE,
+            tags$div(style = "font-weight:normal; margin-bottom:4px;",
+              checkboxInput("monitoring_show_slr", "Display SLR projections", value = FALSE)
+            ),
             plotly::plotlyOutput("monitoring_timeline", height = "350px")
           )
         )
@@ -2736,6 +2670,7 @@ body <- dashboardBody(
         tags$p("All per-species reference data feeding the growth model. ",
                "Click any column header to sort. Species without a direct ",
                "record inherit morphology-class values where applicable."),
+        tags$hr(),
         DT::DTOutput("calcifier_dt")
       )
     ),
@@ -2907,12 +2842,16 @@ server <- function(input, output, session) {
   output$calcifier_dt <- DT::renderDT({
     DT::datatable(
       calcifier_table,
+      extensions = "FixedHeader",
       rownames = FALSE,
       filter = "top",
       options = list(
         pageLength = 25,
         scrollX = TRUE,
-        order = list(list(0, "asc"))  # default sort by Species
+        scrollY = "60vh",
+        scrollCollapse = TRUE,
+        paging = FALSE,
+        order = list(list(0, "asc"))
       )
     )
   })
@@ -2921,9 +2860,9 @@ server <- function(input, output, session) {
   with_logged_conditions <- function(expr) {
     withCallingHandlers(
       tryCatch(expr,
-        error = function(e) { log_msg("ERROR: ", conditionMessage(e)); NULL }),
+        error = function(e) { log_msg(conditionMessage(e)); NULL }),
       warning = function(w) {
-        log_msg("WARNING: ", conditionMessage(w)); invokeRestart("muffleWarning")
+        log_msg(conditionMessage(w)); invokeRestart("muffleWarning")
       }
     )
   }
@@ -2963,9 +2902,12 @@ server <- function(input, output, session) {
       # log_msg(" Input:", paste0("base_", gsub("[^A-Za-z0-9]", "_", s)))
       input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
     }
-    for (s in restoration_species) {
-      #s <- gsub(".", "", s)
-      input[[paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))]]
+    for (s in mix_species()) {
+      s_ <- gsub("[^A-Za-z0-9]", "_", s)
+      input[[paste0("target_", s_)]]
+      input[[paste0("diam_",   s_)]]
+      input[[paste0("cost_",   s_)]]
+      input[[paste0("count_",  s_)]]
     }
     input$base_REQUIRED_Unconsolidated_substrate
 
@@ -2979,6 +2921,7 @@ server <- function(input, output, session) {
   # button is disabled while reactive mode is on).
   observeEvent(input$run_sim, {
     sim_token(sim_token() + 1)
+    write_cached_baseline()
   })
 
   # Disable the Run button while reactive simulation is enabled.
@@ -3621,9 +3564,25 @@ server <- function(input, output, session) {
   # Baseline percentile still does not populate on the timeline automatically on first click...
   # but does populate on second "Cache" upload click. ?
   observeEvent(input$baseline_load_cache, {
-    if (file.exists(cached_baseline_path)) {
-      if (is.null(input$baseline_upload$datapath)) ingest_baseline_file(cached_baseline_path)
+    if (!file.exists(cached_baseline_path)) {
+      showNotification("No cached baseline file to load.", type = "warning")
+      return(invisible(NULL))
+    }
+    ingest_baseline_file(cached_baseline_path)
+    # Force the site-change observer to fire even if the resolved site id equals
+    # the currently-selected one (ingest sets the dropdown but an identical id
+    # won't retrigger the observer, so params/covers wouldn't push).
+    up <- baseline_upload_data()
+    if (!is.null(up) && "Unique_Site_ID" %in% names(up)) {
+      ids <- unique(as.character(up$Unique_Site_ID[!is.na(up$Unique_Site_ID)]))
+      if (length(ids)) {
+        updateSelectizeInput(session, "baseline_site", selected = "")
+        later::later(function() {
+          updateSelectizeInput(session, "baseline_site", selected = ids[1])
+        }, delay = 0.3)
       }
+    }
+    showNotification("Loaded cached baseline.", type = "message")
   })
 
   # Load the bundled example baseline (.xlsx) via the same ingest + cache path.
@@ -3692,6 +3651,91 @@ server <- function(input, output, session) {
     }
   })
 
+  # Build the current Restoration Scenario as a one-sheet baseline data.frame.
+  # Per-Taxon columns: Target_Percent_Cover, Outplant_Size_cm, Outplant_Cost.
+  # Scalar sim params repeated on every row. Shared by the download handler and
+  # the cache writer (Simulate / Save scenario / Save baseline).
+  build_baseline_df <- function() {
+    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    if (length(sp) == 0) return(NULL)
+
+    covers <- vapply(sp, function(s) .safe_num(input[[paste0("base_",   gsub("[^A-Za-z0-9]", "_", s))]]), numeric(1))
+    targs  <- vapply(sp, function(s) {
+      v <- input[[paste0("target_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) NA_real_ else as.numeric(v)
+    }, numeric(1))
+    diams_ <- vapply(sp, function(s) {
+      v <- input[[paste0("diam_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) NA_real_ else as.numeric(v)
+    }, numeric(1))
+    costs_ <- vapply(sp, function(s) {
+      v <- input[[paste0("cost_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) NA_real_ else as.numeric(v)
+    }, numeric(1))
+    counts_ <- vapply(sp, function(s) {
+      v <- input[[paste0("count_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) NA_real_ else as.numeric(v)
+    }, numeric(1))
+    sub_lbl  <- input$subregion_choice
+    sub_full <- if (sub_lbl %in% names(subregion_labels)) unname(subregion_labels[sub_lbl]) else sub_lbl
+
+    out <- data.frame(
+      Unique_Site_ID       = rep(if (nzchar(.safe_num_chr(input$baseline_site))) input$baseline_site else "SITE_1", length(sp)),
+      Subregion            = rep(sub_full, length(sp)),
+      Habitat              = rep(input$habitat_choice, length(sp)),
+      Site_Area_m2         = rep(.safe_num(input$site_area_m2), length(sp)),
+      Latitude             = rep(.safe_num(input$site_latitude), length(sp)),
+      Longitude            = rep(.safe_num(input$site_longitude), length(sp)),
+      Taxon                = sp,
+      Percent_Cover        = covers,
+      Target_Percent_Cover = targs,
+      Outplant_Size_cm     = diams_,
+      Outplant_Cost        = costs_,
+      Outplant_Count       = counts_,
+      Sim_Duration         = rep(.safe_num(input$sim_duration), length(sp)),
+      Rest_Horizon         = rep(.safe_num(input$rest_horizon), length(sp)),
+      DHW                  = rep(.safe_num(input$dhw), length(sp)),
+      Bleach_Events        = rep(.safe_num(input$bleach_events), length(sp)),
+      stringsAsFactors = FALSE
+    )
+
+    # Append the Unconsolidated-substrate row so the file round-trips the UC
+    # value. Only Taxon + Percent_Cover are meaningful; scalar sim params are
+    # repeated (same values) for schema consistency; outplant cols are NA.
+    uc_val <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
+    uc_row <- data.frame(
+      Unique_Site_ID       = if (nzchar(.safe_num_chr(input$baseline_site))) input$baseline_site else "SITE_1",
+      Subregion            = out$Subregion[1],
+      Habitat              = out$Habitat[1],
+      Site_Area_m2         = .safe_num(input$site_area_m2),
+      Latitude             = .safe_num(input$site_latitude),
+      Longitude            = .safe_num(input$site_longitude),
+      Taxon                = "REQUIRED Unconsolidated substrate",
+      Percent_Cover        = uc_val,
+      Target_Percent_Cover = NA_real_,
+      Outplant_Size_cm     = NA_real_,
+      Outplant_Cost        = NA_real_,
+      Outplant_Count       = NA_real_,
+      Sim_Duration         = .safe_num(input$sim_duration),
+      Rest_Horizon         = .safe_num(input$rest_horizon),
+      DHW                  = .safe_num(input$dhw),
+      Bleach_Events        = .safe_num(input$bleach_events),
+      stringsAsFactors = FALSE
+    )
+    rbind(out, uc_row)
+  }
+
+  # Overwrite the cached baseline .xlsx from the current inputs.
+  write_cached_baseline <- function() {
+    out <- build_baseline_df()
+    if (is.null(out)) return(invisible(NULL))
+    tryCatch(
+      writexl::write_xlsx(list("Coral Cover input" = out), path = cached_baseline_path),
+      error = function(e) NULL
+    )
+    invisible(TRUE)
+  }
+
   # Save the current Baseline Cover box contents as an .xlsx matching the
   # ingestion schema (Coral Cover input sheet). Column names are reconstructed
   # from the columns the ingestion path reads: Unique_Site_ID, Subregion,
@@ -3702,36 +3746,13 @@ server <- function(input, output, session) {
       paste0("Baseline_Cover_", gsub("[^A-Za-z0-9]", "_", site_tag), "_", Sys.Date(), ".xlsx")
     },
     content = function(file) {
-      sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
-      covers <- vapply(sp, function(s) {
-        .safe_num(input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]])
-      }, numeric(1))
-
-      # Subregion written as the FULL name (not the abbreviated code). The
-      # in-app value is already the full label; keep it as-is, mapping a code
-      # back to its label if somehow a code is present.
-      sub_lbl <- input$subregion_choice
-      sub_full <- if (sub_lbl %in% names(subregion_labels)) {
-        unname(subregion_labels[sub_lbl])   # code -> full label
-      } else {
-        sub_lbl                              # already a full label
+      out <- build_baseline_df()
+      if (is.null(out)) {
+        showNotification("No species to save.", type = "warning")
+        return(invisible(NULL))
       }
-
-      out <- data.frame(
-        Unique_Site_ID = rep(if (nzchar(input$baseline_site)) input$baseline_site else "SITE_1",
-                             length(sp)),
-        Subregion      = rep(sub_full, length(sp)),
-        Habitat        = rep(input$habitat_choice, length(sp)),
-        Site_Area_m2   = rep(.safe_num(input$site_area_m2), length(sp)),
-        Latitude       = rep(.safe_num(input$site_latitude), length(sp)),
-        Longitude      = rep(.safe_num(input$site_longitude), length(sp)),
-        Taxon          = sp,
-        Percent_Cover  = covers,
-        stringsAsFactors = FALSE
-      )
-
-      # Write the "Coral Cover input" sheet the ingestion path reads.
       writexl::write_xlsx(list("Coral Cover input" = out), path = file)
+      write_cached_baseline()  # Save-baseline also refreshes the cache.
     }
   )
 
@@ -3799,13 +3820,25 @@ server <- function(input, output, session) {
       )
       uploaded_covers(covers_vec)
 
-      # Push the new site's covers into any existing base_ inputs so the
-      # value-preservation logic in baseline_cover_inputs reads the NEW site's
-      # values (not stale typed values carried over from the previous site).
+      # Push the new site's covers + per-species target/diameter/cost into the
+      # grid inputs (NA where the column/value is absent).
+      get_col <- function(col, s) {
+        if (!(col %in% names(site_rows))) return(NA_real_)
+        v <- suppressWarnings(as.numeric(site_rows[[col]][match(s, site_rows$Taxon)]))
+        if (length(v) == 0) NA_real_ else v
+      }
       for (s in sp) {
-        bid <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-        v <- covers_vec[[s]]
-        updateNumericInput(session, bid, value = if (is.na(v)) 0 else v)
+        s_ <- gsub("[^A-Za-z0-9]", "_", s)
+        v  <- covers_vec[[s]]
+        updateNumericInput(session, paste0("base_", s_), value = if (is.na(v)) 0 else v)
+        tv <- get_col("Target_Percent_Cover", s)
+        dv <- get_col("Outplant_Size_cm",     s)
+        cv <- get_col("Outplant_Cost",        s)
+        nv <- get_col("Outplant_Count",       s)
+        updateNumericInput(session, paste0("target_", s_), value = if (is.na(tv) || tv <= 0) NA else tv)
+        updateNumericInput(session, paste0("diam_",   s_), value = if (is.na(dv)) NA else dv)
+        updateNumericInput(session, paste0("cost_",   s_), value = if (is.na(cv)) NA else cv)
+        updateNumericInput(session, paste0("count_",  s_), value = if (is.na(nv) || nv <= 0) NA else nv)
       }
 
       # When baseline cover data is ingested, calculate the current carbonate
@@ -3844,6 +3877,26 @@ server <- function(input, output, session) {
       # Baseline RAP percentile vs. the NCRMP distribution (gray surround)
       ingested_baseline_pctile(rap_percentile(cur_budget / 2.9 / (1 - 0.6265)))
     }
+
+    # ---- Load expanded restoration parameters if present in the file ----
+    set_if_present <- function(col, input_id, updater = updateNumericInput) {
+      if (col %in% names(site_rows)) {
+        v <- suppressWarnings(as.numeric(site_rows[[col]][1]))
+        if (!is.na(v)) updater(session, input_id, value = v)
+      }
+    }
+    set_if_present("Sim_Duration",     "sim_duration", updateSliderInput)
+    set_if_present("Rest_Horizon",     "rest_horizon", updateSliderInput)
+    set_if_present("DHW",              "dhw", updateSliderInput)
+
+    # Bleach_Events is a sliderTextInput (choices 0/1/2/5) -> use its updater.
+    if ("Bleach_Events" %in% names(site_rows)) {
+      be <- suppressWarnings(as.numeric(site_rows$Bleach_Events[1]))
+      if (!is.na(be)) {
+        shinyWidgets::updateSliderTextInput(session, "bleach_events", selected = be)
+      }
+    }
+
   })#, ignoreInit = TRUE)
 
   # Add-species dropdown: append the chosen species to the baseline list
@@ -3857,44 +3910,113 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "add_baseline_species", selected = "")
   }, ignoreInit = TRUE)
 
+  # Remove-row buttons. Each row has an actionButton with id rm_<sanitized>.
+  # A single observer watches all of them by rebuilding the mapping each time
+  # the species list changes and binding one observeEvent per id.
+  rm_bound <- reactiveVal(character(0))
+  observe({
+    sp <- baseline_species_list()
+    already <- rm_bound()
+    for (s in sp) {
+      rmid <- paste0("rm_", gsub("[^A-Za-z0-9]", "_", s))
+      if (!(rmid %in% already)) {
+        local({
+          sp_name <- s
+          this_id <- rmid
+          observeEvent(input[[this_id]], {
+            cur <- baseline_species_list()
+            baseline_species_list(cur[cur != sp_name])
+          }, ignoreInit = TRUE)
+        })
+        already <- c(already, rmid)
+      }
+    }
+    rm_bound(already)
+  })
+
   # Dynamic per-species numericInputs: species:%cover, with the add-species
   # dropdown rendered BELOW the list (or as the sole component when empty).
-  output$baseline_cover_inputs <- renderUI({
+  # Restoration Mix: one 4-column row per baseline species. Columns:
+  #   base_<s>   Baseline cover (%)
+  #   target_<s> Target cover (%)
+  #   diam_<s>   Avg. outplant diameter (cm)   (blank = don't outplant)
+  #   cost_<s>   Avg. outplant cost ($)        (blank = don't outplant)
+  # UC row is a single plain cell (no morphology, no target/diam/cost).
+output$restoration_mix_inputs <- renderUI({
     sp <- baseline_species_list()
     covers <- uploaded_covers()
+    rus <- "REQUIRED Unconsolidated substrate"
 
-    # Build one compact row (name + squished input) per species.
-    # Preserve any value the user has already typed: a live input value takes
-    # precedence over the uploaded cover, so adding a species doesn't reset the
-    # rest of the list back to their upload/zero defaults.
+    # UC always floats to the top of the rendered list regardless of input order.
+    if (rus %in% sp) sp <- c(rus, sp[sp != rus])
+
+    make_id <- function(prefix, s) paste0(prefix, "_", gsub("[^A-Za-z0-9]", "_", s))
+
     rows <- lapply(sp, function(s) {
-      id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-      live <- isolate(input[[id]])
-      val <- if (!is.null(live) && !is.na(live)) {
-        live
+      bid <- make_id("base",   s)
+      tid <- make_id("target", s)
+      did <- make_id("diam",   s)
+      cid <- make_id("cost",   s)
+      nid <- make_id("count",  s)
+      rmid <- make_id("rm",    s)   # remove-row button
+
+      live_base <- isolate(input[[bid]])
+      base_val <- if (!is.null(live_base) && !is.na(live_base)) {
+        live_base
       } else if (!is.null(covers) && s %in% names(covers) && !is.na(covers[[s]])) {
         covers[[s]]
       } else {
         0
       }
+
+      remove_btn <- actionButton(rmid, "\u2212", class = "btn-xs mix-rm-btn",
+                                 style = "padding:0 6px; line-height:1.2;")
+
+      if (identical(s, rus)) {
+        # Unconsolidated substrate: remove button + name + single cover cell.
+        return(tags$div(
+          class = "mix-grid-row",
+          style = "display:flex; align-items:center; gap:6px; margin-bottom:4px;",
+          tags$div(style = "flex:0 0 auto;", remove_btn),
+          tags$div(style = "flex: 2 1 0;",
+            tags$span(class = "baseline-species-name", title = s, s)),
+          tags$div(style = "flex: 1 1 0;",
+            numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
+          tags$div(style = "flex: 4 1 0;", "")  # spans target/diam/cost/count
+        ))
+      }
+
+      live_t <- isolate(input[[tid]]); t_val <- if (!is.null(live_t)) live_t else NA
+      live_d <- isolate(input[[did]]); d_val <- if (!is.null(live_d)) live_d else NA
+      live_c <- isolate(input[[cid]]); c_val <- if (!is.null(live_c)) live_c else NA
+      live_n <- isolate(input[[nid]]); n_val <- if (!is.null(live_n)) live_n else NA
+
       tags$div(
-        class = "baseline-species-row",
-        tags$span(class = "baseline-species-name", title = s, s),
-        tags$div(
-          class = "baseline-species-input",
-          numericInput(id, label = NULL, value = val, min = 0, max = 50, step = 0.1)
+        class = "mix-grid-row",
+        style = "display:flex; align-items:flex-start; gap:6px; margin-bottom:2px;",
+        tags$div(style = "flex:0 0 auto; padding-top:4px;", remove_btn),
+        tags$div(style = "flex: 2 1 0;",
+          tags$div(class = "baseline-species-name", title = s, s),
+          tags$div(class = "mix-morph-label",
+                   style = "font-size:11px; color:#666; font-style:italic;",
+                   paste0("(", morph_class(s), ")"))
         ),
-        tags$hr(style = "border: 0; height: 2px")
+        tags$div(style = "flex: 1 1 0;",
+          numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
+        tags$div(style = "flex: 1 1 0;",
+          numericInput(tid, label = NULL, value = t_val, min = 0, max = 100, step = 0.1)),
+        tags$div(style = "flex: 1 1 0;",
+          numericInput(did, label = NULL, value = d_val, min = 2, max = 100, step = 0.1)),
+        tags$div(style = "flex: 1 1 0;",
+          numericInput(cid, label = NULL, value = c_val, min = 1, max = 10000, step = 1)),
+        tags$div(style = "flex: 1 1 0;",
+          numericInput(nid, label = NULL, value = n_val, min = 0, max = 100000, step = 1))
       )
     })
 
-    # Add-species picker, always rendered above the (possibly empty) list.
-    # Not-yet-listed taxa only, so it can't add a duplicate.
     remaining <- setdiff(sort(unique(taxa)), sp)
-    rus <- "REQUIRED Unconsolidated substrate"
     if (rus %in% remaining) {
-      remaining <- remaining[remaining != rus]
-      remaining <- c(rus, remaining)
+      remaining <- c(rus, remaining[remaining != rus])
     }
     picker <- selectizeInput(
       "add_baseline_species", label = NULL,
@@ -3904,6 +4026,95 @@ server <- function(input, output, session) {
     )
 
     tagList(tags$div(style = "margin-top: 6px;", picker), rows)
+  })
+
+  # Helper: species in the mix that are true corals (exclude UC).
+  mix_species <- reactive({
+    setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+  })
+
+  # Live sum of the Target cover column (reads inputs directly, NOT sim_token,
+  # so it updates as the user types even though the timeline stays frozen).
+  mix_target_total <- reactive({
+    sp <- mix_species()
+    sum(vapply(sp, function(s) {
+      v <- input[[paste0("target_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) 0 else as.numeric(v)
+    }, numeric(1)), na.rm = TRUE)
+  })
+
+  output$mix_target_header <- renderUI({
+    tot <- mix_target_total()
+    HTML(paste0("Target<br/>cover (%)<br/><strong>(total: ", round(tot, 1), "%)</strong>"))
+  })
+
+  # Fire the "exceeded 100%" toast once per upward crossing of 100.
+  mix_over_100 <- reactiveVal(FALSE)
+  observe({
+    tot <- mix_target_total()
+    was_over <- isolate(mix_over_100())
+    is_over  <- is.finite(tot) && tot > 100
+    if (is_over && !was_over) {
+      showNotification("Warning: Target cover has exceeded 100%", type = "warning")
+    }
+    if (is_over != was_over) mix_over_100(is_over)
+  })
+
+  # Auto-populate diameter/cost when a species' target exceeds its baseline and
+  # the diameter/cost cell is currently blank. Never clobbers a typed value and
+  # never clears on a later target reduction (blank at sim time = don't outplant).
+  # Auto-fill diameter/cost and enforce Outplants-precedence.
+  # Bound once per species (like remove buttons) so re-renders don't stack them.
+  autofill_bound <- reactiveVal(character(0))
+  observe({
+    sp_all <- mix_species()
+    already <- autofill_bound()
+    for (s in sp_all) {
+      s_ <- gsub("[^A-Za-z0-9]", "_", s)
+      key_n <- paste0("count_", s_)
+      key_t <- paste0("target_", s_)
+      if (!(key_n %in% already)) {
+        local({
+          sp_ <- s_
+          did <- paste0("diam_",   sp_)
+          cid <- paste0("cost_",   sp_)
+          tid <- paste0("target_", sp_)
+          nid <- paste0("count_",  sp_)
+          # Outplant count entered/edited -> count wins: clear target, fill geom.
+          observeEvent(input[[nid]], {
+            cnt <- input[[nid]]
+            if (!is.null(cnt) && !is.na(cnt) && cnt > 0) {
+              if (!is.null(input[[tid]]) && !is.na(input[[tid]])) {
+                updateNumericInput(session, tid, value = NA)
+              }
+              if (is.null(input[[did]]) || is.na(input[[did]])) {
+                updateNumericInput(session, did, value = OUTPLANT_DIAM_DEFAULT)
+              }
+              if (is.null(input[[cid]]) || is.na(input[[cid]])) {
+                updateNumericInput(session, cid, value = OUTPLANT_COST_DEFAULT)
+              }
+            }
+          }, ignoreInit = TRUE)
+          # Target entered above baseline -> fill geom (only if no count set).
+          observeEvent(input[[tid]], {
+            tgt  <- input[[tid]]
+            base <- .safe_num(input[[paste0("base_", sp_)]])
+            cnt  <- input[[nid]]
+            has_count <- !is.null(cnt) && !is.na(cnt) && cnt > 0
+            if (!has_count && !is.null(tgt) && !is.na(tgt) && tgt > base) {
+              if (is.null(input[[did]]) || is.na(input[[did]])) {
+                updateNumericInput(session, did, value = OUTPLANT_DIAM_DEFAULT)
+              }
+              if (is.null(input[[cid]]) || is.na(input[[cid]])) {
+                updateNumericInput(session, cid, value = OUTPLANT_COST_DEFAULT)
+              }
+            }
+          }, ignoreInit = TRUE)
+        })
+        already <- c(already, key_n)
+      }
+    }
+    autofill_bound(already)
   })
 
   # Fixed restoration species target-cover inputs (Restoration Mix box) ----
@@ -3986,28 +4197,14 @@ server <- function(input, output, session) {
 
   # Reset every Species-Mix target input back to blank (NA).
   observeEvent(input$reset_mix, {
-    for (s in restoration_species) {
-      rid <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
-      updateNumericInput(session, rid, value = NA)
+    for (s in mix_species()) {
+      s_ <- gsub("[^A-Za-z0-9]", "_", s)
+      updateNumericInput(session, paste0("target_", s_), value = NA)
+      updateNumericInput(session, paste0("diam_",   s_), value = NA)
+      updateNumericInput(session, paste0("cost_",   s_), value = NA)
+      updateNumericInput(session, paste0("count_",  s_), value = NA)
     }
-    showNotification("Cleared Species Mix targets.", type = "message")
-  })
-
-  # Populate each per-species outplant caption independently of the inputs,
-  # so updating counts never rebuilds (and thus never resets) the inputs.
-  # Uses the "Gspe" code (1 genus letter + 3 species letters).
-  observe({
-    op <- model_outplants()   # named vector: species -> outplant count
-    for (s in restoration_species) {
-      local({
-        sp  <- s
-        nid <- paste0("outplants_", gsub("[^A-Za-z0-9]", "_", sp))
-        output[[nid]] <- renderText({
-          n_out <- if (!is.null(op) && sp %in% names(op)) op[[sp]] else NA
-          if (!is.na(n_out) && n_out > 0) paste0(abbrev_species_code(sp), ": ", n_out, " outplants") else ""
-        })
-      })
-    }
+    showNotification("Cleared restoration targets.", type = "message")
   })
 
   ## ---------------------------------------------------------------------------
@@ -4110,7 +4307,7 @@ server <- function(input, output, session) {
   # as species + covers + subregion/habitat are set, independent of any target.
   baseline_growth <- reactive({
     sim_token()
-    isolate({
+    isolate({ with_logged_conditions({
     req(outplanting_ready())
     habitat       <- input$habitat_choice
     subregion <- input$subregion_choice
@@ -4146,7 +4343,7 @@ server <- function(input, output, session) {
       ) # ,
      # error = function(e) NULL
     #)
-    })
+    }) })
   })
 
   # Restored (target) cover & carbonate budget (simple linear estimate; the
@@ -4155,24 +4352,18 @@ server <- function(input, output, session) {
     sim_token()
     isolate({
     b <- baseline_metrics()
-    slider_ids <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", restoration_species))
-    rest_vals <- sapply(slider_ids, function(id) .safe_num(input[[id]]))
-    rest_rates <- as.numeric(calc_rates$rate[match(restoration_species, calc_rates$Taxon)])
-    net_rest <- sum(rest_vals * rest_rates / 100, na.rm = TRUE)
+    sp <- mix_species()
+    tgt_vals  <- vapply(sp, function(s) .safe_num(input[[paste0("target_", gsub("[^A-Za-z0-9]", "_", s))]]), numeric(1))
+    base_vals <- vapply(sp, function(s) .safe_num(input[[paste0("base_",   gsub("[^A-Za-z0-9]", "_", s))]]), numeric(1))
+    # Restored cover per species = max(target, baseline); species with no target
+    # keep their baseline cover.
+    restored_cvr_vec <- pmax(tgt_vals, base_vals, na.rm = TRUE)
+    rest_rates <- as.numeric(calc_rates$rate[match(sp, calc_rates$Taxon)])
+    budget <- b$budget + sum((restored_cvr_vec - base_vals) * rest_rates / 100, na.rm = TRUE)
 
-    total_coral_cover <- sum(rest_vals, na.rm = TRUE)
-    budget <- b$budget + net_rest
+    total_coral_cover <- sum(restored_cvr_vec, na.rm = TRUE)
 
-    # Restored-assemblage porosity: baseline covers unioned with the mix
-    # additions, summed per taxon.
-    base_sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
-    all_sp  <- union(base_sp, restoration_species)
-    combined_cvr <- vapply(all_sp, function(s) {
-      base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-      rest_id <- paste0("rest_slider_", gsub("[^A-Za-z0-9]", "_", s))
-      .safe_num(input[[base_id]]) + .safe_num(input[[rest_id]])
-    }, numeric(1))
-    rest_cover_df <- data.frame(taxon = all_sp, cvr = combined_cvr, stringsAsFactors = FALSE)
+    rest_cover_df <- data.frame(taxon = sp, cvr = restored_cvr_vec, stringsAsFactors = FALSE)
     rp <- assemblage_porosity(rest_cover_df, "cvr")
 
     rap_restored <- budget / 2.9 / (1 - rp)
@@ -4186,7 +4377,7 @@ server <- function(input, output, session) {
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
     sim_token()
-    isolate({
+    isolate({ with_logged_conditions({
     req(outplanting_ready())
 
     # Progress bar for the whole simulation. Created here, advanced by
@@ -4212,17 +4403,8 @@ server <- function(input, output, session) {
     site_area      <- .safe_num(input$site_area_m2)
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
 
-    # User-input outplant parameters
-    outplant_diam <- .safe_num(input$outplant_size) / 100 # cm -> m
-    outplant_cost <- .safe_num(input$outplant_cost)
     sim_duration  <- .safe_num(input$sim_duration)
     rest_horizon  <- .safe_num(input$rest_horizon)
-
-    if (outplant_diam < 0.02) {
-      log_msg("---- Error: Outplant diameter must be at least 2 cm. ----")
-      showNotification("Error: Outplant diameter must be at least 2 cm.", type = "error")
-      return(NULL)
-    }
 
     # Refuse to run when the horizon exceeds the simulation duration,
     # and display an error message.
@@ -4241,33 +4423,36 @@ server <- function(input, output, session) {
     # Build target_cover_df from the FULL baseline species set (so unrestored
     # species still grow), unioned with the restoration-mix species. current =
     # baseline % cover input; target = restoration-mix slider (0 if none).
-    base_sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
-    all_sp <- union(base_sp, restoration_species)
+    all_sp <- mix_species()
 
     target_cover_df <- data.frame(
       taxon = character(),
       current_cvr_pct = numeric(),
       target_cvr_pct = numeric(),
+      outplant_diam_cm = numeric(),
+      outplant_cost = numeric(),
+      outplant_count = numeric(),
       stringsAsFactors = FALSE
     )
-    # Species whose baseline row currently exists in the UI. A species left over
-    # from a previously-selected site is NOT in this set, so its stale base_
-    # input must not contribute a current cover (which would incorrectly reduce
-    # sp_to_grow_pct in the restoration solve).
-    active_base_sp <- baseline_species_list()
-
     for (s in all_sp) {
-      base_id <- paste0("base_", gsub("[^A-Za-z0-9]", "_", s))
-      rest_id <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
-      current_sp_pct <- if (s %in% active_base_sp) .safe_num(input[[base_id]]) else 0
-      target_sp_pct  <- .safe_num(input[[rest_id]])
-      target_cover_df[nrow(target_cover_df) + 1, ] <- list(s, current_sp_pct, target_sp_pct)
+      s_    <- gsub("[^A-Za-z0-9]", "_", s)
+      cur   <- .safe_num(input[[paste0("base_",   s_)]])
+      tgt   <- .safe_num(input[[paste0("target_", s_)]])
+      dia_v <- input[[paste0("diam_",  s_)]]
+      cst_v <- input[[paste0("cost_",  s_)]]
+      cnt_v <- input[[paste0("count_", s_)]]
+      dia   <- if (is.null(dia_v) || is.na(dia_v)) NA_real_ else as.numeric(dia_v)
+      cst   <- if (is.null(cst_v) || is.na(cst_v)) NA_real_ else as.numeric(cst_v)
+      cnt   <- if (is.null(cnt_v) || is.na(cnt_v)) NA_real_ else as.numeric(cnt_v)
+      target_cover_df[nrow(target_cover_df) + 1, ] <- list(s, cur, tgt, dia, cst, cnt)
     }
 
-    # Nothing present to grow, or no target-cover increase -> no model output
-    if (all(target_cover_df$current_cvr_pct <= 0 & target_cover_df$target_cvr_pct <= 0) ||
-        all(target_cover_df$target_cvr_pct - target_cover_df$current_cvr_pct <= 0)) {
-      log_msg("No target percent-cover increases submitted; no additional growth to simulate.", "\n")
+    # Any species with a positive target uplift OR a positive outplant count
+    # constitutes work to simulate. Only bail when neither exists anywhere.
+    has_target_uplift <- any((target_cover_df$target_cvr_pct - target_cover_df$current_cvr_pct) > 0, na.rm = TRUE)
+    has_count         <- any(target_cover_df$outplant_count > 0, na.rm = TRUE)
+    if (!has_target_uplift && !has_count) {
+      log_msg("No target increases or outplant counts submitted; nothing to simulate.", "\n")
       return(NULL)
     }
 
@@ -4276,7 +4461,6 @@ server <- function(input, output, session) {
       habitat = habitat, subregion = subregion,
       site_area = site_area, uc_pct = unconsolidated_pct_cvr,
       sim_duration = sim_duration, rest_horizon = rest_horizon,
-      outplant_diam = outplant_diam, outplant_cost = outplant_cost,
       bleaching_severity = bleaching_severity,
       bleaching_frequency = bleaching_frequency,
       target_cover_df = target_cover_df,
@@ -4301,7 +4485,6 @@ server <- function(input, output, session) {
         habitat = habitat, subregion = subregion,
         site_area = site_area, uc_pct = unconsolidated_pct_cvr,
         sim_duration = sim_duration, rest_horizon = rest_horizon,
-        outplant_diam = outplant_diam, outplant_cost = outplant_cost,
         bleaching_severity = bleaching_severity,
         bleaching_frequency = bleaching_frequency,
         target_cover_df = target_cover_df,
@@ -4310,7 +4493,7 @@ server <- function(input, output, session) {
       )
     }
     res
-    })
+    }) })
   })
 
   # ---- Baseline / restored values at the end of the simulation ----
@@ -4492,6 +4675,7 @@ server <- function(input, output, session) {
   })
 
   output$restoration_timeline <- plotly::renderPlotly({
+    sim_token()                      # freeze: only a simulation run redraws
     b  <- baseline_metrics()
     bg <- baseline_growth()
     mr <- model_result()
@@ -4505,13 +4689,13 @@ server <- function(input, output, session) {
     bg_df <- if (bg_ok) bg[[1]] else NULL
     bp    <- if (bg_ok) bg[[2]] else 0.6265  # baseline porosity fallback
 
-    site_area <- .safe_num(input$site_area_m2)
-    uc_pct    <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
-    macrobioerosion <- resolve_regional_bioerosion(input$subregion_choice, input$habitat_choice)
+    site_area <- isolate(.safe_num(input$site_area_m2))
+    uc_pct    <- isolate(.safe_num(input$base_REQUIRED_Unconsolidated_substrate))
+    macrobioerosion <- isolate(resolve_regional_bioerosion(input$subregion_choice, input$habitat_choice))
 
     # Apply bioerosion to baseline growth only when it is a real frame.
     if (!is.null(bg_df)) {
-      be_sd_bg <- bioerosion_stdev(input$subregion_choice, input$habitat_choice)
+      be_sd_bg <- isolate(bioerosion_stdev(input$subregion_choice, input$habitat_choice))
       bg_df <- baseline_bioerosion_RAP(bg_df, site_area, uc_pct, be_micro_rate,
                                        macrobioerosion, bp,
                                        be_sd_lo = be_sd_bg[1], be_sd_hi = be_sd_bg[2])
@@ -4526,7 +4710,7 @@ server <- function(input, output, session) {
     })
 
     dur <- b$sim_duration
-    horizon <- .safe_num(input$rest_horizon)
+    horizon <- isolate(.safe_num(input$rest_horizon))
     dark <- isTRUE(input$dark_mode)
     # Dark-mode plot palette
     paper_bg <- if (dark) "#232a33" else "white"
@@ -4782,7 +4966,7 @@ server <- function(input, output, session) {
 
     # Bleaching-event markers: thin red vertical lines at the years bleaching
     # occurs, matching simulate_growth's frequency rule (loop i -> Year i-1).
-    bfreq <- .safe_num(input$bleach_events)
+    bfreq <- isolate(.safe_num(input$bleach_events))
     bleach_years <- integer(0)
     if (bfreq > 0) {
       for (i in 1:(dur + 1)) {
@@ -4858,10 +5042,22 @@ server <- function(input, output, session) {
     # legend swatch. NA-only traces get culled by plotly, so use real coords.
     off_x <- c(-1e6, -1e6 + 1)
     legend_entry <- function(g, name, color, dash = "solid") {
-      w <- if (any(str_detect(name, c("Bleach", "horizon")))) 1 else 2
+      w <- 2
       plotly::add_trace(
         g, x = off_x, y = c(0, 0), type = "scatter", mode = "lines",
         line = list(color = color, dash = dash, width = w),
+        name = name, showlegend = TRUE, inherit = FALSE,
+        hoverinfo = "skip"
+      )
+    }
+    # Vertical-tick swatch (for entries that are drawn as vertical lines in the
+    # panel: restoration horizon, bleaching events). plotly has no vertical
+    # legend line; the "line-ns-open" marker is a short vertical bar.
+    legend_entry_vline <- function(g, name, color) {
+      plotly::add_trace(
+        g, x = off_x, y = c(0, 0), type = "scatter", mode = "markers",
+        marker = list(color = color, symbol = "line-ns-open", size = 12,
+                      line = list(color = color, width = 2)),
         name = name, showlegend = TRUE, inherit = FALSE,
         hoverinfo = "skip"
       )
@@ -4870,15 +5066,17 @@ server <- function(input, output, session) {
       legend_entry("Baseline RAP  ", "gray", dash = "dash") |>
       legend_entry("Restored RAP  ", "#7b3fbf") |>
       legend_entry("Geologic baseline RAP  ", "gold", dash = "dash") |>
-      legend_entry("Restoration horizon  ", "gray", dash = "dash")
+      legend_entry_vline("Restoration horizon  ", "gray")
       if (show_slr) gp <- legend_entry(gp, "Sea-level rise  ", "#1f6fd6", dash = "dash")
-      if (length(bleach_years)) gp <- legend_entry(gp, "Bleaching event  ", "red")
+      if (length(bleach_years)) gp <- legend_entry_vline(gp, "Bleaching event  ", "red")
 
     # ggplotly defaults showlegend to FALSE at the layout level; force it on and
     # fix the x-range so the off-canvas legend traces don't expand the axis.
     gp <- gp |> plotly::layout(
       showlegend = TRUE,
-      legend = list(orientation = "h", x = 0.05, y = 1.08),
+      legend = list(orientation = "h", x = 0.05, y = 1.08,
+                    font = list(color = font_col),
+                    bgcolor = "rgba(0,0,0,0)"),
       xaxis = list(range = c(0, dur))
     )
 
@@ -4899,10 +5097,11 @@ server <- function(input, output, session) {
 
   observe({
     # Highest-target-cover species in the restoration mix (Gspe code)
-    targets <- vapply(restoration_species, function(s) {
-      .safe_num(input[[paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))]])
+    sp <- mix_species()
+    targets <- vapply(sp, function(s) {
+      .safe_num(input[[paste0("target_", gsub("[^A-Za-z0-9]", "_", s))]])
     }, numeric(1))
-    top_sp <- if (any(targets > 0)) restoration_species[which.max(targets)] else NA_character_
+    top_sp <- if (length(sp) && any(targets > 0)) sp[which.max(targets)] else NA_character_
     sp_code <- if (!is.na(top_sp)) abbrev_species_code(top_sp) else "NA"
 
     freq <- .safe_num(input$bleach_events)
@@ -4931,6 +5130,7 @@ server <- function(input, output, session) {
     # Wire the "Save scenario" button press to also run the simulation,
     # so the appropriate simulated values for the current slider values are saved.
     sim_token(sim_token() + 1)
+    write_cached_baseline()
     base_mets <- baseline_metrics()
     mr <- model_result()
     fv <- final_vals()   # baseline/restored evaluated at the restoration horizon
@@ -4943,7 +5143,7 @@ server <- function(input, output, session) {
     # Compare restored cover and baseline cover at the end of the simulation
     added_cover <- restored_cvr - baseline_cvr
     # Prefer model-derived cost when available; else illustrative fallback
-    cost <- if (!is.null(mr)) mr$cost else added_cover * .safe_num(input$outplant_cost) * 100
+    cost <- if (!is.null(mr)) mr$cost else added_cover * OUTPLANT_COST_DEFAULT * 100
     outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
     elev_gain_10yr <- restored_rap * 10 # mm over 10 years
 
@@ -4976,7 +5176,22 @@ server <- function(input, output, session) {
       cost = scalar1(cost),
       # roi = scalar1(roi),
       elev_gain_10yr = scalar1(elev_gain_10yr),
-      saved = as.character(Sys.time())
+      saved = as.character(Sys.time()),
+      # Nested per-species mix (variable-length), keyed by full species name.
+      mix = {
+        sp <- mix_species()
+        setNames(lapply(sp, function(s) {
+          s_ <- gsub("[^A-Za-z0-9]", "_", s)
+          list(
+            baseline_cover = .safe_num(input[[paste0("base_",   s_)]]),
+            target_cover   = { v <- input[[paste0("target_", s_)]]; if (is.null(v) || is.na(v)) NA else as.numeric(v) },
+            outplant_diam_cm = { v <- input[[paste0("diam_", s_)]]; if (is.null(v) || is.na(v)) NA else as.numeric(v) },
+            outplant_cost    = { v <- input[[paste0("cost_", s_)]]; if (is.null(v) || is.na(v)) NA else as.numeric(v) },
+            outplant_count   = { v <- input[[paste0("count_", s_)]]; if (is.null(v) || is.na(v)) NA else as.numeric(v) },
+            morphology = morph_class(s)
+          )
+        }), sp)
+      }
     )
 
     fname <- file.path(
@@ -5298,6 +5513,7 @@ server <- function(input, output, session) {
   })
 
   monitoring_series <- reactive({
+    with_logged_conditions ({
     info <- monitoring_cover_path()
     if (is.null(info) || info$ext != "xlsx") return(NULL)
 
@@ -5308,7 +5524,7 @@ server <- function(input, output, session) {
     log_msg(
       paste0("Plotting Restoration Monitoring series: ",
         input$monitoring_selected_site,
-        " ... "
+        "... "
         )
       )
     log_msg(" ============================ \n")
@@ -5412,7 +5628,7 @@ server <- function(input, output, session) {
     out <- out[order(out$Year), ]
     # print(out)
     # out
-  })
+  }) })
 
   # Helper: baseline metrics for the selected NCRMP site (upload overrides df).
   # When the monitoring pipeline is active, "Baseline" is the -1 row.
@@ -5565,9 +5781,10 @@ server <- function(input, output, session) {
       x_vals   <- sort(unique(ms$Year))
       x_labels <- ifelse(x_vals == -1, "Baseline", as.character(x_vals))
 
-      data_min <- min(c(ms$RAP, ms$RAP_min, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      slr_for_axis <- if (isTRUE(input$monitoring_show_slr)) slr_refs else numeric(0)
+      data_min <- min(c(ms$RAP, ms$RAP_min, geo_baseline, slr_for_axis, -0.5), na.rm = TRUE)
       y_lo <- rap_axis_min(data_min)
-      y_hi <- max(c(ms$RAP, ms$RAP_max, geo_baseline, slr_refs), na.rm = TRUE) + 1
+      y_hi <- max(c(ms$RAP, ms$RAP_max, geo_baseline, slr_for_axis), na.rm = TRUE) + 1
       bands <- status_bands_df(x_min, x_max, y_lo)
 
       ribbon_df <- insert_threshold_crossings(ms, xcol = "Year", threshold = 0.5)
@@ -5624,9 +5841,10 @@ server <- function(input, output, session) {
       rap_series <- b$rap + (r$rap - b$rap) * (years / dur)
       tl <- data.frame(Year = years, RAP = rap_series, stringsAsFactors = FALSE)
 
-      data_min <- min(c(tl$RAP, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+      slr_for_axis <- if (isTRUE(input$monitoring_show_slr)) slr_refs else numeric(0)
+      data_min <- min(c(tl$RAP, geo_baseline, slr_for_axis, -0.5), na.rm = TRUE)
       y_lo <- rap_axis_min(data_min)
-      y_hi <- max(c(tl$RAP, geo_baseline, slr_refs), na.rm = TRUE) + 1
+      y_hi <- max(c(tl$RAP, geo_baseline, slr_for_axis), na.rm = TRUE) + 1
       bands <- status_bands_df(0, dur, y_lo)
 
       ribbon_df <- insert_threshold_crossings(tl, xcol = "Year", threshold = 0.5)
@@ -5673,27 +5891,29 @@ server <- function(input, output, session) {
         text = paste0("Geologic baseline RAP: ", geo_baseline, " mm/yr")
       )
 
-    # Int reference rates (blue dashed) at 2030 / 2050 / 2070
+    # Int reference rates (blue dashed) at 2030 / 2050 / 2070 — only when toggled.
     slr_ann_col <- "#1f6fd6"
-    for (nm in names(slr_refs)) {
-      yv <- slr_refs[[nm]]
-      if (is.na(yv)) next
-      gp <- gp |>
-        plotly::add_trace(
-          x = band_x, y = c(yv, yv),
-          type = "scatter", mode = "lines",
-          line = list(color = slr_ann_col, width = 1.5, dash = "dash"),
-          showlegend = FALSE, inherit = FALSE,
-          hoverinfo = "text",
-          text = paste0(nm, ": ", round(yv, 2), " mm/yr")
-        ) |>
-        plotly::add_annotations(
-          x = 0.02, y = yv, xref = "paper", yref = "y",
-          text = paste0(nm, ": ", round(yv, 2), " mm/yr"),
-          showarrow = FALSE, yshift = 9, xanchor = "left",
-          font = list(color = slr_ann_col, size = 10),
-          bgcolor = paper_bg, opacity = 0.85
-        )
+    if (isTRUE(input$monitoring_show_slr)) {
+      for (nm in names(slr_refs)) {
+        yv <- slr_refs[[nm]]
+        if (is.na(yv)) next
+        gp <- gp |>
+          plotly::add_trace(
+            x = band_x, y = c(yv, yv),
+            type = "scatter", mode = "lines",
+            line = list(color = slr_ann_col, width = 1.5, dash = "dash"),
+            showlegend = FALSE, inherit = FALSE,
+            hoverinfo = "text",
+            text = paste0(nm, ": ", round(yv, 2), " mm/yr")
+          ) |>
+          plotly::add_annotations(
+            x = 0.02, y = yv, xref = "paper", yref = "y",
+            text = paste0(nm, ": ", round(yv, 2), " mm/yr"),
+            showarrow = FALSE, yshift = 9, xanchor = "left",
+            font = list(color = slr_ann_col, size = 10),
+            bgcolor = paper_bg, opacity = 0.85
+          )
+      }
     }
 
     gp
@@ -5933,9 +6153,10 @@ server <- function(input, output, session) {
       "Int @2070" = Int_rate_at(2070)
     )
 
-    data_min <- min(c(d$restored_rap, geo_baseline, slr_refs, -0.5), na.rm = TRUE)
+    slr_for_axis <- if (isTRUE(input$sc_show_slr)) slr_refs else numeric(0)
+    data_min <- min(c(d$restored_rap, geo_baseline, slr_for_axis, -0.5), na.rm = TRUE)
     y_lo <- rap_axis_min(data_min)
-    y_hi <- max(c(d$restored_rap, geo_baseline, slr_refs), na.rm = TRUE) + 1
+    y_hi <- max(c(d$restored_rap, geo_baseline, slr_for_axis), na.rm = TRUE) + 1
 
     d$scenario <- factor(d$scenario, levels = d$scenario)
     n_sc <- nrow(d)
@@ -5963,12 +6184,21 @@ server <- function(input, output, session) {
         yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col)
       )
 
+    # Geologic baseline always drawn; SLR Int rates only when toggled on.
     ref_df <- data.frame(
-      label = c("Geologic baseline", names(slr_refs)),
-      yval  = c(geo_baseline, unname(slr_refs)),
-      col   = c("#b8860b", rep("#1f6fd6", length(slr_refs))),
+      label = "Geologic baseline",
+      yval  = geo_baseline,
+      col   = "#b8860b",
       stringsAsFactors = FALSE
     )
+    if (isTRUE(input$sc_show_slr)) {
+      ref_df <- rbind(ref_df, data.frame(
+        label = names(slr_refs),
+        yval  = unname(slr_refs),
+        col   = rep("#1f6fd6", length(slr_refs)),
+        stringsAsFactors = FALSE
+      ))
+    }
     ref_df <- ref_df[is.finite(ref_df$yval), ]
     for (k in seq_len(nrow(ref_df))) {
       gp <- gp |>
