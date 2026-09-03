@@ -1774,7 +1774,7 @@ header <- dashboardHeader(
         inputId = "dark_mode",
         label = "Dark Mode",
         status = "primary",
-        # value = TRUE, 
+        # value = TRUE,
         right = TRUE,
         inline = TRUE
       )
@@ -2311,6 +2311,20 @@ body <- dashboardBody(
                     label = tags$strong("Habitat"),
                     choices = c("\u2013 Select habitat \u2013" = ""),
                     selected = ""
+                  ),
+                  tags$hr(),
+                  tags$div(
+                    style = "display:flex; justify-content:center; margin:4px 0;",
+                    downloadButton("baseline_save_dl", "Save baseline",
+                                  icon = icon("floppy-disk"), class = "btn-sm")
+                  ),
+                  tags$div(
+                    style = "display:flex; gap:8px; align-items:flex-end;",
+                    actionButton("baseline_delete_cache", "Clear cache",
+                                  icon = icon("trash"), class = "btn-sm"),
+                    actionButton("reset_mix", "Reset targets",
+                                  icon = icon("eraser"), class = "btn-sm")
+
                   )
                 ),
 
@@ -2321,29 +2335,37 @@ body <- dashboardBody(
                   # Column headers
                   tags$div(
                     class = "mix-grid-header",
-                    style = "display:flex; align-items:flex-end; gap:6px; padding: 0 0 8px 0;
-                             font-weight:bold; font-size:12px; margin:4px 0 2px 0;",
+                    style = "display:flex; align-items:flex-end; gap:6px;
+                             font-weight:bold; font-size:12px; margin:4px 0 16px 0;",
                     tags$div(style = "flex:0 0 auto; width:28px;", ""),
                     tags$div(style = "flex: 2 1 0;", ""),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Baseline<br/>cover (%)")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Baseline<br/>cover (%)<br/> ")),
                     tags$div(style = "flex: 1 1 0; text-align:center;", uiOutput("mix_target_header")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>diameter (cm)")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>cost ($)")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", "Outplants")
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>diameter (cm)<br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>cost ($)<br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Outplants<br/><br/> "))
                   ),
                   div(
                     style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
                     uiOutput("restoration_mix_inputs")
                   ),
                   tags$hr(),
-                  tags$div(
-                    style = "display:flex; gap:4px; align-items:center;",
-                    downloadButton("baseline_save_dl", "Save baseline",
-                                  icon = icon("floppy-disk"), class = "btn-sm"),
-                    actionButton("reset_mix", "Reset targets",
-                                  icon = icon("eraser"), class = "btn-sm"),
-                    actionButton("baseline_delete_cache", "Clear cache",
-                                  icon = icon("trash"), class = "btn-sm")
+
+                  # "Run Simulation" group (unboxed)
+                  tags$div(style = "display:flex; gap:10px; justify-content:center",
+                    textInput("scenario_project", tags$strong("Project name"), value = ""),
+                    textInput("scenario_name", tags$strong("Scenario name"), value = ""),
+                    actionButton("save_scenario", "Save result", icon = icon("floppy-disk")),
+                    tags$div(
+                      style = "padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
+                      materialSwitch("reactive_sim", HTML("<strong>Reactive simulation</strong>"),
+                        value = FALSE, status = "primary", right = TRUE, inline = TRUE)
+                    ),
+                    tags$div(
+                      style = "display:flex; align-items:center; justify-content:flex-end;
+                              padding:4px 5px; margin:-10px 0px;",
+                      actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
+                    )
                   )
                 )
               )
@@ -2351,7 +2373,7 @@ body <- dashboardBody(
           )
         ),
 
-        # ---- Left stack: Target Years / Bleaching / Save Scenario ----
+        # ---- Right stack: Target Years / Bleaching / Save Scenario ----
         column(4,
           # Target Years
           shinydashboard::box(
@@ -2365,60 +2387,32 @@ body <- dashboardBody(
               sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
                 value = 0, min = 0, max = 30, step = 1
               )
-            ),
-            uiOutput("sim_duration_warning")
-          ),
-
-          # Bleaching Scenario
-          shinydashboard::box(
-            title = "Bleaching Scenario",
-            width = 12, status = "danger", solidHeader = TRUE,
-            column(6,
-              sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
-                min = 8, max = 24, value = 8, step = 1
-              )
-            ),
-            column(6,
-              sliderTextInput(
-                inputId = "bleach_events",
-                label = tags$strong("Events / 5 years"),
-                choices = c(0, 1, 2, 5),
-                selected = 0,
-                grid = TRUE
-              )
             )
           ),
 
-          # Save Restoration Scenario
+          # Mortality factors
           shinydashboard::box(
-            title = "Save Restoration Scenario",
-            width = 12, solidHeader = TRUE, status = "primary",
-            column(width = 4,
-                textInput("scenario_project", tags$strong("Project name"), value = "")
+            title = "Mortality",
+            width = 12, status = "danger", solidHeader = TRUE,
+            sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
+              min = 8, max = 24, value = 8, step = 1
             ),
-            column(width = 5,
-                textInput("scenario_name", tags$strong("Scenario name"), value = "")
+            sliderTextInput(
+              inputId = "bleach_events",
+              label = tags$strong("Bleaching (Events / 5 years)"),
+              choices = c(0, 1, 2, 5),
+              selected = 0,
+              grid = TRUE
             ),
-            column(width = 3,
-              fluidRow(
-                tags$h1(),
-                actionButton("save_scenario", "Save", icon = icon("floppy-disk"))
-              )
+            sliderTextInput(
+              inputId = "storm_events",
+              label = tags$strong("Hurricanes (Storms / 5 years)"),
+              choices = c(0, 1, 2, 5),
+              selected = 0,
+              grid = TRUE
             ),
-            column(8,
-              tags$div(
-                style = "display:flex; align-items:center; justify-content:flex-end;
-                        padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
-                materialSwitch("reactive_sim", HTML("<strong>Reactive simulation</strong>"),
-                  value = FALSE, status = "primary", right = TRUE, inline = TRUE)
-              )
-            ),
-            column(4,
-              tags$div(
-                style = "display:flex; align-items:center; justify-content:flex-end;
-                        padding:4px 5px; margin:-10px 0px;",
-                actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
-              )
+            sliderInput("mort_adj", tags$strong("Mortality adjustment (%)"),
+              min = -10, max = 10, value = 0, step = 1
             )
           )
         )
