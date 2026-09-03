@@ -1194,6 +1194,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   pct_cvr_max     <- rep(0, n)
 
   outplants_by_species <- c()   # named: species -> outplant count
+  achieved_cover_by_species <- c()  # named: species -> total % cover at horizon
   total_cost <- 0
   any_growth <- FALSE           # did any species produce output?
 
@@ -1421,6 +1422,15 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     pct_cvr_max    <- pct_cvr_max    + nd_max$pct_cvr
 
     outplants_by_species[species] <- outplant_guess
+    # Achieved NEW cover for this species at the restoration horizon (the value
+    # the count produced). Baseline/original cover for the species is added so
+    # the reported Target reflects total species cover, matching the input's
+    # meaning (target = total % cover for that species).
+    hr_idx <- min(rest_horizon + 1, nrow(nd))
+    orig_hr <- if (!is.null(orig_only) && nrow(orig_only[[1]]) >= hr_idx) {
+      orig_only[[1]][["pct_cvr"]][hr_idx]
+    } else 0
+    achieved_cover_by_species[species] <- .safe0(nd$pct_cvr[hr_idx]) + .safe0(orig_hr)
     total_cost <- total_cost + outplant_guess * row_cost
     any_growth <- TRUE
   }
@@ -1428,6 +1438,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   if (!any_growth) {
     return(list(budget_df = data.frame(),
                 outplants_by_species = outplants_by_species,
+                achieved_cover_by_species = achieved_cover_by_species,
                 outplants = 0, cost = 0))
   }
 
@@ -1499,6 +1510,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   list(
     budget_df = budget_df,
     outplants_by_species = outplants_by_species,
+    achieved_cover_by_species = achieved_cover_by_species,
     outplants = sum(outplants_by_species),
     cost      = total_cost
   )
@@ -1875,6 +1887,22 @@ body <- dashboardBody(
       
       /* Two-line, italic input labels in the mix sub-boxes */
       .mix-fieldset .control-label { font-style: italic; line-height: 1.2; }
+
+      /* Active (user-supplied) mix input: purple border. The class may be
+         applied to the numericInput's wrapper OR directly to the <input>
+         depending on Shiny version, so target both the element itself when it
+         is an input and any descendant input. */
+      .mix-active-input input,
+      input.mix-active-input {
+        border: 2px solid #7b3fbf !important;
+        box-shadow: 0 0 0 1px #7b3fbf33 !important;
+      }
+      body.dark-mode .mix-active-input input,
+      body.dark-mode input.mix-active-input {
+        border-color: #a06fd6 !important;
+        box-shadow: 0 0 0 1px #a06fd644 !important;
+      }
+
       /* Stacked species name above its numeric input in the Restoration Mix */
       .mix-species-stacked { margin-bottom: 12px; }
       .mix-species-stacked .mix-species-label {
@@ -2049,6 +2077,35 @@ body <- dashboardBody(
       body.dark-mode .js-plotly-plot .ytick text,
       body.dark-mode .js-plotly-plot .xtitle,
       body.dark-mode .js-plotly-plot .ytitle { fill: #e6e6e6 !important; }
+
+      /* DataTables (Calcifier Data tab) dark mode: lighten text + controls */
+      body.dark-mode .dataTables_wrapper,
+      body.dark-mode table.dataTable,
+      body.dark-mode table.dataTable thead th,
+      body.dark-mode table.dataTable tbody td,
+      body.dark-mode .dataTables_wrapper .dataTables_length,
+      body.dark-mode .dataTables_wrapper .dataTables_filter,
+      body.dark-mode .dataTables_wrapper .dataTables_info,
+      body.dark-mode .dataTables_wrapper .dataTables_paginate,
+      body.dark-mode .dataTables_wrapper .dataTables_paginate .paginate_button {
+        color: #e6e6e6 !important;
+      }
+      body.dark-mode table.dataTable tbody tr { background-color: #232a33 !important; }
+      body.dark-mode table.dataTable tbody tr:hover { background-color: #2c353f !important; }
+      body.dark-mode table.dataTable thead th { border-bottom-color: #3a4552 !important; }
+      /* Column-filter search boxes injected by DT filter = 'top' */
+      body.dark-mode .dataTables_wrapper input,
+      body.dark-mode table.dataTable thead input {
+        background-color: #2c353f !important; color: #e6e6e6 !important;
+        border-color: #3a4552 !important;
+      }
+      /* Paginate buttons hover/current */
+      body.dark-mode .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+      body.dark-mode .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+        background: #2c353f !important; color: #e6e6e6 !important;
+        border-color: #3a4552 !important;
+      }
+
     ")),
     # Toggle the body dark-mode class from the switch
     tags$script(HTML("
@@ -2336,14 +2393,14 @@ body <- dashboardBody(
                   tags$div(
                     class = "mix-grid-header",
                     style = "display:flex; align-items:flex-end; gap:6px;
-                             font-weight:bold; font-size:12px; margin:4px 0 16px 0;",
+                             font-weight:bold; font-size:12px; margin:4px 30px 0px 0;",
                     tags$div(style = "flex:0 0 auto; width:28px;", ""),
                     tags$div(style = "flex: 2 1 0;", ""),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Baseline<br/>cover (%)<br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", uiOutput("mix_baseline_header")),
                     tags$div(style = "flex: 1 1 0; text-align:center;", uiOutput("mix_target_header")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>diameter (cm)<br/> ")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>cost ($)<br/> ")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Outplants<br/><br/> "))
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>diameter (cm)<br/><br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Avg. outplant<br/>cost ($)<br/><br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;", HTML("Outplants<br/><br/><br/> "))
                   ),
                   div(
                     style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
@@ -2392,8 +2449,8 @@ body <- dashboardBody(
 
           # Mortality factors
           shinydashboard::box(
-            title = "Mortality",
-            width = 12, status = "danger", solidHeader = TRUE,
+            title = "Bleaching Scenario",
+            width = 12, status = "warning", solidHeader = TRUE,
             sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
               min = 8, max = 24, value = 8, step = 1
             ),
@@ -2403,16 +2460,28 @@ body <- dashboardBody(
               choices = c(0, 1, 2, 5),
               selected = 0,
               grid = TRUE
+            )
+          ),
+          shinydashboard::box(
+            id = "mort_opt_box",
+            title = "Additional Mortality (optional)",
+            width = 12,
+            status = "danger",
+            collapsible = TRUE,
+            collapsed = TRUE,
+            solidHeader = TRUE,
+            sliderInput("mort_adj", tags$strong("Chronic Mortality (%)"),
+              min = -10, max = 10, value = 0, step = 1
+            ),
+            sliderInput("mort_adj", tags$strong("Episodic Mortality (%)"),
+              min = -10, max = 10, value = 0, step = 1
             ),
             sliderTextInput(
-              inputId = "storm_events",
-              label = tags$strong("Hurricanes (Storms / 5 years)"),
+              inputId = "mort_events",
+              label = tags$strong("Episodic Mortality (Events / 5 years)"),
               choices = c(0, 1, 2, 5),
               selected = 0,
               grid = TRUE
-            ),
-            sliderInput("mort_adj", tags$strong("Mortality adjustment (%)"),
-              min = -10, max = 10, value = 0, step = 1
             )
           )
         )
@@ -3815,7 +3884,10 @@ server <- function(input, output, session) {
       uploaded_covers(covers_vec)
 
       # Push the new site's covers + per-species target/diameter/cost into the
-      # grid inputs (NA where the column/value is absent).
+      # grid inputs (NA where the column/value is absent). Suppress the mix
+      # observers so these programmatic writes don't set active mode or clear
+      # siblings; we seed active mode explicitly afterward.
+      mix_suppress(TRUE)
       get_col <- function(col, s) {
         if (!(col %in% names(site_rows))) return(NA_real_)
         v <- suppressWarnings(as.numeric(site_rows[[col]][match(s, site_rows$Taxon)]))
@@ -3833,7 +3905,36 @@ server <- function(input, output, session) {
         updateNumericInput(session, paste0("diam_",   s_), value = if (is.na(dv)) NA else dv)
         updateNumericInput(session, paste0("cost_",   s_), value = if (is.na(cv)) NA else cv)
         updateNumericInput(session, paste0("count_",  s_), value = if (is.na(nv) || nv <= 0) NA else nv)
+
+        # Seed active mode from the loaded values: count if present (>0), else
+        # target if present (>0), else none.
+        if (!is.na(nv) && nv > 0) {
+          mix_active_mode[[s_]] <- "count"
+        } else if (!is.na(tv) && tv > 0) {
+          mix_active_mode[[s_]] <- "target"
+        } else {
+          mix_active_mode[[s_]] <- NA_character_
+        }
       }
+      # Capture seeded modes now (reactive context) for the deferred DOM paint.
+      seeded_modes <- setNames(lapply(sp, function(s) {
+        isolate(mix_active_mode[[gsub("[^A-Za-z0-9]", "_", s)]])
+      }), sp)
+
+      # Paint borders once the new inputs are in the DOM (contextless is fine:
+      # paint_mix_border takes the mode as an argument and only touches shinyjs).
+      later::later(function() {
+        shiny::withReactiveDomain(session, {
+          for (s in sp) paint_mix_border(s, seeded_modes[[s]])
+        })
+      }, delay = 2)
+
+      # Release suppression after the current reactive flush completes (this
+      # callback runs in a valid context, so the reactive write is legal, and it
+      # fires after the updateNumericInput messages have been queued).
+      session$onFlushed(function() {
+        mix_suppress(FALSE)
+      }, once = TRUE)
 
       # When baseline cover data is ingested, calculate the current carbonate
       # budget by area occupied per species. For each species, convert its
@@ -4027,6 +4128,54 @@ output$restoration_mix_inputs <- renderUI({
     setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
   })
 
+# Repaint active-input borders whenever the mix grid re-renders (species list
+  # changes recreate the inputs, dropping their CSS classes). Deferred so the
+  # new inputs exist in the DOM before shinyjs targets them.
+  observeEvent(baseline_species_list(), {
+    sp <- mix_species()
+    # Capture modes NOW (reactive context); the deferred callback is contextless.
+    modes <- setNames(lapply(sp, function(s) {
+      isolate(mix_active_mode[[gsub("[^A-Za-z0-9]", "_", s)]])
+    }), sp)
+    later::later(function() {
+      shiny::withReactiveDomain(session, {
+        for (s in sp) paint_mix_border(s, modes[[s]])
+      })
+    }, delay = 2.0)
+  }, ignoreInit = TRUE)
+
+  # Set TRUE while the result-writer pushes solved Target/Outplants values, so
+  # the count/target cross-clearing observers don't fire on those programmatic
+  # updates and wipe what we just wrote.
+  mix_suppress <- reactiveVal(FALSE)
+
+  # Per-species active input mode: "target" | "count" | NA (nothing supplied).
+  # Set only by USER edits (guarded by mix_suppress). The simulation reads this
+  # to decide which cell to honor, so a result-populated cell never steals
+  # priority on re-run.
+  mix_active_mode <- reactiveValues()
+
+  # Toggle the purple border to match a species' active mode. Called after every
+  # user edit and on load-time seeding.
+  # Toggle the purple border for one species. `mode` is passed in (read by the
+  # caller inside a reactive context) so this is safe to call from deferred
+  # (later::later) callbacks, which have no reactive context.
+  paint_mix_border <- function(s, mode) {
+    s_  <- gsub("[^A-Za-z0-9]", "_", s)
+    tid <- paste0("target_", s_)
+    nid <- paste0("count_",  s_)
+    if (identical(mode, "target")) {
+      shinyjs::addCssClass(id = tid, class = "mix-active-input")
+      shinyjs::removeCssClass(id = nid, class = "mix-active-input")
+    } else if (identical(mode, "count")) {
+      shinyjs::addCssClass(id = nid, class = "mix-active-input")
+      shinyjs::removeCssClass(id = tid, class = "mix-active-input")
+    } else {
+      shinyjs::removeCssClass(id = tid, class = "mix-active-input")
+      shinyjs::removeCssClass(id = nid, class = "mix-active-input")
+    }
+  }
+
   # Live sum of the Target cover column (reads inputs directly, NOT sim_token,
   # so it updates as the user types even though the timeline stays frozen).
   mix_target_total <- reactive({
@@ -4040,6 +4189,20 @@ output$restoration_mix_inputs <- renderUI({
   output$mix_target_header <- renderUI({
     tot <- mix_target_total()
     HTML(paste0("Target<br/>cover (%)<br/><strong>(total: ", round(tot, 1), "%)</strong>"))
+  })
+
+  # Live sum of the Baseline cover column (excludes UC).
+  mix_baseline_total <- reactive({
+    sp <- mix_species()
+    sum(vapply(sp, function(s) {
+      v <- input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) 0 else as.numeric(v)
+    }, numeric(1)), na.rm = TRUE)
+  })
+
+  output$mix_baseline_header <- renderUI({
+    tot <- mix_baseline_total()
+    HTML(paste0("Baseline<br/>cover (%)<br/>(total: ", round(tot, 1), "%)"))
   })
 
   # Fire the "exceeded 100%" toast once per upward crossing of 100.
@@ -4070,39 +4233,64 @@ output$restoration_mix_inputs <- renderUI({
       if (!(key_n %in% already)) {
         local({
           sp_ <- s_
+          sp_orig <- s
           did <- paste0("diam_",   sp_)
           cid <- paste0("cost_",   sp_)
           tid <- paste0("target_", sp_)
           nid <- paste0("count_",  sp_)
-          # Outplant count entered/edited -> count wins: clear target, fill geom.
+          # Outplant count edited by the user -> becomes the active input:
+          # clear the target cell, mark count active, paint border, fill geom.
+          # A clear-to-NA drops active status (target already NA, so nothing
+          # is passed for this species).
           observeEvent(input[[nid]], {
+            if (isolate(mix_suppress())) return()
             cnt <- input[[nid]]
             if (!is.null(cnt) && !is.na(cnt) && cnt > 0) {
-              if (!is.null(input[[tid]]) && !is.na(input[[tid]])) {
+              if (!is.null(isolate(input[[tid]])) && !is.na(isolate(input[[tid]]))) {
                 updateNumericInput(session, tid, value = NA)
               }
+              mix_active_mode[[sp_]] <- "count"
               if (is.null(input[[did]]) || is.na(input[[did]])) {
                 updateNumericInput(session, did, value = OUTPLANT_DIAM_DEFAULT)
               }
               if (is.null(input[[cid]]) || is.na(input[[cid]])) {
                 updateNumericInput(session, cid, value = OUTPLANT_COST_DEFAULT)
               }
+            } else {
+              # Count cleared/zeroed. If it was the active mode, drop it.
+              if (identical(mix_active_mode[[sp_]], "count")) {
+                mix_active_mode[[sp_]] <- NA_character_
+              }
             }
+            paint_mix_border(sp_orig, isolate(mix_active_mode[[sp_]]))
           }, ignoreInit = TRUE)
-          # Target entered above baseline -> fill geom (only if no count set).
+          # Target edited by the user -> becomes the active input: clear the
+          # Outplants cell, mark target active, paint border, fill geom.
           observeEvent(input[[tid]], {
+            if (isolate(mix_suppress())) return()
             tgt  <- input[[tid]]
             base <- .safe_num(input[[paste0("base_", sp_)]])
-            cnt  <- input[[nid]]
-            has_count <- !is.null(cnt) && !is.na(cnt) && cnt > 0
-            if (!has_count && !is.null(tgt) && !is.na(tgt) && tgt > base) {
-              if (is.null(input[[did]]) || is.na(input[[did]])) {
-                updateNumericInput(session, did, value = OUTPLANT_DIAM_DEFAULT)
+            if (!is.null(tgt) && !is.na(tgt)) {
+              cnt <- isolate(input[[nid]])
+              if (!is.null(cnt) && !is.na(cnt)) {
+                updateNumericInput(session, nid, value = NA)
               }
-              if (is.null(input[[cid]]) || is.na(input[[cid]])) {
-                updateNumericInput(session, cid, value = OUTPLANT_COST_DEFAULT)
+              mix_active_mode[[sp_]] <- "target"
+              if (tgt > base) {
+                if (is.null(input[[did]]) || is.na(input[[did]])) {
+                  updateNumericInput(session, did, value = OUTPLANT_DIAM_DEFAULT)
+                }
+                if (is.null(input[[cid]]) || is.na(input[[cid]])) {
+                  updateNumericInput(session, cid, value = OUTPLANT_COST_DEFAULT)
+                }
+              }
+            } else {
+              # Target cleared. If it was the active mode, drop it.
+              if (identical(mix_active_mode[[sp_]], "target")) {
+                mix_active_mode[[sp_]] <- NA_character_
               }
             }
+            paint_mix_border(sp_orig, isolate(mix_active_mode[[sp_]]))
           }, ignoreInit = TRUE)
         })
         already <- c(already, key_n)
@@ -4431,13 +4619,24 @@ output$restoration_mix_inputs <- renderUI({
     for (s in all_sp) {
       s_    <- gsub("[^A-Za-z0-9]", "_", s)
       cur   <- .safe_num(input[[paste0("base_",   s_)]])
-      tgt   <- .safe_num(input[[paste0("target_", s_)]])
       dia_v <- input[[paste0("diam_",  s_)]]
       cst_v <- input[[paste0("cost_",  s_)]]
-      cnt_v <- input[[paste0("count_", s_)]]
       dia   <- if (is.null(dia_v) || is.na(dia_v)) NA_real_ else as.numeric(dia_v)
       cst   <- if (is.null(cst_v) || is.na(cst_v)) NA_real_ else as.numeric(cst_v)
-      cnt   <- if (is.null(cnt_v) || is.na(cnt_v)) NA_real_ else as.numeric(cnt_v)
+
+      # Honor ONLY the active (purple) cell. The inactive cell may hold a stale
+      # result-populated value, which must not drive the solve.
+      mode <- mix_active_mode[[s_]]
+      raw_t <- input[[paste0("target_", s_)]]
+      raw_n <- input[[paste0("count_",  s_)]]
+      tgt <- 0
+      cnt <- NA_real_
+      if (identical(mode, "target")) {
+        tgt <- if (is.null(raw_t) || is.na(raw_t)) 0 else as.numeric(raw_t)
+      } else if (identical(mode, "count")) {
+        cnt <- if (is.null(raw_n) || is.na(raw_n)) NA_real_ else as.numeric(raw_n)
+      }
+      # mode == NA -> neither passed: tgt stays 0, cnt stays NA (no outplanting).
       target_cover_df[nrow(target_cover_df) + 1, ] <- list(s, cur, tgt, dia, cst, cnt)
     }
 
@@ -4517,13 +4716,40 @@ output$restoration_mix_inputs <- renderUI({
     }
   })
 
-  # ---- Per-species outplant counts ----
-  # (drives the Restoration Mix captions)
-  model_outplants <- reactive({
+  # After a run, populate each species' Target and Outplants cells with the
+  # resultant values. Target-driven species get their solved count; count-driven
+  # species get their achieved cover. The suppression flag prevents the cross-
+  # clearing observers from wiping these programmatic writes.
+  observeEvent(model_result(), {
     mr <- model_result()
-    if (is.null(mr)) return(NULL)
-    mr$outplants_by_species
-  })
+    if (is.null(mr)) return()
+    op  <- mr$outplants_by_species
+    ac  <- mr$achieved_cover_by_species
+
+    mix_suppress(TRUE)
+    # Release suppression after the updates have round-tripped to the client.
+    later::later(function() mix_suppress(FALSE), delay = 2.0) # 2 ms delay
+
+    for (s in mix_species()) {
+      s_  <- gsub("[^A-Za-z0-9]", "_", s)
+      tid <- paste0("target_", s_)
+      nid <- paste0("count_",  s_)
+
+      mode <- mix_active_mode[[s_]]
+      if (identical(mode, "count")) {
+        # Count honored -> show achieved total cover in the (inactive) Target.
+        if (!is.null(ac) && s %in% names(ac)) {
+          updateNumericInput(session, tid, value = round(ac[[s]], 1))
+        }
+      } else if (identical(mode, "target")) {
+        # Target honored -> show solved outplant count in the (inactive) Outplants.
+        if (!is.null(op) && s %in% names(op) && op[[s]] > 0) {
+          updateNumericInput(session, nid, value = as.integer(op[[s]]))
+        }
+      }
+      # mode == NA -> species not outplanted; leave both cells as-is.
+    }
+  }, ignoreInit = TRUE)
 
   # Hovered-pip Restored readout. Persists until the next pip hover.
   rt_restored_hover <- reactiveVal(NULL)
