@@ -2321,9 +2321,9 @@ body <- dashboardBody(
     tabItem(
       tabName = "projections",
       fluidRow(
-        column(10,
-          tags$img(src = "persistenceExample.jpg", width = "1300px", height = "900px")
-        ),
+        # column(10,
+        #   tags$img(src = "persistenceExample.jpg", width = "1300px", height = "900px")
+        # ),
         column(2,
           HTML("<span style = 'font-size: 48px;'><strong>Coming soon!</strong></span>")
         )
@@ -2500,28 +2500,31 @@ body <- dashboardBody(
               grid = TRUE
             )
           ),
-          shinydashboard::box(
-            id = "mort_opt_box",
-            title = "Additional Mortality (optional)",
-            width = 12,
-            status = "danger",
-            collapsible = TRUE,
-            collapsed = TRUE,
-            solidHeader = TRUE,
-            sliderInput("mort_adj", tags$strong("Chronic Mortality (%)"),
-              min = -10, max = 10, value = 0, step = 1
-            ),
-            sliderInput("mort_adj", tags$strong("Episodic Mortality (%)"),
-              min = -10, max = 10, value = 0, step = 1
-            ),
-            sliderTextInput(
-              inputId = "mort_events",
-              label = tags$strong("Episodic Mortality (Events / 5 years)"),
-              choices = c(0, 1, 2, 5),
-              selected = 0,
-              grid = TRUE
-            )
-          )
+
+          # Temporarily removed:
+
+          # shinydashboard::box(
+          #   id = "mort_opt_box",
+          #   title = "Additional Mortality (optional)",
+          #   width = 12,
+          #   status = "danger",
+          #   collapsible = TRUE,
+          #   collapsed = TRUE,
+          #   solidHeader = TRUE,
+          #   sliderInput("mort_adj", tags$strong("Chronic Mortality (%)"),
+          #     min = -10, max = 10, value = 0, step = 1
+          #   ),
+          #   sliderInput("mort_adj", tags$strong("Episodic Mortality (%)"),
+          #     min = -10, max = 10, value = 0, step = 1
+          #   ),
+          #   sliderTextInput(
+          #     inputId = "mort_events",
+          #     label = tags$strong("Episodic Mortality (Events / 5 years)"),
+          #     choices = c(0, 1, 2, 5),
+          #     selected = 0,
+          #     grid = TRUE
+          #   )
+          # )
         )
       ),
 
@@ -4038,7 +4041,7 @@ server <- function(input, output, session) {
     s <- input$add_baseline_species
     req(nzchar(s))
     cur <- baseline_species_list()
-    if (!(s %in% cur)) baseline_species_list(c(cur, s))
+    if (!(s %in% cur)) baseline_species_list(c(s, cur))
     # Reset the picker so the same species can't stack + the placeholder returns
     updateSelectizeInput(session, "add_baseline_species", selected = "")
   }, ignoreInit = TRUE)
@@ -6061,29 +6064,29 @@ output$restoration_mix_inputs <- renderUI({
                                     "<br>RAP: ", round(RAP, 2), " mm/yr",
                                     "<br>Coral cover: ", round(cover, 1), " %",
                                     "<br>Budget: ", round(budget, 2), " kg/m\u00b2/yr")),
-                  color = "forestgreen", linewidth = 1.4) +
+                  color = "#7b3fbf", linewidth = 1.4) +
         {
           if (calc_uncert_available &&
               all(c("RAP_min", "RAP_max") %in% names(ms))) {
             list(
               geom_ribbon(aes(ymin = RAP_min, ymax = RAP_max),
-                  fill = "forestgreen", alpha = 0.20
+                  fill = "#7b3fbf", alpha = 0.20
               ),
               geom_line(aes(y = RAP_min, group = 91,
                             text = paste0("Lower bound",
                                           "<br>RAP: ", round(RAP_min, 2), " mm/yr")),
-                        color = "forestgreen", alpha = 0.6, linewidth = 0.7),
+                        color = "#7b3fbf", alpha = 0.6, linewidth = 0.7),
               geom_line(aes(y = RAP_max, group = 92,
                             text = paste0("Upper bound",
                                           "<br>RAP: ", round(RAP_max, 2), " mm/yr")),
-                        color = "forestgreen", alpha = 0.6, linewidth = 0.7)
+                        color = "#7b3fbf", alpha = 0.6, linewidth = 0.7)
             )
           }
         } +
         geom_point(aes(y = RAP, text = paste0(
                         ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
                         "<br>RAP: ", round(RAP, 2), " mm/yr")),
-                   color = "forestgreen", size = 3) +
+                   color = "#7b3fbf", size = 3) +
         scale_x_continuous(breaks = x_vals, labels = x_labels) +
         scale_y_continuous(limits = c(y_lo, y_hi),
                            breaks = rap_axis_breaks(y_lo, y_hi)) +
@@ -6119,7 +6122,7 @@ output$restoration_mix_inputs <- renderUI({
         geom_line(aes(y = RAP, group = 1,
                       text = paste0("Year ", Year,
                                     "<br>RAP: ", round(RAP, 2), " mm/yr")),
-                  color = "forestgreen", linewidth = 1.4) +
+                  color = "#7b3fbf", linewidth = 1.4) +
         scale_x_continuous(breaks = years) +
         scale_y_continuous(limits = c(y_lo, y_hi),
                            breaks = rap_axis_breaks(y_lo, y_hi)) +
