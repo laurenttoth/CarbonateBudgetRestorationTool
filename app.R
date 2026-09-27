@@ -99,6 +99,8 @@ mortality_partial <- read.csv(here("data", "Mortality_Rates_Partial_Browne_et_al
 # Morph-specific chronic whole-colony mortality rates (for annual colony loss)
 # (Rate is typically negligible but could make an impact if simulating thousands of colonies)
 mortality_whole <- read.csv(here("data", "Mortality_Rates_WholeColony_Browne_et_al_2026.csv"))
+# Species- and region-specific degree-heating-week-driven percent-cover loss relationships
+sp_dhw_slopes <- read.csv(here("data", "Species_DHW_Slopes_Webb.csv"))
 
 # Species-specific bioerosion rate lookups (Monitoring tab) ----
 # Three sheets: "Parrotfish", "Urchins", "Sponges". Read at startup so the
@@ -475,6 +477,41 @@ dhw_slope_lookup_fk <- tibble::tribble(
   "Millepora",      0.50
 )
 
+
+# Retrieve degree-heating-week percent-loss slope from Webb's data.
+# Handle missing species and regions.
+get_dhw_slope <- function(s, subregion) {
+  if (grepl("Keys", subregion, fixed = TRUE)) {
+    region <- "Florida Keys"
+  } else if (subregion == "DryTortugas") {
+    region <- "Dry Tortugas"
+  } else {
+    region <- "?"
+  }
+
+  sp_dhw_slopes_region <- sp_dhw_slopes[sp_dhw_slopes$Region == region, ]
+
+  if (length(sp_dhw_slopes_region == 0)) { # Use region-generic rate if region not present.
+    sp_dhw_slopes_region <- sp_dhw_slopes[sp_dhw_slopes$Region == "Cross-region", ]
+  }
+
+  sp_dhw_slope <- sp_dhw_slopes_region$Slope[sp_dhw_slopes_region$Species == s]
+
+  if (is.null(sp_dhw_slope)) { # If species not found, look for a species-generic rate
+    sp_dhw_slope <- sp_dhw_slopes_region$Slope[sp_dhw_slopes_region$Species == paste(genus, "spp.")]
+  }
+
+  if (is.null(sp_dhw_slope)) { # If still not found, use mean rate
+    sp_dhw_slope <- sp_dhw_slopes_region$mean_slope[1]
+  }
+
+  if (sp_dhw_slope > 0) { # Set to 0 if slope is positive
+    sp_dhw_slope <- 0
+    }
+
+  sp_dhw_slope
+}
+
 # Post-bleaching production-loss vector:
 # Reductions applied the 1st .. 4th years after bleaching occurs
 pbr <- c(0.60, 0.35, 0.15, 0.05)
@@ -723,7 +760,7 @@ baseline_bioerosion_RAP <- function(bg_df, site_area, uc_pct, be_micro_rate, mac
 # UNITS NOTE: `carb_accr` is a whole-patch flux (kg CaCO3/yr). RAP normalizes it to
 # a per-m2 basis by dividing by site_area before the /2.9/(1-por) conversion.
 # ----------------------------------------------------------------------------
-simulate_growth <- function(group, species, colony_count, colony_diam, duration,
+simulate_growth <- function(group, subregion, species, colony_count, colony_diam, duration,
                             site_area, uc_pct, macrobioerosion,
                             bleaching_severity, bleaching_frequency,
                             exceedance = NULL, check_sanity = FALSE
@@ -732,8 +769,9 @@ simulate_growth <- function(group, species, colony_count, colony_diam, duration,
   # Per-species lookups
   genus        <- stringr::str_split(species, " ")[[1]][1]
   # Species-specific slope of the relationship between degree-heating weeks and percent mortality.
-  sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
-  if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
+  # sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
+  # if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
+  sp_dhw_slope <- get_dhw_slope(species, subregion)
   # Total DHW-driven percent loss converted to proportion
   sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100
   # 30% of the cover loss applied as whole-colony mortality
@@ -1075,7 +1113,7 @@ bioerosion_stdev <- function(subregion, habitat) {
 # Thin wrapper over simulate_growth: loops the selected species (originals
 # only) and sums the per-year RAP + % cover + budget. Porosity from the
 # baseline assemblage.
-run_baseline_growth <- function(site_area, uc_pct, sim_duration,
+run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
                                 bleaching_severity, bleaching_frequency,
                                 baseline_cover_df, progress_cb = NULL) {
 
@@ -1108,7 +1146,7 @@ run_baseline_growth <- function(site_area, uc_pct, sim_duration,
       progress_cb(paste0("Simulating baseline ", abbrev_species(species), "..."))
     }
 
-    sim <- simulate_growth(group = "original", species = species,
+    sim <- simulate_growth(group = "original", subregion = subregion, species = species,
                            colony_count = orig_colonies,
                            colony_diam = sp_diam, duration = n,
                            site_area = site_area, uc_pct = uc_pct,
@@ -1213,7 +1251,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     current_sp_m  <- site_area * (current_sp_pct / 100)
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
 
-    orig_list <- simulate_growth(group = "original", species = species,
+    orig_list <- simulate_growth(group = "original", subregion = subregion, species = species,
                                  colony_count = orig_colonies, colony_diam = sp_diam,
                                  duration = n,
                                  site_area = site_area, uc_pct = uc_pct,
@@ -1283,7 +1321,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     # Remaining target size to grow, after original growth to the HORIZON.
     # Grow this species' originals once to read its area at the horizon year.
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
-    orig_only <- simulate_growth(group = "original", species = species,
+    orig_only <- simulate_growth(group = "original", subregion = subregion, species = species,
                                 colony_count = orig_colonies, colony_diam = sp_diam,
                                 duration = n,
                                 site_area = site_area, uc_pct = uc_pct,
@@ -1310,7 +1348,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       # Iterative solve: find the count that reaches target by the HORIZON year.
       outplant_guess <- 50
 
-      trial <- simulate_growth(group = "outplant", species = species,
+      trial <- simulate_growth(group = "outplant", subregion = subregion, species = species,
                                colony_count = outplant_guess, colony_diam = outplant_diam,
                                duration = rest_horizon + 1,
                                site_area = site_area, uc_pct = uc_pct,
@@ -1338,7 +1376,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         starting_outplant_area <- outplant_guess * (outplant_diam / 2) ^ 2 * pi
         needed_outplant_growth <- sp_to_grow_m - starting_outplant_area
 
-        search_list <- simulate_growth(group = "outplant", species = species,
+        search_list <- simulate_growth(group = "outplant", subregion = subregion, species = species,
                                        colony_count = outplant_guess, colony_diam = outplant_diam,
                                        duration = rest_horizon + 1,
                                        site_area = site_area, uc_pct = uc_pct,
@@ -1373,7 +1411,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         if (n < 0) return(Inf)
         starting_area <- n * (outplant_diam / 2) ^ 2 * pi
         needed        <- sp_to_grow_m - starting_area
-        sl <- simulate_growth(group = "outplant", species = species,
+        sl <- simulate_growth(group = "outplant", subregion = subregion, species = species,
                               colony_count = n, colony_diam = outplant_diam,
                               duration = rest_horizon + 1,
                               site_area = site_area, uc_pct = uc_pct,
@@ -1400,7 +1438,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     log_msg(" Simulating outplanting solution...")
 
     # ---- PHASE 2: run the solved outplant count for the FULL simulation duration ----
-    new_list <- simulate_growth(group = "outplant", species = species,
+    new_list <- simulate_growth(group = "outplant", subregion = subregion, species = species,
                                 colony_count = outplant_guess, colony_diam = outplant_diam,
                                 duration = n,
                                 site_area = site_area, uc_pct = uc_pct,
@@ -4514,6 +4552,7 @@ output$restoration_mix_inputs <- renderUI({
     #tryCatch(
       list(
         run_baseline_growth(
+          subregion = subregion,
           site_area = site_area, uc_pct = unconsolidated_pct_cvr,
           sim_duration = sim_duration,
           bleaching_severity  = .safe_num(input$dhw),
