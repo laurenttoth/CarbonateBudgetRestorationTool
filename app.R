@@ -170,9 +170,29 @@ region_levels <- sort(unique(regions_sf$Region))
 pastel_colors <- colorRampPalette(RColorBrewer::brewer.pal(9, "Pastel1"))(length(region_levels))
 region_pal <- colorFactor(pastel_colors, domain = region_levels)
 
-# Ingest baseline cover data template to retrieve list of taxa
+# Ingest baseline cover data template to retrieve list of taxa.
+# Sort alphabetically.
 taxa <- read_excel_quiet(here("www", "Baseline_Cover_TEMPLATE.xlsx"), sheet = "Taxa")
-taxa <- taxa$Taxon
+taxa <- sort(taxa$Taxon)
+
+suggested_taxa <- c(
+  "Acropora cervicornis",
+  "Acropora palmata",
+  "Orbicella faveolata",
+  "Orbicella annularis",
+  "Montastraea cavernosa",
+  "Pseudodiploria strigosa",
+  "Pseudodiploria clivosa",
+  "Porites astreoides",
+  "Stephanocoenia intersepta",
+  "Siderastrea siderea",
+  "Diploria labryinthinformis",
+  "Orbicella franksi",
+  "Dichocoenia stokesii",
+  "Solenastrea bournoni")
+
+# Remove the suggested taxa from their original indices and place them at the top of the list
+taxa <- c(suggested_taxa, setdiff(taxa, suggested_taxa))
 
 # Ingest NASA Interagency sea-level projections (PSMSL id 1701 (Vaca Key), "Total" sheet)
 slr_raw <- read_excel_quiet(
@@ -2044,7 +2064,6 @@ body <- dashboardBody(
         width: auto; font-size: 13px; font-weight: bold;
         margin-bottom: 2px; padding: 0 4px; border: none;
       }
-      .mix-branching { border: 2px solid #c8a165; margin-left: -10px }   /* tan */
       .mix-branching > legend { color: #a97d3e; }
       .mix-massive   { border: 2px solid #9e9e9e; }   /* gray */
       .mix-massive   > legend { color: #6f6f6f; }
@@ -2054,14 +2073,14 @@ body <- dashboardBody(
       /* Two-line, italic input labels in the mix sub-boxes */
       .mix-fieldset .control-label { font-style: italic; line-height: 1.2; }
 
-      /* Active (user-supplied) mix input: purple border. The class may be
+      /* Active (user-supplied) mix input: blue border. The class may be
          applied to the numericInput's wrapper OR directly to the <input>
          depending on Shiny version, so target both the element itself when it
          is an input and any descendant input. */
       .mix-active-input input,
       input.mix-active-input {
-        border: 2px solid #7b3fbf !important;
-        box-shadow: 0 0 0 1px #7b3fbf33 !important;
+        border: 2px solid #2C8CB9 !important;
+        box-shadow: 0 0 0 1px #2C8CB933 !important;
       }
       body.dark-mode .mix-active-input input,
       body.dark-mode input.mix-active-input {
@@ -2283,6 +2302,7 @@ body <- dashboardBody(
     # dynamically-rendered inputs (tabs, uiOutput) also receive their titles.
     tags$script(HTML("
       var RPT_TIPS = {
+        'baseline_template_dl': 'Download a template input .xlsx file.',
         'baseline_site': 'Select an uploaded survey site, or type a name to build a scenario from scratch.',
         'site_area_m2': 'Total planar area of the reef patch being modeled, in square meters.',
         'site_latitude': 'Site latitude in decimal degrees (optional; used for mapping).',
@@ -2537,81 +2557,92 @@ body <- dashboardBody(
                   selected = ""
                 ),
                 tags$hr(),
-                tags$div(
+                column(3,
+                  tags$div(
                   style = "display:flex; justify-content:center; margin:4px 0;",
                   downloadButton("baseline_save_dl", "Save baseline",
                                 icon = icon("floppy-disk"), class = "btn-sm")
+                  )
                 ),
-                tags$div(
-                  style = "display:flex; gap:8px; align-items:flex-end;",
+                column(2),
+                column(3,
                   actionButton("baseline_delete_cache", "Clear cache",
-                                icon = icon("trash"), class = "btn-sm"),
+                                icon = icon("trash"), class = "btn-sm")
+                ),
+                column(1),
+                column(3,
                   actionButton("reset_mix", "Reset targets",
-                                icon = icon("eraser"), class = "btn-sm")
-
+                  icon = icon("eraser"), class = "btn-sm")
                 )
+              #  tags$div(
+              #    style = "display:flex; gap:8px; align-items:flex-end;",
+              #   )
               ),
 
               # Right: 4-column Restoration mix grid
               column(
                 width = 9,
-                tags$div(style = "text-align:center;", tags$strong("Restoration mix")),
-                # Column headers
-                tags$div(
-                  class = "mix-grid-header",
-                  style = "display:flex; align-items:flex-end; gap:6px;
-                            font-weight:bold; font-size:12px; margin:4px 30px 0px 0;",
-                  tags$div(style = "flex:0 0 auto; width:28px;", ""),
-                  tags$div(style = "flex: 2 1 0;",
-                    tags$div(style = "text-align:center;",
-                      tags$div("Additional outplanting years"),
-                      textInput("additional_outplant_years", label = NULL,
-                                value = "", placeholder = "e.g. 3, 5, 10", width = "100%")
-                    )
+                tags$div(class = "mix-grid",
+                  style = "border: 2px solid #2C8CB9; border-radius: 8px; padding: 8px",
+                  tags$div(style = "text-align:center;", tags$strong("Restoration Mix")),
+                  # Column headers
+                  tags$div(
+                    class = "mix-grid-header",
+                    style = "display:flex; align-items:flex-end; gap:6px;
+                              font-weight:bold; font-size:12px; margin:4px 30px 0px 0;",
+                    tags$div(style = "flex:0 0 auto; width:28px;", ""),
+                    tags$div(style = "flex: 2 1 0;",
+                      tags$div(style = "text-align:center;",
+                        tags$div("Additional outplanting years"),
+                        textInput("additional_outplant_years", label = NULL,
+                                  value = "", placeholder = "e.g. 3, 5, 10", width = "100%")
+                      )
+                    ),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Current (baseline) percent cover for this species at the site.",
+                      uiOutput("mix_baseline_header")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Desired total percent cover for this species. Drives the outplant solve when this is the active (blue) input.",
+                      uiOutput("mix_target_header")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Average starting diameter of each outplanted fragment, in centimeters.",
+                      HTML("Avg. outplant<br/>diameter (cm)<br/><br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Average cost per outplant, used to compute total project cost.",
+                      HTML("Avg. outplant<br/>cost ($)<br/><br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Number of outplants (or clusters). Drives the projection when this is the active (blue) input.",
+                      HTML("Outplants<br/><br/><br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Optional: plants per cluster. Outplants are grouped into clusters of this size, each simulated as a single colony packed with a 0.5 cm inter-plant gap.",
+                      HTML("Outplants per<br/>cluster<br/>(optional)<br/> ")),
+                    tags$div(style = "flex: 1 1 0; text-align:center;",
+                      title = "Read-only: this species' projected percent cover at the end of the simulation duration (all outplant efforts summed, post-cap).",
+                      HTML("Final cover<br/>(%)<br/><br/> "))
                   ),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Current (baseline) percent cover for this species at the site.",
-                    uiOutput("mix_baseline_header")),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Desired total percent cover for this species. Drives the outplant solve when this is the active (purple) input.",
-                    uiOutput("mix_target_header")),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Average starting diameter of each outplanted fragment, in centimeters.",
-                    HTML("Avg. outplant<br/>diameter (cm)<br/><br/> ")),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Average cost per outplant, used to compute total project cost.",
-                    HTML("Avg. outplant<br/>cost ($)<br/><br/> ")),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Number of outplants (or clusters). Drives the projection when this is the active (purple) input.",
-                    HTML("Outplants<br/><br/><br/> ")),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Optional: plants per cluster. Outplants are grouped into clusters of this size, each simulated as a single colony packed with a 0.5 cm inter-plant gap.",
-                    HTML("Outplants per<br/>cluster<br/>(optional)<br/> ")),
-                  tags$div(style = "flex: 1 1 0; text-align:center;",
-                    title = "Read-only: this species' projected percent cover at the end of the simulation duration (all outplant efforts summed, post-cap).",
-                    HTML("Final cover<br/>(%)<br/><br/> "))
+                  div(
+                    style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
+                    uiOutput("restoration_mix_inputs")
+                  )
                 ),
-                div(
-                  style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
-                  uiOutput("restoration_mix_inputs")
-                ),
+                
                 tags$hr(),
 
                 # "Run Simulation" group (unboxed)
-                tags$div(style = "display:flex; gap:10px; justify-content:center",
+                tags$div(style = "display:flex; gap:10px; align-items:center; justify-content:flex-end",
                   textInput("scenario_project", tags$strong("Project name"), value = ""),
                   textInput("scenario_name", tags$strong("Scenario name"), value = ""),
                   actionButton("save_scenario", "Save result", icon = icon("floppy-disk")),
-                  tags$div(
-                    style = "padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
-                    materialSwitch("reactive_sim", HTML("<strong>Reactive simulation</strong>"),
-                      value = FALSE, status = "primary", right = TRUE, inline = TRUE)
-                  ),
-                  tags$div(
-                    style = "display:flex; align-items:center; justify-content:flex-end;
-                            padding:4px 5px; margin:-10px 0px;",
-                    actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
-                  )
+                  #tags$div(
+                    #style = "padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
+                  materialSwitch("reactive_sim", HTML("<strong>Reactive<br/>simulation</strong>"),
+                    value = FALSE, status = "primary", right = TRUE, inline = TRUE),
+                  #),
+                  #tags$div(
+                   # style = "display:flex; align-items:center; justify-content:flex-end;
+                    #        padding:4px 5px; margin:-10px 0px;",
+                  actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
+                  #)
                 )
               )
             )
@@ -2660,7 +2691,7 @@ body <- dashboardBody(
           )
         )
 
-        # Temporarily removed:
+        # Temporarily removed placeholders:
 
         # shinydashboard::box(
         #   id = "mort_opt_box",
@@ -2752,8 +2783,8 @@ body <- dashboardBody(
     # Main:    cost bar, ROI bar, per-scenario RAP bar
     tabItem(
       tabName = "comparison",
-      # Top row: Scenario Selection (left) + comparison DT table (right)
       fluidRow(
+      # Top row: Selection, Project Cost + ROI, RAP by scenario
         column(
           width = 3,
           shinydashboard::box(
@@ -2769,41 +2800,23 @@ body <- dashboardBody(
           )
         ),
         column(
-          width = 9,
+          width = 3,
           shinydashboard::box(
-            title = "Scenario Comparison", width = 12,
+            title = "Project Cost", width = 12,
             status = "info", solidHeader = TRUE,
-            div(style = "overflow-x: auto;",
-              DT::DTOutput("sc_compare_dt")
-            )
-          )
-        )
-      ),
-      # Bottom row: Project Cost + ROI (left half) | RAP by scenario (right half)
-      fluidRow(
-        column(
-          width = 6,
-          fluidRow(
-            column(
-              width = 6,
-              shinydashboard::box(
-                title = "Project Cost", width = 12,
-                status = "info", solidHeader = TRUE,
-                plotOutput("sc_cost_bar", height = "300px")
-              )
-            ),
-            column(
-              width = 6,
-              shinydashboard::box(
-                title = "Return on Investment", width = 12,
-                status = "info", solidHeader = TRUE,
-                plotOutput("sc_roi_bar", height = "300px")
-              )
-            )
+            plotOutput("sc_cost_bar", height = "300px")
           )
         ),
         column(
-          width = 6,
+          width = 3,
+          shinydashboard::box(
+            title = "Return on Investment", width = 12,
+            status = "info", solidHeader = TRUE,
+            plotOutput("sc_roi_bar", height = "300px")
+          )
+        ),
+        column(
+          width = 3,
           shinydashboard::box(
             title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
             status = "success", solidHeader = TRUE,
@@ -2811,6 +2824,14 @@ body <- dashboardBody(
               checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
             ),
             plotly::plotlyOutput("sc_rap_bar", height = "350px")
+          )
+        ),
+        # Bottom row: Comparison DT table
+        shinydashboard::box(
+          title = "Scenario Comparison", width = 12,
+          status = "info", solidHeader = TRUE,
+          div(style = "overflow-x: auto;",
+            DT::DTOutput("sc_compare_dt")
           )
         )
       )
@@ -4432,7 +4453,7 @@ output$restoration_mix_inputs <- renderUI({
       )
     })
 
-    remaining <- setdiff(sort(unique(taxa)), sp)
+    remaining <- setdiff(unique(taxa), sp)
     if (rus %in% remaining) {
       remaining <- c(rus, remaining[remaining != rus])
     }
@@ -4511,9 +4532,9 @@ output$restoration_mix_inputs <- renderUI({
   # priority on re-run.
   mix_active_mode <- reactiveValues()
 
-  # Toggle the purple border to match a species' active mode. Called after every
+  # Toggle the blue border to match a species' active mode. Called after every
   # user edit and on load-time seeding.
-  # Toggle the purple border for one species. `mode` is passed in (read by the
+  # Toggle the blue border for one species. `mode` is passed in (read by the
   # caller inside a reactive context) so this is safe to call from deferred
   # (later::later) callbacks, which have no reactive context.
   paint_mix_border <- function(s, mode) {
@@ -5496,7 +5517,7 @@ output$restoration_mix_inputs <- renderUI({
       )
 
       write.csv(d, here("cache", "combined_data.csv"))
-      pips <- d[d$Year %in% c(1, 5, 10, 20, 50, 100, dur), ]
+      pips <- d[d$Year %in% c(0, 1, 5, 10, 20, 50, 100, dur), ]
 
       y_lo <- rap_axis_min(min(d$RAP_orig, na.rm = TRUE))
       rap_top <- max(c(d$RAP_total, d$RAP_total_max), na.rm = TRUE)
