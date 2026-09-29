@@ -148,7 +148,7 @@ The observed data are used to calculate the site's reef accretion potential over
 
 #### Calcifier Data
 
-This tab contains a searchable, sortable table with all available species- and genus-level growth, calcification, and mortality data fed into the simulation.
+This tab contains a searchable, sortable, filterable table with all available species- and genus-level growth, calcification, and mortality data fed into the simulation.
 
 ### About this App
 

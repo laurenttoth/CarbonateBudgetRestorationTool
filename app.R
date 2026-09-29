@@ -534,7 +534,7 @@ get_dhw_slope <- function(s, subregion) {
     sp_dhw_slope <- 0
     }
 
-  sp_dhw_slope
+  - sp_dhw_slope # Functions are built to interpret positive values as loss percentages.
 }
 
 # Post-bleaching production-loss vector:
@@ -673,7 +673,7 @@ build_calcifier_table <- function(subregion) {
     "Avg. Colony Diam.\n(cm)",
     "Mortality per DHW\n(%)",
     "Outplant Mortality\n(%)",
-    "Outplant Mortality\nSE"
+    "Outplant Mortality\nSE (%)"
   )
   colnames(out) <- col_names
   out[num_cols] <- lapply(out[num_cols], function(x) round(x, 3))
@@ -2327,7 +2327,7 @@ body <- dashboardBody(
         'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
         'sc_refresh': 'Re-scan the scenarios folder and update the list of options.',
         'sc_download_csv': 'Download the Comparison Table as a .csv file.',
-        'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the chart.',
+        'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
         'monitoring_cover_template_dl': 'Download a template cover-monitoring-input .xlsx file.',
         'cover_load_example': 'Upload example cover-monitoring data.',
         'monitoring_bioerosion_template_dl': 'Download a template bioerosion-monitoring-input .xlsx file.',
@@ -2564,28 +2564,7 @@ body <- dashboardBody(
                   label = tags$strong("Habitat"),
                   choices = c("\u2013 Select habitat \u2013" = ""),
                   selected = ""
-                ),
-                tags$hr(),
-                column(3,
-                  tags$div(
-                  style = "display:flex; justify-content:center; margin:4px 0;",
-                  downloadButton("baseline_save_dl", "Save baseline",
-                                icon = icon("floppy-disk"), class = "btn-sm")
-                  )
-                ),
-                column(2),
-                column(3,
-                  actionButton("baseline_delete_cache", "Clear cache",
-                                icon = icon("trash"), class = "btn-sm")
-                ),
-                column(1),
-                column(3,
-                  actionButton("reset_mix", "Reset targets",
-                  icon = icon("eraser"), class = "btn-sm")
                 )
-              #  tags$div(
-              #    style = "display:flex; gap:8px; align-items:flex-end;",
-              #   )
               ),
 
               # Right: 7-column Restoration mix grid
@@ -2634,24 +2613,35 @@ body <- dashboardBody(
                     style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
                     uiOutput("restoration_mix_inputs")
                   )
-                ),
-                tags$hr(),
+                )
+              ),
 
-                # "Run Simulation" group (unboxed)
-                tags$div(style = "display:flex; gap:10px; align-items:center; justify-content:flex-end",
-                  textInput("scenario_project", tags$strong("Project name"), value = ""),
-                  textInput("scenario_name", tags$strong("Scenario name"), value = ""),
-                  actionButton("save_scenario", "Save result", icon = icon("floppy-disk")),
-                  #tags$div(
-                    #style = "padding:10px 4px 5px 4px; margin:-10px -20px -10px 20px;",
-                  materialSwitch("reactive_sim", HTML("<strong>Reactive<br/>simulation</strong>"),
-                    value = FALSE, status = "primary", right = TRUE, inline = TRUE),
-                  #),
-                  #tags$div(
-                   # style = "display:flex; align-items:center; justify-content:flex-end;
-                    #        padding:4px 5px; margin:-10px 0px;",
-                  actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
-                  #)
+              # Bottom row: function buttons and scenario naming
+              fluidRow(
+                column(12,
+                  tags$hr(),
+                  column(3,
+                    tags$div(
+                      style = "display:flex; gap:30px; margin-top:25px; align-items:center; justify-content:flex-start",
+                      downloadButton("baseline_save_dl", tags$strong("Save baseline"),
+                        icon = icon("floppy-disk"), class = "btn-sm"),
+                      actionButton("baseline_delete_cache", tags$strong("Clear cache"),
+                        icon = icon("trash"), class = "btn-sm"),
+                      actionButton("reset_mix", tags$strong("Reset targets"),
+                        icon = icon("eraser"), class = "btn-sm")
+                    )
+                  ),
+                  # Save and run scenario
+                  column(9,
+                    tags$div(style = "display:flex; gap:15px; align-items:center; justify-content:flex-end",
+                      textInput("scenario_project", tags$strong("Project name"), value = ""),
+                      textInput("scenario_name", tags$strong("Scenario name"), value = ""),
+                      actionButton("save_scenario", tags$strong("Save result"), icon = icon("floppy-disk")),
+                      materialSwitch("reactive_sim", HTML("<strong>Reactive<br/>simulation</strong>"),
+                        value = FALSE, status = "primary", right = TRUE, inline = TRUE),
+                      actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
+                    )
+                  )
                 )
               )
             )
@@ -2849,7 +2839,8 @@ body <- dashboardBody(
     tabItem(
       tabName = "monitoring",
       fluidRow(
-        # Sidebar (left)
+        # Top row:
+        # Input selection (left)
         column(
           width = 3,
           shinydashboard::box(
@@ -2904,7 +2895,7 @@ body <- dashboardBody(
             )
           )
         ),
-        # Main content (right)
+        # Main content: restoration impact (right)
         column(
           width = 9,
           # Baseline vs restored impact
@@ -2937,16 +2928,17 @@ body <- dashboardBody(
                 )
               )
             )
-          ),
-          # Timeline
-          shinydashboard::box(
-            title = "Reef Accretion Potential", width = 12,
-            status = "success", solidHeader = TRUE,
-            tags$div(style = "font-weight:normal; margin-bottom:4px;",
-              checkboxInput("monitoring_show_slr", "Display SLR projections", value = FALSE)
-            ),
-            plotly::plotlyOutput("monitoring_timeline", height = "350px")
           )
+        ),
+
+        # Bottom row: timeline
+        shinydashboard::box(
+          title = "Reef Accretion Potential", width = 12,
+          status = "info", solidHeader = TRUE,
+          tags$div(style = "font-weight:normal; margin-bottom:4px;",
+            checkboxInput("monitoring_show_slr", "Display SLR projections", value = FALSE)
+          ),
+          plotly::plotlyOutput("monitoring_timeline", height = "350px")
         )
       )
     ),
@@ -2959,7 +2951,7 @@ body <- dashboardBody(
         status = "primary", solidHeader = TRUE,
         tags$p("All per-species reference data feeding the growth model. ",
                "Click any column header to sort. Species without a direct ",
-               "record inherit morphology-class values where applicable."),
+               "record inherit genus- or morphology-level values where applicable."),
         tags$hr(),
         DT::DTOutput("calcifier_dt")
       )
@@ -4486,10 +4478,10 @@ output$restoration_mix_inputs <- renderUI({
       "add_baseline_species", label = NULL,
       choices = c("+ Add species..." = "", remaining),
       selected = "",
-      options = list(placeholder = "+ Add species...")
+      options = list(placeholder = "+ Add species...                                   ")
     )
 
-    tagList(tags$div(style = "margin-top: 6px;", picker), rows)
+    tagList(tags$div(style = "margin-top: 6px; display:flex; justify-content:flex-start", picker), rows)
   })
 
   # Helper: species in the mix that are true corals (exclude UC).
