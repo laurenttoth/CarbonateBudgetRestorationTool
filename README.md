@@ -32,71 +32,123 @@ Aspects of the map display can be manipulated with the collapsible `Map Controls
 
 - Use the `Point size` +/- control to adjust the size of the points.
 
-### Restoration Planning
+### Management Interventions
+
+This tab group contains tabs designed to aid restoration managers in constructing, comparing, and monitoring restoration strategies.
+
+Expand and collapse this group using the chevron icon.
+
+#### Outplanting Scenarios
 
 Use this tab to simulate a restoration effort at a reef site. Follow these steps to run a simulation:
 
-1. Genus- or species-level coral cover survey data at the target site is required to begin the simulation. This cover is used as the baseline assemblage for the simulation. There are two ways to enter survey data:
+1. Genus- or species-level coral cover survey data at the target site is required to begin the simulation. This cover is used as the baseline assemblage for the simulation. There are two ways to enter survey data:  
 
-    **(a) File upload:** In the Baseline Cover group, use the `Download template` button to download a baseline cover template Excel workbook to aid in data entry. See the `README` sheet of this workbook for more information. For an example of a complete data file, see `Baseline_Cover_EXAMPLE.xlsx`, included in the `www` folder of the repository.  
+    **(a) File upload:** In the Restoration Scenario box, use the `↓Template` button to download a baseline cover template Excel workbook to aid in data entry. See the `README` sheet of this workbook for more information.
 
-    **IMPORTANT: Do not edit the `*_TEMPLATE.xlsx` files in the `www` folder.** These are the master copies. Always use the `Download template` button to retrieve a fresh template.
+    - For an example of a complete data file, see `Baseline_Cover_EXAMPLE.xlsx`, included in the `www` folder of the repository. Automatically upload this example data by clicking the `↑Example` button.
 
-    Fill out the template, save it under a new name, and load it using the `Load from file` input in the `Baseline Cover` section. Input parameters will be populated automatically based on the contents of the uploaded file.
+    - **IMPORTANT: Do not edit the `*_TEMPLATE.xlsx` files in the `www` folder.** These are the master copies. Always use the `↓Template` button to retrieve a fresh template.
 
-    A copy of the most recently uploaded baseline cover file will be cached in a `cache` folder created where `app.R` is stored. The cached file is automatically re-uploaded on the next launch. Use the `Clear cache` button to delete the cached file (the original file will be unaffected).
+    - Fill out the template, save it under a new name, and load it using the `Load .xlsx` input. Input parameters will be populated automatically based on the contents of the uploaded file.
+
+    - A copy of the most recently uploaded baseline cover file is cached in a `cache` folder created where `app.R` is stored. The cached data can be re-uploaded by clicking the `↑Cache` button. Use the `Clear cache` button to delete the cached file (the original file will be unaffected).
 
     **(b) Create from scratch:** Use the inputs to name the site and designate its location, area, subregion, habitat, and baseline cover. Use the `Save baseline` button to save the scratch inputs in an `.xlsx` file which can be uploaded to the app in a subsequent session. Once the saved from-scratch `.xlsx` is uploaded, its data will be cached.
 
-2. Designate the post-restoration percent-cover targets per species using the inputs in the `Species Mix` section of the `Restoration Parameters` box. When a target percent-cover is designated for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed beneath the input.
+2. Use the inputs in the `Restoration Mix` section of the `Restoration Scenario` box to designate the desired outcome, or the resources available for the restoration effort. There are two modes which drive the restoration simulation:  
 
-3. Manipulate additional restoration variables by using the sliders and text inputs in the `Restoration Parameters`' `Outplanting Strategy` section:  
+    - **(a) Target cover:** When a target percent-cover is provided for a species, the number of outplants required to meet the target in the given scenario is calculated and displayed in the appropriate Outplants cell.  
 
-    **Avg. outplant diameter:** The average starting diameter of the outplants, in centimeters.
+    - **(b) Outplant count:** When an initial outplant count is provided, the simulation will estimate the projected cover that may be achieved using that number of outplants. The count-driven simulation has two submodes:  
 
-    **Avg. outplant cost:** The average cost of each outplant, in dollars.
+      - **(i) Single-year (default):** Assumes a single outplanting effort at Year 0.
 
-    **Restoration horizon:** The number of years post-restoration by when the target percent-cover should be reached.
+      - **(ii) Multi-year:** Allows for multiple outplanting efforts with unique cost, count, and diameter prarameters during the simulation. To use this submode, enter a comma-delineated list of extra years in the `Additional outplanting years` input box alongside the grid headers. If an `Outplants` count is provided for a species in the `Restoration Mix`, that species' record will turn into a dropdown containing additional input rows for the extra outplanting years. Click the chevron next to the species' `Baseline cover` cell to expand and collapse the record.  
 
-    **Simulation duration:** The number of years post-restoration that the simulation should last. Can exceed the `Restoration horizon` so the long-term effect of the restoration plan may be observed.
+        - **Note:** this submode **does not work** for species with a user-input `Target cover` cell. The only way to calculate the number of outplants required to reach a target cover percentage is to assume a single outplanting effort.
 
-4. Account for coral bleaching mortality and growth stress by manipulating variables in the `Bleaching Scenario` box:
+    Use the `Reset targets` button to clear all values in the `Restoration Mix` except the `Baseline cover`.
 
-    **Degree-Heating Weeks:** The cumulative heat stress expected each year, in degree-heating weeks.
+3. Manipulate additional restoration variables by using the other input cells in the `Restoration Mix` grid:  
 
-    **Events / 5 years:** The number of bleaching events expected per five years.
+    - **Avg. outplant diameter:** The average starting diameter of the outplants, in centimeters.
 
-5. View the simulation and its predicted cost in the `Projected Reef Accretion Potential (RAP)` timeline.
+    - **Avg. outplant cost:** The average cost of each outplant, in dollars.
 
-6. After building the scenario, save it by scrolling to the bottom of the page and using the `Save Scenario` section. Enter the name of the project and scenario, and click `Save`. The scenario will be saved as `{project}__{scenario}.json` in an automatically-generated `scenarios` folder wherever app.R is stored.  
+    - **Outplants per cluster (optional):** The number of outplants in a cluster, if restoring using a clustered-outplant method. If blank or <= 1, each outplant is considered its own colony. Otherwise, the cluster is the colony, with a diameter calculated as follows:
 
-    **IMPORTANT: Saved scenarios' filenames may be edited, but retain the double-underscore between the project and scenario labels.** The app uses this convention to automatically recognize and differentiate projects and scenarios.
+    ```r
+    plants_in_cluster_diam <- ceiling(sqrt(opc))
+    cluster_diam <- (plants_in_cluster_diam * colony_diam) +
+                    (0.5 * (plants_in_cluster_diam - 1))  
+    ```
 
-### Scenario Comparison
+    where `opc` is "outplants per cluster". A half-centimeter gap is included between each fragment in the cluster.
 
-Use this tab to compare cost, return-on-investment, and projected reef accretion potential across scenarios created in the `Restoration Planning` tab.
+4. Define the target-achievement year, and the duration of the simulation:
+
+   - **Restoration horizon:** The number of years post-restoration by when the target percent-cover should be achieved.
+
+   - **Simulation duration:** The number of years post-restoration that the simulation should last. Can exceed the `Restoration horizon` so the long-term effect of the restoration plan may be observed.
+
+5. Account for coral bleaching mortality and growth stress by manipulating variables in the `Bleaching Scenario` box:
+
+   - **Degree-Heating Weeks:** The cumulative heat stress expected each year, in degree-heating weeks.
+
+   - **Events / 5 years:** The number of bleaching events expected per five years.
+
+6. Run the simulation by clicking the `Simulate` button. Optionally, enable `Reactive simulation` to automatically run the simulation whenever any input value is changed.
+
+7. View the results: The projected percent cover for each species at the end of the simulation is reported in the `Final cover (%)` grid column.  
+
+    Scroll down to view the simulation's growth results and predicted cost in the `Projected Reef Accretion Potential (RAP)` timeline.
+
+8. Optionally, save the result of the constructed scenario. Enter the name of the project and scenario in the `Project name` and `Scenario name` inputs, and click `Save`. The scenario will be saved as `{project}__{scenario}.json` in an automatically-generated `scenarios` folder wherever `app.R` is stored.  
+
+    A suggested scenario name is automatically constructed using the input values, using the following convention:  
+
+    ```r
+    "{dominant species agricode}_{bleaching frequency}B_{degree-heating weeks}DHW_{restoration horizon}_{simulation duration}"
+    ```  
+
+    e.g.:
+
+    ```r
+    "Acer_2B_16DHW_10_20"
+    ```
+
+    for a scenario whose dominant species is *Acropora cervicornis*, with 2 bleaching events every 5 years at 16 dgree-heating weeks, and a restoration horizon of 10 years, simulated for 20 years.
+
+    **IMPORTANT: Saved scenarios' filenames may be edited, but the double-underscore between the project and scenario labels must be retained.** The app uses this convention to automatically recognize and differentiate projects and scenarios.
+
+#### Scenario Comparison
+
+Use this tab to compare cost, return-on-investment, and projected reef accretion potential across scenarios created in the `Outplanting Scenarios` tab.
 
 The app will automatically detect scenarios saved in the `scenarios` folder. Use the `Project name` dropdown to switch between projects, if more than one is present. By default, the first discovered project is loaded in the dropdown, and all of that project's scenarios are enabled for comparison. Toggle the scenarios on and off as desired.
 
 Use the `Refresh list` button to re-scan the `scenarios` folder and refresh the available projects and scenarios.
 
-Use the `Download report` button to download a `.csv` file which summarizes the selected scenarios. The `.csv` contains a record for each scenario in the report.
+A summary table is displayed below the comparison graphs. Use the `Download report` button to download this table as a `.csv` file.
 
-An `Impact Summary` is displayed for each enabled scenario. Click the carat at the top-right of a Summary to collapse it.
-
-### Restoration Monitoring
+#### Restoration Monitoring
 
 Use this tab to monitor an ongoing restoration effort using observed coral-cover and bioerosion data.
 
 Without observed data, a basic simulation of a restoration effort at an NCRMP site can be "monitored". Growth is modeled as a linear regression between the original percent-cover and the target percent-cover calculated from the target percent-cover increase selected on the `Reef Site Map`. Click a site on the map to select it for this simulated monitoring, or use the `Select site` dropdown in the `Inputs` section of the `Restoration Monitoring` tab.
 
-Use the `Upload coral cover data` and `Upload bioerosion data` to submit observed data for monitoring, if available. Use the `Download template` buttons to download restoration-monitoring and bioerosion template files. See the `README` sheets of these workbook files for more information on data entry. See `Restoration_Monitoring_EXAMPLE.xlsx` and `Bioerosion_EXAMPLE.xlsx` in the repository's `www` folder for examples of a complete set of monitoring observation data.
+Use the `Coral cover .xlsx` and `Bioerosion .xlsx` to submit observed data for monitoring, if available. Use the `↑Example` and `↓Template` buttons to upload example data or download a template, respectively. See the `README` sheets of these workbook files for more information on data entry. See `Restoration_Monitoring_EXAMPLE.xlsx` and `Bioerosion_EXAMPLE.xlsx` in the repository's `www` folder for examples of a complete set of monitoring observation data.
 
 If the observed reports include data for more than one site, use the `Select site` dropdown to select the site to monitor.
 
 A comparison between the Baseline and Restored coral cover, carbonate budget, and reef accretion potential is displayed in the `Baseline vs. Restored Impact` section.
 
 The observed data are used to calculate the site's reef accretion potential over time, which is graphed on the timeline in the `Reef Accretion Potential` section.
+
+#### Calcifier Data
+
+This tab contains a searchable, sortable table with all available species- and genus-level growth, calcification, and mortality data fed into the simulation.
 
 ### About this App
 

@@ -2302,20 +2302,22 @@ body <- dashboardBody(
     # dynamically-rendered inputs (tabs, uiOutput) also receive their titles.
     tags$script(HTML("
       var RPT_TIPS = {
-        'baseline_template_dl': 'Download a template input .xlsx file.',
+        'baseline_template_dl': 'Download a template baseline-input .xlsx file.',
+        'baseline_load_example': 'Upload example baseline data.',
+        'baseline_load_cache': 'Upload cached inputs from the most recent scenario.',
         'baseline_site': 'Select an uploaded survey site, or type a name to build a scenario from scratch.',
         'site_area_m2': 'Total planar area of the reef patch being modeled, in square meters.',
         'site_latitude': 'Site latitude in decimal degrees (optional; used for mapping).',
         'site_longitude': 'Site longitude in decimal degrees (optional; used for mapping).',
-        'subregion_choice': 'Florida reef subregion, used to look up region-specific bioerosion rates.',
+        'subregion_choice': 'Reef subregion, used to look up region-specific bioerosion rates and bleaching-mortality relationships.',
         'habitat_choice': 'Habitat type within the subregion, used to refine bioerosion rates.',
-        'outplant_size': 'Average starting diameter of outplanted coral fragments, in centimeters.',
-        'outplant_cost': 'Estimated cost per outplant, used to compute total project cost.',
+        'additional_outplant_years': 'Comma-separated integer years (after Year 0) at which to place additional outplants for count-driven species. Each year becomes an extra effort row in that species dropdown.'
+        'add_baseline_species': 'Add another species to the Restoration Mix.',
         'sim_duration': 'Number of years to project reef growth into the future.',
         'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting.',
         'dhw': 'Thermal-stress severity of each bleaching event, in degree-heating weeks.',
         'bleach_events': 'How often bleaching occurs, expressed as events per five-year period.',
-        'scenario_project': 'Name grouping related scenarios together for comparison.',
+        'scenario_project': 'A project name which groups related scenarios together for comparison.',
         'scenario_name': 'A label for this specific parameter combination.',
         'reactive_sim': 'When on, the projection recomputes automatically as inputs change.',
         'target_cover_increase': 'Hypothetical increase in coral cover, used to preview restored reef status on the map.',
@@ -2323,9 +2325,17 @@ body <- dashboardBody(
         'show_named_reefs': 'Overlay labeled named-reef polygons on the map.',
         'show_slr': 'Overlay projected sea-level-rise rates on the timeline.',
         'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
+        'sc_refresh': 'Re-scan the scenarios folder and update the list of options.',
+        'sc_download_csv': 'Download the Comparison Table as a .csv file.',
+        'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the chart.',
+        'monitoring_cover_template_dl': 'Download a template cover-monitoring-input .xlsx file.',
+        'cover_load_example': 'Upload example cover-monitoring data.',
+        'monitoring_bioerosion_template_dl': 'Download a template bioerosion-monitoring-input .xlsx file.',
+        'bioerosion_load_example': 'Upload example bioerosion data.',
         'monitoring_show_slr': 'Overlay projected sea-level-rise reference rates on the timeline.',
         'monitoring_selected_site': 'Choose a site to display observed post-restoration monitoring data.',
-        'additional_outplant_years': 'Comma-separated integer years (after Year 0) at which to place additional outplants for count-driven species. Each year becomes an extra effort row in that species dropdown.'
+        'monitoring_download_report': 'Download a report of the monitoring simulation as a .csv file.',
+        'monitoring_clear_cache': 'Delete cached cover- and bioerosion-monitoring data. The original files will be unaffected.',
       };
       function rptSetTitle(el, txt) {
         if (el) el.setAttribute('title', txt);
@@ -2487,7 +2497,6 @@ body <- dashboardBody(
       fluidRow(
         class = "outplant-toprow",
         # ---- Restoration Scenario (baseline cover + per-species mix) ----
-      # column(8,
         shinydashboard::box(
           title = "Restoration Scenario",
           width = 12, status = "primary", solidHeader = TRUE,
@@ -2579,7 +2588,7 @@ body <- dashboardBody(
               #   )
               ),
 
-              # Right: 4-column Restoration mix grid
+              # Right: 7-column Restoration mix grid
               column(
                 width = 9,
                 tags$div(class = "mix-grid",
@@ -2602,30 +2611,30 @@ body <- dashboardBody(
                       title = "Current (baseline) percent cover for this species at the site.",
                       uiOutput("mix_baseline_header")),
                     tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Desired total percent cover for this species. Drives the outplant solve when this is the active (blue) input.",
+                      title = "Desired total percent cover for this species. Drives the simulation and solves for outplants when this is the active (blue) input.",
                       uiOutput("mix_target_header")),
                     tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Average starting diameter of each outplanted fragment, in centimeters.",
+                      title = "Average starting diameter of each outplanted coral fragment, in centimeters.",
                       HTML("Avg. outplant<br/>diameter (cm)<br/><br/> ")),
                     tags$div(style = "flex: 1 1 0; text-align:center;",
                       title = "Average cost per outplant, used to compute total project cost.",
                       HTML("Avg. outplant<br/>cost ($)<br/><br/> ")),
                     tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Number of outplants (or clusters). Drives the projection when this is the active (blue) input.",
+                      title = "Number of coral fragments to outplant. Drives the simulation when this is the active (blue) input.",
                       HTML("Outplants<br/><br/><br/> ")),
                     tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Optional: plants per cluster. Outplants are grouped into clusters of this size, each simulated as a single colony packed with a 0.5 cm inter-plant gap.",
-                      HTML("Outplants per<br/>cluster<br/>(optional)<br/> ")),
+                      title = "Optional: fragments outplanted per 'cluster'. Clusters are constructed by packing this quantity of fragments into a modeled circle, with a 0.5 cm inter-fragment gap. Each cluster is simulated as a single colony.",
+                      HTML("Outplants<br/>per cluster<br/>(optional)")),
                     tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Read-only: this species' projected percent cover at the end of the simulation duration (all outplant efforts summed, post-cap).",
-                      HTML("Final cover<br/>(%)<br/><br/> "))
+                      title = "Read-only: this species' total projected percent cover at the end of the simulation duration.",
+                      uiOutput("mix_final_header")
+                    )
                   ),
                   div(
                     style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
                     uiOutput("restoration_mix_inputs")
                   )
                 ),
-                
                 tags$hr(),
 
                 # "Run Simulation" group (unboxed)
@@ -2648,10 +2657,8 @@ body <- dashboardBody(
             )
           )
         ),
-      # ),
 
-        # ---- Right stack: Target Years / Bleaching / Save Scenario ----
-      # column(4,
+        # ---- Bottom row: Target Years / Bleaching ----
         # Target Years
         shinydashboard::box(
           title = "Target Years",
@@ -2659,15 +2666,13 @@ body <- dashboardBody(
           column(6,
             sliderInput(
               "sim_duration", tags$strong("Simulation duration (years)"),
-              value = 10, min = 0, max = 30, step = 5
+              value = 10, min = 0, max = 30, step = 1
             )
           ),
           column(6,
-            # tags$div(style = "margin: -10px 0;",
             sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
               value = 0, min = 0, max = 30, step = 1
             )
-            # )
           )
         ),
 
@@ -2675,7 +2680,7 @@ body <- dashboardBody(
         shinydashboard::box(
           title = "Bleaching Scenario",
           width = 6, status = "warning", solidHeader = TRUE,
-          column(6, 
+          column(6,
             sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
               min = 8, max = 24, value = 8, step = 1
             )
@@ -2795,7 +2800,7 @@ body <- dashboardBody(
             tags$div(
               style = "display:flex; gap:8px; align-items:center;",
               actionButton("sc_refresh", "Refresh list", icon = icon("rotate")),
-              downloadButton("sc_download_csv", "Download report (.csv)")
+              downloadButton("sc_download_csv", "Download report")
             )
           )
         ),
@@ -2828,7 +2833,7 @@ body <- dashboardBody(
         ),
         # Bottom row: Comparison DT table
         shinydashboard::box(
-          title = "Scenario Comparison", width = 12,
+          title = "Comparison Table", width = 12,
           status = "info", solidHeader = TRUE,
           div(style = "overflow-x: auto;",
             DT::DTOutput("sc_compare_dt")
@@ -2995,6 +3000,7 @@ body <- dashboardBody(
             software is provided on the condition that neither the USGS nor the U.S. Government
             shall be held liable for any damages resulting from the authorized or unauthorized
             use of the software.", tags$br(),
+          tags$br(),
           tags$h4(tags$strong("Sources")),
           "Chronic coral mortality rates: Browne et al. (2026)", tags$br(),
           "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
@@ -3009,6 +3015,7 @@ body <- dashboardBody(
           "Species-specific bioerosion rates: ??", tags$br(),
           "Species-specific planar growth rates: ??", tags$br(),
           tags$br(),
+          tags$br(),
           tags$h4(tags$strong("Authors")),
           "Connor M. Jenkins, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
           "Dr. Lauren T. Toth, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
@@ -3019,7 +3026,23 @@ body <- dashboardBody(
           tags$br(),
           tags$br(),
           tags$h4(tags$strong("Acknowledgments")),
-          "A special thanks to Dr. Alice Webb and her team, who developed the  original ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "Reef Persistence Tool"),
+          "A special thanks to the participants of the Carbonate Budget Tool Workshop (St. Petersburg, Florida, September 1-3, 2026),", tags$br(),
+          "who provided their time expertise to test and critique the app:", tags$br(),
+          tags$br(),
+          "Alexandra Fine, Florida Keys National Marine Sanctuary, Key Largo, Florida, USA", tags$br(),
+          "Dr. Andy Bruckner, Florida Keys National Marine Sanctuary, Key Largo, Florida, USA", tags$br(),
+          "Maurizio Martinelli, Florida Department of Environmental Protection", tags$br(),
+          "Dr. Simeon Yurek, U.S. Geological Survey Wetland and Aquatic Research Center, Gainseville, Florida, USA", tags$br(),
+          "Lucas Skay, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
+          "Dr. Stephanie Schopmeyer, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
+          "Dr. Jason Spadaro, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
+          "Dr. Sara Williams, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
+          "Dr. Jay Grove, NOAA", tags$br(),
+          "Christina Mallica, Florida Fish and Wildlife Conservation Commission", tags$br(),
+          "David Gonzales, U.S. Fish and Wildlife Commision", tags$br(),
+          "Dr. William Hall, U.S. Department of the Interior", tags$br(),
+          tags$br(),
+          "and to Dr. Alice Webb and her team, who developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "original Reef Persistence Tool"),
           ", which was the inspiration for this project:", tags$br(),
           tags$br(),
           "Dr. Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
@@ -3741,10 +3764,12 @@ server <- function(input, output, session) {
           if (identical(s, "REQUIRED Unconsolidated substrate")) next
           cvr <- suppressWarnings(as.numeric(sr$Percent_Cover[i]))
           if (is.na(cvr)) next
-          total_cover <- total_cover + cvr
           rate <- calc_rates$rate[calc_rates$Taxon == s]
           if (length(rate) == 0 || is.na(rate[1])) next
           patch <- patch + area_val * (cvr / 100) * rate[1]
+          # Use CCA as a calcifying patch, but not for total cover summation.
+          if (identical(s, "Crustose coralline algae")) next
+          total_cover <- total_cover + cvr
         }
       }
       gross_budget <- patch / area_val
@@ -4563,9 +4588,27 @@ output$restoration_mix_inputs <- renderUI({
     }, numeric(1)), na.rm = TRUE)
   })
 
+  # Live sum of the Final cover column
+  mix_final_total <- reactive({
+    sim_token()
+    sp <- mix_species()
+    sum(vapply(sp, function(s) {
+      v <- input[[paste0("final_cover_", gsub("[^A-Za-z0-9]", "_", s))]]
+      if (is.null(v) || is.na(v)) 0 else as.numeric(v)
+    }, numeric(1)), na.rm = TRUE)
+  })
+
   output$mix_target_header <- renderUI({
     tot <- mix_target_total()
     HTML(paste0("Target<br/>cover (%)<br/><strong>(total: ", round(tot, 1), "%)</strong>"))
+  })
+
+  output$mix_final_header <- renderUI({
+    tryCatch({
+      tot <- mix_final_total
+      HTML(paste0("Final<br/>cover (%)<br/>(total: ", round(tot, 1), "%)</strong>"))
+    }, error = function(e) {HTML(paste0("Final<br/>cover (%)<br/><br/>"))}
+    )
   })
 
   # Live sum of the Baseline cover column (excludes UC).
