@@ -153,6 +153,17 @@ coral_icon <- makeIcon(
   iconAnchorY = 0           # Anchor point Y (bottom))
 )
 
+# ---- Progress overlay SVG (coral icon, bottom-up reveal) ----
+# Read the raw SVG once at startup. The overlay injects it twice: a dimmed base
+# layer and a full-color layer clipped by a bottom-anchored rectangle whose
+# height tracks the simulation's progress fraction. Tolerated if missing.
+coral_svg_raw <- tryCatch(
+  paste(readLines(here("www", "coral_icon.svg"), warn = FALSE), collapse = "\n"),
+  error = function(e) ""
+)
+# Strip any XML/doctype prolog so the markup can be inlined inside a <div>.
+coral_svg_inline <- sub("(?s)^.*?(<svg)", "\\1", coral_svg_raw, perl = TRUE)
+
 # Species-specific bioerosion rates
 species_bioerosion_path <- here("data", "Bioerosion_Rates_Species.xlsx")
 sp_erosion_parrotfish <- read_sheet_safe(species_bioerosion_path, "Parrotfish")
@@ -2597,11 +2608,86 @@ body <- dashboardBody(
         border-color: #3a4552 !important;
       }
 
+      /* ---- Simulation progress overlay (coral SVG, bottom-up reveal) ---- */
+      /* Anchored to the bottom-right corner (where the old progress bar sat),
+         not a full-screen scrim. */
+      #sim_overlay {
+        position: fixed; right: 20px; bottom: 20px; z-index: 3000;
+        display: none; align-items: center; justify-content: center;
+        background: rgba(255,255,255,0.92);
+        flex-direction: column;
+        padding: 14px 18px; border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      }
+      body.dark-mode #sim_overlay {
+        background: rgba(35,42,51,0.95);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+      }
+      #sim_overlay.open { display: flex; }
+      #sim_overlay .coral-wrap {
+        position: relative; width: 90px; height: 90px;
+      }
+      /* Dim base layer (uncovered portion of the icon). */
+      #sim_overlay .coral-base svg,
+      #sim_overlay .coral-fill svg {
+        width: 90px; height: 90px; display: block;
+      }
+      #sim_overlay .coral-base { position: absolute; inset: 0;
+        opacity: 0.0; filter: grayscale(100%); } /* Invisible. Change to 0.18 opacity for semitransparent */
+      /* Full-color layer, clipped from the bottom up by fill height. */
+      #sim_overlay .coral-fill {
+        position: absolute; inset: 0;
+        clip-path: inset(100% 0 0 0);   /* start fully hidden (reveal from bottom) */
+        transition: clip-path 0.35s ease;
+      }
+      #sim_overlay .sim-caption {
+        margin-top: 10px; font-weight: bold; font-size: 13px;
+        color: #2f4f2f; text-align: center; max-width: 26ch;
+        overflow-wrap: break-word;
+      }
+      body.dark-mode #sim_overlay .sim-caption { color: #9fd08a; }
+      #sim_overlay .sim-pct {
+        margin-top: 4px; font-size: 13px; color: #555;
+      }
+      body.dark-mode #sim_overlay .sim-pct { color: #bbb; }
+
     ")),
     # Toggle the body dark-mode class from the switch
     tags$script(HTML("
       Shiny.addCustomMessageHandler('toggle_dark', function(on) {
         document.body.classList.toggle('dark-mode', on);
+      });
+    ")),
+    # Simulation progress overlay: coral SVG revealed from the bottom up.
+    tags$div(id = "sim_overlay",
+      tags$div(class = "coral-wrap",
+        tags$div(class = "coral-base", HTML(coral_svg_inline)),
+        tags$div(class = "coral-fill", id = "coral_fill", HTML(coral_svg_inline))
+      ),
+      tags$div(class = "sim-caption", id = "sim_caption", "Simulating..."),
+      tags$div(class = "sim-pct", id = "sim_pct", "")
+    ),
+    tags$script(HTML("
+      // Show/hide the overlay and drive the bottom-up clip reveal + caption.
+      Shiny.addCustomMessageHandler('sim_overlay', function(m) {
+        var ov = document.getElementById('sim_overlay');
+        if (!ov) return;
+        if (m.show === false) { ov.classList.remove('open'); return; }
+        ov.classList.add('open');
+        var fill = document.getElementById('coral_fill');
+        if (fill && typeof m.frac === 'number') {
+          var pct = Math.max(0, Math.min(1, m.frac)) * 100;
+          // inset(top ...): top = 100 - pct reveals from the bottom upward.
+          fill.style.clipPath = 'inset(' + (100 - pct) + '% 0 0 0)';
+        }
+        if (typeof m.caption === 'string') {
+          var cap = document.getElementById('sim_caption');
+          if (cap) cap.textContent = m.caption;
+        }
+        if (typeof m.frac === 'number') {
+          var pe = document.getElementById('sim_pct');
+          if (pe) pe.textContent = Math.round(Math.max(0, Math.min(1, m.frac)) * 100) + '%';
+        }
       });
     ")),
     # Native-title tooltips keyed by input id. Re-applied on a short interval so
@@ -5398,17 +5484,35 @@ output$restoration_mix_inputs <- renderUI({
   ## baseline / restored metrics + plotly timeline
   ## ---------------------------------------------------------------------------
 
-  # Holds the active Shiny Progress object during a simulation run, so both the
-  # baseline_growth() reactive and model_result() can advance the same bar.
-  sim_progress <- reactiveVal(NULL)
+  # ---- Simulation progress overlay state ----
+  # Replaces shiny::Progress with a custom bottom-up SVG reveal. `sim_active`
+  # gates whether messages paint; `sim_frac` holds the current fill fraction.
+  # Each progress_say() nudges the fraction upward (clamped below 1 until the
+  # run completes), mirroring the old incremental bar while keeping the text
+  # captions.
+  sim_active <- reactiveVal(FALSE)
+  sim_frac   <- reactiveVal(0)
 
-  # Convenience: push a message to the active progress bar if one exists.
+  sim_overlay_show <- function(caption = "Simulating...", frac = 0.02) {
+    sim_active(TRUE)
+    sim_frac(frac)
+    session$sendCustomMessage("sim_overlay",
+      list(show = TRUE, frac = frac, caption = caption))
+  }
+  sim_overlay_hide <- function() {
+    sim_active(FALSE)
+    session$sendCustomMessage("sim_overlay", list(show = FALSE))
+  }
+
+  # Convenience: advance the overlay and update its caption, if a run is active.
   progress_say <- function(msg) {
-    pr <- sim_progress()
-    if (!is.null(pr)) {
-      tryCatch(pr$inc(amount = 0.05, message = "Simulating", detail = msg),
-               error = function(e) NULL)
-    }
+    if (!isTRUE(sim_active())) return(invisible(NULL))
+    # Nudge the fraction up by 0.05, clamped to 0.95 (completion sets 1.0).
+    nf <- min(0.95, sim_frac() + 0.05)
+    sim_frac(nf)
+    session$sendCustomMessage("sim_overlay",
+      list(show = TRUE, frac = nf, caption = msg))
+    invisible(NULL)
   }
 
   # Baseline cover & carbonate budget from the entered/uploaded data.
@@ -5568,17 +5672,17 @@ output$restoration_mix_inputs <- renderUI({
     isolate({ with_logged_conditions({
     req(outplanting_ready())
 
-    # Progress bar for the whole simulation. Created here, advanced by
-    # progress_say() (baseline + restoration species), closed on exit.
-    pr <- shiny::Progress$new(session, min = 0, max = 1)
-    pr$set(message = "Simulating", detail = "Starting...", value = 0.02)
-    sim_progress(pr)
+    # Progress overlay for the whole simulation. Opened here, advanced by
+    # progress_say() (baseline + restoration species), completed + closed on exit.
+    sim_overlay_show("Starting simulation...", frac = 0.02)
     on.exit({
-      tryCatch(pr$set(message = "Simulation complete", detail = "", value = 1),
-               error = function(e) NULL)
-      # Brief pause so "complete" is visible, then close.
-      later::later(function() tryCatch(pr$close(), error = function(e) NULL), 0.6)
-      sim_progress(NULL)
+      # Fill to 100% with a completion caption, then hide after a brief pause so
+      # the full coral is visible.
+      sim_frac(1)
+      tryCatch(session$sendCustomMessage("sim_overlay",
+        list(show = TRUE, frac = 1, caption = "Simulation complete")),
+        error = function(e) NULL)
+      later::later(function() tryCatch(sim_overlay_hide(), error = function(e) NULL), 0.6)
     }, add = TRUE)
 
     # Force the baseline-growth reactive to evaluate (and print its sanity
