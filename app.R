@@ -309,6 +309,18 @@ rap_percentile <- function(rap_value) {
   mean(vals < rap_value, na.rm = TRUE) * 100
 }
 
+# Shannon (H') and Simpson (1 - D) diversity from a vector of cover values.
+# CCA / reserved pseudo-taxa should be excluded by the caller(?). Returns c(H, D).
+diversity_indices <- function(cover_vec) {
+  x <- cover_vec[is.finite(cover_vec) & cover_vec > 0]
+  tot <- sum(x)
+  if (length(x) == 0 || tot <= 0) return(c(shannon = 0, simpson = 0))
+  p <- x / tot
+  shannon <- -sum(p * log(p))
+  simpson <- 1 - sum(p^2)
+  c(shannon = shannon, simpson = simpson)
+}
+
 # Color a percentile: dark green >75, green >50, orange >25, else red.
 percentile_color <- function(pct) {
   if (is.na(pct)) return("#777777")
@@ -1137,16 +1149,19 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
     out_df[i, "carb_accr"] <- carb_accr # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
     out_df[i, "carb_budg"] <- carb_budg # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
     out_df[i, "pct_cvr"]   <- pct_cvr   # Hard coral percent cover
+    out_df[i, "colony_count"] <- colony_count_thisrun  # Surviving colonies this year
 
     out_df_min[i, "area"]      <- sp_area_lo
     out_df_min[i, "carb_accr"] <- cr_lo * sp_area_lo
     out_df_min[i, "carb_budg"] <- budget_lo
     out_df_min[i, "pct_cvr"]   <- pct_cvcr_lo
+    out_df_min[i, "colony_count"] <- colony_count_thisrun_lo
 
     out_df_max[i, "area"]      <- sp_area_hi
     out_df_max[i, "carb_accr"] <- cr_hi * sp_area_hi
     out_df_max[i, "carb_budg"] <- budget_hi
     out_df_max[i, "pct_cvr"]   <- pct_cvcr_hi
+    out_df_max[i, "colony_count"] <- colony_count_thisrun_hi
   }
 
   if (check_sanity) log_msg("\n")
@@ -1244,6 +1259,11 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
   total_budg_min <- rep(0, n)
   total_budg_max <- rep(0, n)
   end_cover_by_species <- numeric(0)  # per-species end-of-duration cover (%)
+  # Per-species yearly colony counts (mean/lo/hi) + capped-free cover for the
+  # baseline (originals-only) run. Mirrors run_restoration_model's pop_series so
+  # the save handler can write baseline yearly counts + diversity.
+  pop_series <- list()
+  cover_by_species_yearly <- list()
 
   log_msg(str_pad(" Baseline assemblage growth simulation ", side = "both", width = 90, pad = "="), "\n\n")
   # print(baseline_cover_df)
@@ -1293,6 +1313,25 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
       sim$df$pct_cvr[nrow(sim$df)]
     }
     end_cover_by_species[species] <- prev + end_val
+
+    # Per-species yearly counts (baseline populations only; no outplants here).
+    if (is.null(pop_series[[species]])) {
+      pop_series[[species]] <- list(
+        baseline = list(mean = rep(0, n), lo = rep(0, n), hi = rep(0, n)),
+        outplant = list(mean = rep(0, n), lo = rep(0, n), hi = rep(0, n)),
+        area_baseline = rep(0, n), area_outplant = rep(0, n)
+      )
+    }
+    pop_series[[species]]$baseline$mean <- pop_series[[species]]$baseline$mean + sim$df$colony_count
+    pop_series[[species]]$baseline$lo   <- pop_series[[species]]$baseline$lo   + sim$df_min$colony_count
+    pop_series[[species]]$baseline$hi   <- pop_series[[species]]$baseline$hi   + sim$df_max$colony_count
+    pop_series[[species]]$area_baseline <- pop_series[[species]]$area_baseline + sim$df$area
+
+    # Per-year cover (% of site). CCA from area (its pct_cvr is zeroed); corals
+    # from pct_cvr. No overgrowth cap in the baseline-only path.
+    cover_by_species_yearly[[species]] <-
+      (if (is.null(cover_by_species_yearly[[species]])) 0 else cover_by_species_yearly[[species]]) +
+      (if (str_detect(species, "algae")) (sim$df$area / site_area) * 100 else sim$df$pct_cvr)
   }
 
   log_msg(str_pad(" Baseline growth simulation complete ", side = "both", width = 90, pad = "="), "\n")
@@ -1304,7 +1343,9 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
              carb_budg_orig = total_budg,
              carb_budg_orig_min = total_budg_min,
              carb_budg_orig_max = total_budg_max)
-  attr(df, "end_cover_by_species") <- end_cover_by_species
+  attr(df, "end_cover_by_species")      <- end_cover_by_species
+  attr(df, "pop_series")                <- pop_series
+  attr(df, "cover_by_species_yearly")   <- cover_by_species_yearly
   df
 }
 
@@ -1410,6 +1451,32 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # CCA grown-area series (m2, soft ceiling). NULL until a CCA row is grown.
   cca_grown_area <- NULL
 
+  # ---- Per-species, per-population yearly colony-count tracking ----
+  # pop_series[[species]] = list(
+  #   baseline = list(mean=, lo=, hi=),   # originals (Phase 0)
+  #   outplant = list(mean=, lo=, hi=),   # Y0 outplants + additional-year efforts
+  #   area_baseline = <n>, area_outplant = <n>  # m2 per year (mean)
+  # )
+  # Length-n vectors; outplant efforts offset in time are padded then summed.
+  pop_series <- list()
+
+  pop_add <- function(species, pop, counts_mean, counts_lo, counts_hi, area_mean) {
+    if (is.null(pop_series[[species]])) {
+      pop_series[[species]] <<- list(
+        baseline = list(mean = rep(0, n), lo = rep(0, n), hi = rep(0, n)),
+        outplant = list(mean = rep(0, n), lo = rep(0, n), hi = rep(0, n)),
+        area_baseline = rep(0, n), area_outplant = rep(0, n)
+      )
+    }
+    ps <- pop_series[[species]]
+    ps[[pop]]$mean <- ps[[pop]]$mean + counts_mean
+    ps[[pop]]$lo   <- ps[[pop]]$lo   + counts_lo
+    ps[[pop]]$hi   <- ps[[pop]]$hi   + counts_hi
+    akey <- if (pop == "baseline") "area_baseline" else "area_outplant"
+    ps[[akey]] <- ps[[akey]] + area_mean
+    pop_series[[species]] <<- ps
+  }
+
   outplants_by_species <- c()   # named: species -> outplant count
   achieved_cover_by_species <- c()  # named: species -> total % cover at horizon
   total_cost <- 0
@@ -1460,7 +1527,18 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       species_area_by_sp[[species]] <-
         (if (is.null(species_area_by_sp[[species]])) 0 else species_area_by_sp[[species]]) + od$area
     }
+    # Record this baseline population's yearly colony counts (+ area).
+    pop_add(species, "baseline",
+            od$colony_count, orig_list$df_min$colony_count, orig_list$df_max$colony_count,
+            od$area)
     any_growth <- TRUE
+  }
+
+  log_msg("DIAG pop_series after Phase 0: ",
+          paste(names(pop_series), collapse = ", "))
+  for (nm in names(pop_series)) {
+    log_msg("  ", nm, " baseline Y0=", pop_series[[nm]]$baseline$mean[1],
+            " YN=", pop_series[[nm]]$baseline$mean[length(pop_series[[nm]]$baseline$mean)])
   }
 
   # ---- Phase 1 + 2: outplant solve + full-duration growth (restored only) ----
@@ -1663,6 +1741,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       species_area_by_sp[[species]] <-
         (if (is.null(species_area_by_sp[[species]])) 0 else species_area_by_sp[[species]]) + nd$area
     }
+    # Record the Y0 outplant population's yearly colony counts (+ area).
+    pop_add(species, "outplant",
+            nd$colony_count, nd_min$colony_count, nd_max$colony_count,
+            nd$area)
 
     outplants_by_species[species] <- outplant_guess
     # Achieved NEW cover for this species at the restoration horizon (the value
@@ -1726,6 +1808,11 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       coral_area_new_hi <- coral_area_new_hi + pad(el$df_max$area)
       species_area_by_sp[[sp_e]] <-
         (if (is.null(species_area_by_sp[[sp_e]])) 0 else species_area_by_sp[[sp_e]]) + pad(el$df$area)
+
+      # Record this additional-year outplant effort's yearly counts (time-offset).
+      pop_add(sp_e, "outplant",
+              pad(el$df$colony_count), pad(el$df_min$colony_count), pad(el$df_max$colony_count),
+              pad(el$df$area))
 
       total_cost <- total_cost + round(cnt_e) * cost_e
       any_growth <- TRUE
@@ -1876,6 +1963,17 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
 
   log_msg(str_pad(" Restoration simulation complete ", side = "both", width = 90, pad = "="), "\n\n")
 
+  # Per-year, per-species CAPPED cover (% of site) for the diversity calc.
+  # Corals use the mean cap factor; CCA uses its uncovered grown area.
+  cover_by_species_yearly <- list()
+  for (sp_nm in names(species_area_by_sp)) {
+    if (str_detect(sp_nm, "algae")) {
+      cover_by_species_yearly[[sp_nm]] <- (cca_area_yr / site_area) * 100
+    } else {
+      cover_by_species_yearly[[sp_nm]] <- (species_area_by_sp[[sp_nm]] * f_mean) / site_area * 100
+    }
+  }
+
   list(
     budget_df = budget_df,
     outplants_by_species = outplants_by_species,
@@ -1884,7 +1982,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     outplants = sum(outplants_by_species),
     cost      = total_cost,
     olb_pct   = olb_pct,
-    competable_area = competable_area
+    competable_area = competable_area,
+    pop_series = pop_series,                       # per-species baseline/outplant yearly counts
+    cover_by_species_yearly = cover_by_species_yearly  # per-species capped % cover per year
   )
 }
 
@@ -6315,6 +6415,105 @@ output$restoration_mix_inputs <- renderUI({
     # Comparison plot now recomputes ROI from net kg CaCO3 / cost at render.
     # roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
 
+    # ---- Assemble yearly series for the expanded save ----
+    # yearly_rap: per-year total RAP + CI bands from the model's budget_df.
+    # yearly_counts: per-species baseline vs outplant colony counts (mean/lo/hi).
+    # yearly_diversity: Shannon + Simpson from per-year coral cover proportions
+    #   (CCA / reserved taxa excluded).
+    yearly_rap <- NULL
+    yearly_counts <- NULL
+    yearly_diversity <- NULL
+
+    # Source of yearly series: restoration model when present, else baseline.
+    ps  <- NULL
+    cby <- NULL
+    if (!is.null(mr) && nrow(mr$budget_df) > 0) {
+      bd  <- mr$budget_df
+      yrs <- seq_len(nrow(bd)) - 1  # Year 0 .. duration
+      ps  <- mr$pop_series
+      cby <- mr$cover_by_species_yearly
+
+      yearly_rap <- lapply(seq_along(yrs), function(i) {
+        list(
+          year     = yrs[i],
+          rap      = round(.safe_num(bd$RAP_total[i]), 4),
+          rap_min  = round(.safe_num(if (!is.null(bd$RAP_total_min)) bd$RAP_total_min[i] else NA), 4),
+          rap_max  = round(.safe_num(if (!is.null(bd$RAP_total_max)) bd$RAP_total_max[i] else NA), 4),
+          rap_orig = round(.safe_num(bd$RAP_orig[i]), 4),
+          cover    = round(.safe_num(bd$pct_cvr_total[i]), 3),
+          budget   = round(.safe_num(bd$carb_budg_total[i]), 4)
+        )
+      })
+    } else {
+      # Baseline-only save: pull yearly series from baseline_growth(), applying
+      # bioerosion to recover per-year RAP (same transform the timeline uses).
+      bg <- baseline_growth()
+      if (!is.null(bg) && is.data.frame(bg[[1]]) && nrow(bg[[1]]) > 0) {
+        bg_df0 <- bg[[1]]
+        bp0    <- bg[[2]]
+        sa0    <- .safe_num(input$site_area_m2); if (sa0 <= 0) sa0 <- 100
+        uc0    <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
+        macro0 <- resolve_regional_bioerosion(input$subregion_choice, input$habitat_choice)
+        be_sd0 <- bioerosion_stdev(input$subregion_choice, input$habitat_choice)
+        bg_df0 <- baseline_bioerosion_RAP(bg_df0, sa0, uc0, be_micro_rate,
+                                          macro0, bp0,
+                                          be_sd_lo = be_sd0[1], be_sd_hi = be_sd0[2])
+        yrs <- bg_df0$Year
+        ps  <- attr(bg[[1]], "pop_series")
+        cby <- attr(bg[[1]], "cover_by_species_yearly")
+
+        yearly_rap <- lapply(seq_along(yrs), function(i) {
+          list(
+            year     = yrs[i],
+            rap      = round(.safe_num(bg_df0$RAP_orig[i]), 4),
+            rap_min  = round(.safe_num(if (!is.null(bg_df0$RAP_orig_min)) bg_df0$RAP_orig_min[i] else NA), 4),
+            rap_max  = round(.safe_num(if (!is.null(bg_df0$RAP_orig_max)) bg_df0$RAP_orig_max[i] else NA), 4),
+            rap_orig = round(.safe_num(bg_df0$RAP_orig[i]), 4),
+            cover    = round(.safe_num(bg_df0$pct_cvr_orig[i]), 3),
+            budget   = round(.safe_num(bg_df0$carb_budg_orig[i]), 4)
+          )
+        })
+      }
+    }
+
+    if (!is.null(yearly_rap)) {
+      yrs <- vapply(yearly_rap, function(z) z$year, numeric(1))
+
+      # Per-species baseline/outplant yearly counts (ps resolved above:
+      # restoration pop_series or baseline-growth attribute).
+      if (!is.null(ps) && length(ps)) {
+        yearly_counts <- setNames(lapply(names(ps), function(sp_nm) {
+          p <- ps[[sp_nm]]
+          list(
+            baseline = list(
+              mean = round(p$baseline$mean),
+              lo   = round(p$baseline$lo),
+              hi   = round(p$baseline$hi)
+            ),
+            outplant = list(
+              mean = round(p$outplant$mean),
+              lo   = round(p$outplant$lo),
+              hi   = round(p$outplant$hi)
+            )
+          )
+        }), names(ps))
+      }
+
+      # Per-year diversity from coral cover proportions (exclude CCA + reserved).
+      if (!is.null(cby) && length(cby)) {
+        coral_names <- names(cby)[!vapply(names(cby), function(nm) {
+          str_detect(nm, "algae") || is_reserved_taxon(nm)
+        }, logical(1))]
+        yearly_diversity <- lapply(seq_along(yrs), function(i) {
+          cover_i <- vapply(coral_names, function(nm) .safe_num(cby[[nm]][i]), numeric(1))
+          di <- diversity_indices(cover_i)
+          list(year = yrs[i],
+               shannon = round(unname(di["shannon"]), 4),
+               simpson = round(unname(di["simpson"]), 4))
+        })
+      }
+    }
+
     # Build the scenario, forcing every field to a length-1 scalar
     scalar1 <- function(x) if (is.null(x) || length(x) == 0) NA else x[[1]]
     scenario <- list(
@@ -6339,6 +6538,11 @@ output$restoration_mix_inputs <- renderUI({
       # roi = scalar1(roi),
       elev_gain_10yr = scalar1(elev_gain_10yr),
       saved = as.character(Sys.time()),
+      olb_pct = .safe_num(input$base_REQUIRED_Other_living_benthos),
+      # Expanded yearly series.
+      yearly_rap        = yearly_rap,
+      yearly_counts     = yearly_counts,
+      yearly_diversity  = yearly_diversity,
       # Nested per-species mix (variable-length), keyed by full species name.
       additional_outplant_years = additional_outplant_years(),
       mix = {
