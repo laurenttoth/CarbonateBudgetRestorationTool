@@ -136,6 +136,23 @@ nearest_value <- function(vec, target) {
   vec[idx]
 }
 
+# Change any null/NA value to 0.
+# Optionally, Change any positive value to 0
+null_to_zero <- function(v, positive_null = FALSE) {
+  if (positive_null) {
+    if (!is.null(v) && !is.na(v) && v > 0) return(0)
+  }
+  if (is.null(v) || is.na(v)) 0 else v
+}
+
+coral_icon <- makeIcon(
+  iconUrl = here("www", "coral_icon.svg"),
+  iconWidth = 40,            # Width in pixels
+  iconHeight = 40,           # Height in pixels
+  iconAnchorX = 0,          # Anchor point X (center)
+  iconAnchorY = 0           # Anchor point Y (bottom))
+)
+
 # Species-specific bioerosion rates
 species_bioerosion_path <- here("data", "Bioerosion_Rates_Species.xlsx")
 sp_erosion_parrotfish <- read_sheet_safe(species_bioerosion_path, "Parrotfish")
@@ -160,6 +177,15 @@ regions_sf <- sf::st_transform(regions_sf, 4326)
 named_reefs_sf <- tryCatch(
   sf::st_transform(
     sf::st_read(here("data", "named_reefs", "named_reefs.shp"), quiet = TRUE),
+    4326
+  ),
+  error = function(e) NULL
+)
+
+# Additional named reefs from FKNMS
+named_reefs_sf_fknms <- tryCatch(
+  sf::st_transform(
+    sf::st_read(here("data", "named_reefs", "named_reefs_fknms.shp"), quiet = TRUE),
     4326
   ),
   error = function(e) NULL
@@ -346,8 +372,8 @@ scenario_fields <- c(
   "total_coral_pct_cvr", "baseline_cover", "restored_cover",
   "baseline_budget", "restored_budget",
   "baseline_rap", "restored_rap", "outplants",
-  "outplant_size", "outplant_cost", "dhw", "bleach_events",
-  "rest_horizon", "sim_duration", "cost", "roi", "elev_gain_10yr", "saved"
+  "dhw", "bleach_events", "rest_horizon", "sim_duration",
+  "cost", "roi", "elev_gain_10yr", "saved"
 )
 
 # Coerce a parsed scenario (list from fromJSON) into a clean one-row data.frame.
@@ -511,7 +537,7 @@ region_from_subregion <- function(subregion) {
 
 # Retrieve degree-heating-week percent-loss slope from Webb's data.
 # Handle missing species and regions.
-get_dhw_slope <- function(s, subregion) {
+get_dhw_intrvl <- function(s, subregion) {
 
   region <- region_from_subregion(subregion)
 
@@ -521,20 +547,39 @@ get_dhw_slope <- function(s, subregion) {
   }
 
   sp_dhw_slope <- subset(sp_dhw_slopes_region, Species == s)$Slope
+  # NOTE: In this dataset, the lower bound designates a more severe DHW response.
+  sp_dhw_lower <- subset(sp_dhw_slopes_region, Species == s)$CI_Lower
+  sp_dhw_upper <- subset(sp_dhw_slopes_region, Species == s)$CI_Upper
 
-  if (is.null(sp_dhw_slope) || length(sp_dhw_slope) == 0) { # If species not found, look for a species-generic rate
+  # If species not found, look for a species-generic rate
+  if (is.null(sp_dhw_slope) || length(sp_dhw_slope) == 0) {
     genus        <- stringr::str_split(s, " ")[[1]][1]
-    sp_dhw_slope <- subset(sp_dhw_slopes_region, Species == paste(genus, "spp."))$Slope
+    g_spp        <- paste(genus, "spp.")
+    sp_dhw_slope <- subset(sp_dhw_slopes_region, Species == g_spp)$Slope
+    sp_dhw_lower <- subset(sp_dhw_slopes_region, Species == g_spp)$CI_Lower
+    sp_dhw_upper <- subset(sp_dhw_slopes_region, Species == g_spp)$CI_Upper
   }
 
   if (is.null(sp_dhw_slope) || length(sp_dhw_slope) == 0) { # If still not found, use mean rate
     sp_dhw_slope <- sp_dhw_slopes_region$mean_slope[1]
+    # Only Florida Keys and Dry Tortugas have real regional confidence intervals.
+    # Other regions repeat their mean values.
+    sp_dhw_lower <- sp_dhw_slopes_region$mean_slope_lower[1]
+    sp_dhw_upper <- sp_dhw_slopes_region$mean_slope_upper[1]
   }
-  if (is.null(sp_dhw_slope) || is.na(sp_dhw_slope) || sp_dhw_slope > 0) { # Set to 0 if slope is positive/NA
-    sp_dhw_slope <- 0
-    }
 
-  - sp_dhw_slope # Functions are built to interpret positive values as loss percentages.
+  # Set to 0 if slope is initially positive/NA.
+  # Flip the sign of the result so values are ultimately positive for later handling.
+  sp_dhw_slope <- null_to_zero(sp_dhw_slope, positive_null = TRUE) * -1
+  sp_dhw_lower <- null_to_zero(sp_dhw_lower, positive_null = TRUE) * -1
+  sp_dhw_upper <- null_to_zero(sp_dhw_upper, positive_null = TRUE) * -1
+
+  # Enusre zeroes are not portrayed as negative (just a formatting thing)
+  sp_dhw_slope <- if (sp_dhw_slope == 0) 0 else sp_dhw_slope
+  sp_dhw_lower <- if (sp_dhw_lower == 0) 0 else sp_dhw_lower
+  sp_dhw_upper <- if (sp_dhw_upper == 0) 0 else sp_dhw_upper
+
+  c(sp_dhw_lower, sp_dhw_slope, sp_dhw_upper) # Flip all negative slopes to positive for later handling.
 }
 
 # Post-bleaching production-loss vector:
@@ -596,6 +641,14 @@ all_branching_species <- c(
 OUTPLANT_DIAM_DEFAULT <- 5    # cm
 OUTPLANT_COST_DEFAULT <- 100  # $
 
+# Special pseudo-taxa (not grown as corals) ----
+UC_TAXON  <- "REQUIRED Unconsolidated substrate"
+OLB_TAXON <- "REQUIRED Other living benthos"
+CCA_TAXON <- "Crustose coralline algae"
+
+# Is this taxon a non-growing reserved/benthos pseudo-taxon?
+is_reserved_taxon <- function(s) s %in% c(UC_TAXON, OLB_TAXON)
+
 # Morphology class for a species (branching / massive / weedy-other) ----
 # Hoisted from build_calcifier_table so the Restoration Mix grid can reuse it.
 morph_class <- function(s) {
@@ -637,7 +690,7 @@ build_calcifier_table <- function(subregion) {
     om  <- get1(mortality_outplant, "Species", grp, "Mortality")
     ose <- get1(mortality_outplant, "Species", grp, "SE")
     genus        <- stringr::str_split(s, " ")[[1]][1]
-    sp_dhw_slope <- get_dhw_slope(s, subregion)
+    sp_dhw_intrvl <- get_dhw_intrvl(s, subregion)
     # sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
     # if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
 
@@ -645,13 +698,13 @@ build_calcifier_table <- function(subregion) {
       Species             = s,
       Morphology          = morph_class(s),
       Calc_rate_kg_m2_yr  = get1(calc_rates, "Taxon", s, "rate"),
-      Calc_rate_lo        = if ("lower_bound" %in% names(calc_rates)) get1(calc_rates, "Taxon", s, "lower_bound") else NA_real_,
-      Calc_rate_hi        = if ("upper_bound" %in% names(calc_rates)) get1(calc_rates, "Taxon", s, "upper_bound") else NA_real_,
+      Calc_calc_rate_lo        = if ("lower_bound" %in% names(calc_rates)) get1(calc_rates, "Taxon", s, "lower_bound") else NA_real_,
+      Calc_calc_rate_hi        = if ("upper_bound" %in% names(calc_rates)) get1(calc_rates, "Taxon", s, "upper_bound") else NA_real_,
       Planar_growth_mm_yr = get1(growth_rates, "name", s, "planar_mean"),
       Planar_growth_lo    = get1(growth_rates, "name", s, "planar_lwr"),
       Planar_growth_hi    = get1(growth_rates, "name", s, "planar_upr"),
       Avg_colony_diam_cm  = get1(diams, "name", s, "length_mean"),
-      dhw_loss_pct        = sp_dhw_slope,
+      dhw_loss_intrvl     = sprintf("%.1f : %.1f : %.1f",  sp_dhw_intrvl[[1]], sp_dhw_intrvl[[2]], sp_dhw_intrvl[[3]]),
       Outplant_mort_pct   = om,
       Outplant_mort_SE    = ose,
       stringsAsFactors = FALSE
@@ -664,7 +717,7 @@ build_calcifier_table <- function(subregion) {
   col_names <- c(
     "Species",
     "Morphology",
-    "Calc. Rate\n(kg/m2/yr)",
+    "Calc. Rate\n(kg/m²/yr)",
     "Calc. Rate\n(Low)",
     "Calc. Rate\n(High)",
     "Planar growth\n(mm/yr)",
@@ -806,17 +859,28 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
   # Species-specific slope of the relationship between degree-heating weeks and percent mortality.
   # sp_dhw_slope <- dhw_slope_lookup_fk$slope_pct_per_dhw[dhw_slope_lookup_fk$taxon == genus]
   # if (length(sp_dhw_slope) == 0) sp_dhw_slope <- 0.85 # generic fallback
-  sp_dhw_slope <- get_dhw_slope(species, subregion)
+  sp_dhw_intrvl <- get_dhw_intrvl(species, subregion)
 
-  # Total DHW-driven percent loss converted to proportion
-  sp_dhw_loss      <- sp_dhw_slope * bleaching_severity / 100
+  # Unpack degree-heating-week percent-cover-loss interval
+  sp_dhw_lower <- sp_dhw_intrvl[[1]]
+  sp_dhw_slope <- sp_dhw_intrvl[[2]]
+  sp_dhw_upper <- sp_dhw_intrvl[[3]]
+
+  # Total DHW-driven percent loss converted to proportion. Cap at 1 == 100%.
+  sp_dhw_loss_lo  <- min(sp_dhw_lower * bleaching_severity / 100, 1)
+  sp_dhw_loss     <- min(sp_dhw_slope * bleaching_severity / 100, 1)
+  sp_dhw_loss_hi  <- min(sp_dhw_upper * bleaching_severity / 100, 1)
+
   # 30% of the cover loss applied as whole-colony mortality
   # (generalized default, see about species-specific values later)
   sp_dhw_mortality  <- 0.30
-  sp_growth_rate    <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
-  sp_growth_rate_lo <- subset(growth_rates, growth_rates["name"] == species)["planar_lwr"][, 1] / 1000
-  sp_growth_rate_hi <- subset(growth_rates, growth_rates["name"] == species)["planar_upr"][, 1] / 1000
 
+  # Retrieve growth rate interval
+  sp_growth_rate    <- subset(growth_rates, growth_rates["name"] == species)["planar_mean"][, 1] / 1000 # convert from mm to m
+  sp_growth_rate_lo <- subset(growth_rates, growth_rates["name"] == species)["planar_lwr"][,  1] / 1000
+  sp_growth_rate_hi <- subset(growth_rates, growth_rates["name"] == species)["planar_upr"][,  1] / 1000
+
+  # Retrieve and unpack outplant mortality interval
   mortality_interval <- outplant_mortality_by_size(colony_diam, species) # c(low, mean, high) interval
   mort_lo <- mortality_interval[[1]]
   mort    <- mortality_interval[[2]]
@@ -829,37 +893,58 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
     log_msg(
         "\t", abbrev_species(species),
         # "\n\t", str_pad("Baseline cover:", side="right", width = 28), signif(current_sp_m, 3), "m2",
-        "\n\t", sprintf("Initial count:                 %d colonies", colony_count),
-        "\n\t", sprintf("Initial colony diameter:       %.1f cm", colony_diam * 100), # Readout in centimeters
-        "\n\t", sprintf("Initial species area:          %.4f m2", colony_count * (colony_diam / 2) ^ 2 * pi)
+        "\n\t", str_pad("Initial count:",           width = 32, side = "right"), sprintf("  %d colonies", colony_count),
+        "\n\t", str_pad("Initial colony diameter:", width = 32, side = "right"), sprintf("  %.1f cm", colony_diam * 100), # Readout in centimeters
+        "\n\t", str_pad("Initial species area:",    width = 32, side = "right"), sprintf("  %.4f m²", colony_count * (colony_diam / 2) ^ 2 * pi)
     )
     if (bleaching_frequency > 0) {
-    log_msg(
-        "\t", sprintf("Bleaching severity:            %d DHW", bleaching_severity),
-        "\n\t", sprintf("Partial bleaching mortality:   %.1f %%", sp_dhw_loss * 100), # Readout as percent
-        "\n\t", sprintf("Whole-colony bleach mortality: %.1f %%", sp_dhw_loss * sp_dhw_mortality * 100)
-    )
-    }
-    if (group == "outplant") {
-    log_msg("\t", sprintf("Outplant mortality interval:   %.1f ; %.1f ; %.1f %%", mort_lo * 100, mort * 100, mort_hi * 100)) # Readout as percent
-    }
-    log_msg("\t", sprintf("Planar growth rate interval:   %.2f ; %.2f ; %.2f mm/yr",
-              sp_growth_rate_lo * 1000, sp_growth_rate * 1000, sp_growth_rate_hi * 1000  # Readout in mm/yr
+      log_msg(
+          "\t",   str_pad("Bleaching severity:",            width = 32, side = "right"), sprintf("  %d DHW", bleaching_severity),
+          "\n\t", str_pad("Combined bleaching mortality:",  width = 32, side = "right"),
+            str_pad(sprintf("  %.1f", sp_dhw_loss_lo * 100), width = 8, side = "both"), " | ", # Readout as percent
+            str_pad(sprintf("  %.1f", sp_dhw_loss    * 100), width = 8, side = "both"), " | ",
+            str_pad(sprintf("  %.1f", sp_dhw_loss_hi * 100), width = 8, side = "both"), " %",
+          "\n\t\t", str_pad("Partial:",                     width = 24, side = "right"),
+            str_pad(sprintf("  %.1f", (sp_dhw_loss_lo - (sp_dhw_loss_lo * sp_dhw_mortality)) * 100), width = 8, side = "both"), " | ",
+            str_pad(sprintf("  %.1f", (sp_dhw_loss    - (sp_dhw_loss    * sp_dhw_mortality)) * 100), width = 8, side = "both"), " | ",
+            str_pad(sprintf("  %.1f", (sp_dhw_loss_hi - (sp_dhw_loss_hi * sp_dhw_mortality)) * 100), width = 8, side = "both"), " %",
+          "\n\t\t", str_pad("Whole-colony:",                width = 24, side = "right"),
+            str_pad(sprintf("  %.1f", (sp_dhw_loss_lo * sp_dhw_mortality) * 100), width = 8, side = "both"), " | ",
+            str_pad(sprintf("  %.1f", (sp_dhw_loss    * sp_dhw_mortality) * 100), width = 8, side = "both"), " | ",
+            str_pad(sprintf("  %.1f", (sp_dhw_loss_hi * sp_dhw_mortality) * 100), width = 8, side = "both"), " %"
       )
+    }
+    log_msg("\t", str_pad("Planar growth rate interval:", width = 32, side = "right"),
+              str_pad(sprintf("  %.2f", sp_growth_rate_lo * 1000), width = 8, side = "both"), " | ", # Readout in mm/yr
+              str_pad(sprintf("  %.2f", sp_growth_rate    * 1000), width = 8, side = "both"), " | ",
+              str_pad(sprintf("  %.2f", sp_growth_rate_hi * 1000), width = 8, side = "both"), " mm/yr"
     )
+    if (group == "outplant") {
+      log_msg(
+        "\t",
+        str_pad("Outplant mortality interval:", width = 32, side = "right"),
+        str_pad(sprintf("%.1f", mort_lo * 100), width = 8, side = "both"), " | ",
+        str_pad(sprintf("%.1f", mort    * 100), width = 8, side = "both"), " | ",
+        str_pad(sprintf("%.1f", mort_hi * 100), width = 8, side = "both"), "%"
+      )
+    }
   }
 
   # Per-species calcification-rate bounds (kg CaCO3/m2/yr). NA-safe: when
   # unavailable, min/max budget columns mirror the average.
   cr_bounds   <- calc_rate_bounds(species)
-  rate_lo     <- cr_bounds[1]
-  rate_hi     <- cr_bounds[2]
+  calc_rate_lo     <- cr_bounds[1]
+  calc_rate_hi     <- cr_bounds[2]
 
   out_df     <- data.frame()
   out_df_min <- data.frame()
   out_df_max <- data.frame()
-  new_size             <- colony_diam  # working colony diameter for this run
-  colony_count_thisrun <- colony_count # working colony count for this run
+  new_size             <- colony_diam  # Working colony diameter for this run
+  new_size_lo          <- colony_diam  # Initialize size bands
+  new_size_hi          <- colony_diam
+  colony_count_thisrun    <- colony_count # working colony count for this run
+  colony_count_thisrun_lo <- colony_count
+  colony_count_thisrun_hi <- colony_count
   last_bleach_year     <- 1            # placeholder
 
   for (i in 1:duration) { # R starts counting at 1 so "Year 0" = Year 1; "Year 10" = Year 11
@@ -868,38 +953,42 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
     # Apply before growth calculation.
     # Colony numbers rounded at every step.
     if (group == "outplant" && i == 1) {
-      dieoff <- round(colony_count_thisrun * mort)
-      colony_count_thisrun    <- round(colony_count_thisrun * (1 - mort))
-      colony_count_thisrun_lo <- round(colony_count_thisrun * (1 - mort_hi)) # Apply high mortality to yield low-range colony count
-      colony_count_thisrun_hi <- round(colony_count_thisrun * (1 - mort_lo)) # Vice-versa
+      outplant_dieoff    <- round(colony_count_thisrun * mort)
+      outplant_dieoff_lo <- round(colony_count_thisrun * mort_lo)
+      outplant_dieoff_hi <- round(colony_count_thisrun * mort_hi)
+      colony_count_thisrun_lo <- colony_count_thisrun_lo - outplant_dieoff_hi # Apply high mortality to yield low-range colony count
+      colony_count_thisrun_hi <- colony_count_thisrun_hi - outplant_dieoff_lo # Vice-versa
+      colony_count_thisrun    <- colony_count_thisrun    - outplant_dieoff
       if (check_sanity) {
         log_msg(
           "\t",
-          sprintf(
-          "Outplanting dieoff:            -%d colonies ", dieoff
-          )
+          str_pad("Outplant dieoff interval:", width = 32, side = "right"),
+          str_pad(sprintf("-%d", outplant_dieoff_lo), width = 8, side = "both"), " | ",
+          str_pad(sprintf("-%d", outplant_dieoff),    width = 8, side = "both"), " | ",
+          str_pad(sprintf("-%d", outplant_dieoff_hi), width = 8, side = "both"), "colonies"
         )
       }
-    } else { # outplant mortality not applied; bounds unchanged
-      colony_count_thisrun_lo <- colony_count_thisrun
-      colony_count_thisrun_hi <- colony_count_thisrun
     }
 
     if (check_sanity && i == 1) {
       # Initialize printout table headers here:
-      log_msg("\n\t", "|",
-          str_pad("Area",             width = 8),  "|",
-          str_pad("Accretion",        width = 18), "|",
-          str_pad("Site-wide budget", width = 20), "|",
-          str_pad("Colonies",         width = 12), "|",
-          str_pad("Area interval",    width = 22),
-          # Linebreak + units
-          "\n\t", "|",
-          str_pad("(m2)",                width = 8),  "|",
-          str_pad("contribution (kg)",   width = 18), "|",
-          str_pad("contrib. (kg/m2/yr)", width = 20), "|",
-          str_pad("remaining",           width = 12), "|",
-          str_pad("(m2)",                width = 22),
+      log_msg("\n\t", "| ",
+          str_pad("Population",  width = 23), " |",
+          # str_pad("Site-wide", width = 24), " |",
+          str_pad("Colony size", width = 27), " |",
+          str_pad("Area",        width = 27),
+          # Linebreak
+          "\n\t", "| ",
+          str_pad("interval",  width = 23), " |",
+          # str_pad("budget contrib.",  width = 24), " |",
+          str_pad("interval",  width = 27), " |",
+          str_pad("interval",  width = 27),
+          # Units
+          "\n\t", "| ",
+          str_pad("(colonies)", width = 23), " |",
+          # str_pad("(kg/m²/yr)", width = 24), " |",
+          str_pad("(cm)",       width = 27), " |",
+          str_pad("(m²)",       width = 27),
           "\n",
           str_pad("-", pad = "-",  width = 90, side = "both")
       )
@@ -923,7 +1012,11 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
         # If so, kill colonies before growth if bleaching occurs
         # Apply species-specific dieoff proportion to the colony count:
         bleaching <- TRUE
-        bleach_dieoff <- round(colony_count_thisrun * (sp_dhw_loss * sp_dhw_mortality))
+        # Apply lower bound (more intense impact) to get high bleaching dieoff interval
+        bleach_dieoff_hi <- round(colony_count_thisrun * (sp_dhw_loss_lo * sp_dhw_mortality))
+        bleach_dieoff_lo <- round(colony_count_thisrun * (sp_dhw_loss_hi * sp_dhw_mortality))
+        bleach_dieoff    <- round(colony_count_thisrun * (sp_dhw_loss    * sp_dhw_mortality))
+
         # if (check_sanity && bleaching_frequency != 5) {
         #   bleach_dieoff <- round(colony_count_thisrun * (sp_dhw_loss * sp_dhw_mortality))
         #   if (bleach_dieoff == 0) {
@@ -934,9 +1027,11 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
         #   log_msg("\t", str_pad(readout, width = 70, side = "both", pad = "="))
         # }
         last_bleach_year <- i
-        colony_count_thisrun    <- round(colony_count_thisrun    * (1 - sp_dhw_loss * sp_dhw_mortality))
-        colony_count_thisrun_lo <- round(colony_count_thisrun_lo * (1 - sp_dhw_loss * sp_dhw_mortality))
-        colony_count_thisrun_hi <- round(colony_count_thisrun_hi * (1 - sp_dhw_loss * sp_dhw_mortality))
+        # Higher (less severe) DHW interval -> lower dieoff interval -> higher count interval.
+        colony_count_thisrun_hi <- colony_count_thisrun - bleach_dieoff_lo
+        colony_count_thisrun_lo <- colony_count_thisrun - bleach_dieoff_hi
+        colony_count_thisrun    <- colony_count_thisrun - bleach_dieoff
+
     }
 
     # Kill colonies due to chronic whole-colony mortality (Brown et al. 2026)
@@ -948,39 +1043,48 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
     this_mortality_whole <- subset(mortality_whole, mortality_whole["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_whole <- this_mortality_whole / 100 # Convert from percent to proportion
     # Reduce colony count
-    colony_count_thisrun <- round(colony_count_thisrun * (1 - this_mortality_whole))
     colony_count_thisrun_lo <- round(colony_count_thisrun_lo * (1 - this_mortality_whole))
     colony_count_thisrun_hi <- round(colony_count_thisrun_hi * (1 - this_mortality_whole))
+    colony_count_thisrun    <- round(colony_count_thisrun    * (1 - this_mortality_whole))
 
     # Shrink colonies due to chronic partial mortality (Brown et al. 2026)
     # Calculate starting area
-    new_area <- (new_size / 2) ^ 2 * pi
-    # Apply annual partial mortality to surviving colonies' starting area
+    new_area    <- (new_size    / 2) ^ 2 * pi
+    new_area_lo <- (new_size_lo / 2) ^ 2 * pi
+    new_area_hi <- (new_size_hi / 2) ^ 2 * pi
+    # Apply chronic partial mortality to surviving colonies' starting area.
     this_mortality_partial <- subset(mortality_partial, mortality_partial["size_bin_cm"] == this_bin)[this_morph][, 1]
     this_mortality_partial <- this_mortality_partial / 100 # Convert from percent to proportion
-    new_area <- new_area * (1 - this_mortality_partial)
+    new_area    <- new_area    * (1 - this_mortality_partial)
+    new_area_lo <- new_area_lo * (1 - this_mortality_partial)
+    new_area_hi <- new_area_hi * (1 - this_mortality_partial)
 
-    # Shrink colonies due to bleaching partial mortality
+    # Shrink colonies due to DHW-driven partial mortality:
     # If bleaching occurs this year, apply the remaining bleaching stress
-    # that did not cause mortality as a reduction to the colonies' area:
+    # that did not cause whole-colony mortality as a reduction to the remaining colonies' area:
     if (bleaching) {
-      new_area <- new_area * (1 - sp_dhw_loss * (1 - sp_dhw_mortality))
+      new_area    <- new_area    * (1 - sp_dhw_loss    * (1 - sp_dhw_mortality))
+      # Low DHW interval is more severe than high DHW, so calculate area_lo with loss_lo
+      new_area_lo <- new_area_lo * (1 - sp_dhw_loss_lo * (1 - sp_dhw_mortality))
+      new_area_hi <- new_area_hi * (1 - sp_dhw_loss_hi * (1 - sp_dhw_mortality))
     }
 
     # Recalculate post-mortality colony diameter from reduced new_area:
-    new_size <- 2 * sqrt(new_area / pi)
+    new_size    <- 2 * sqrt(new_area    / pi)
+    new_size_lo <- 2 * sqrt(new_area_lo / pi)
+    new_size_hi <- 2 * sqrt(new_area_hi / pi)
 
     # Grow the surviving colonies
     # Apply post-bleaching growth reduction to planar growth rate.
-    new_size_lo <- new_size + sp_growth_rate_lo * (1 - post_bleach_growth_reduction)
-    new_size_hi <- new_size + sp_growth_rate_hi * (1 - post_bleach_growth_reduction)
-    new_size    <- new_size + sp_growth_rate    * (1 - post_bleach_growth_reduction)
+    new_size    <- new_size    + sp_growth_rate    * (1 - post_bleach_growth_reduction)
+    new_size_lo <- new_size_lo + sp_growth_rate_lo * (1 - post_bleach_growth_reduction)
+    new_size_hi <- new_size_hi + sp_growth_rate_hi * (1 - post_bleach_growth_reduction)
 
     # Recalculate the post-growth per-colony area:
     new_area    <- (new_size    / 2) ^ 2 * pi
     new_area_lo <- (new_size_lo / 2) ^ 2 * pi
     new_area_hi <- (new_size_hi / 2) ^ 2 * pi
-    # Calculate per-species area:
+    # Multiply by colony count to calculate per-species area:
     sp_area    <- new_area    * colony_count_thisrun
     sp_area_lo <- new_area_lo * colony_count_thisrun_lo
     sp_area_hi <- new_area_hi * colony_count_thisrun_hi
@@ -993,23 +1097,27 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
 
     # Bounded budgets (same geometry, bounded calcification rate). Fall back to
     # the average rate when a bound is missing so min/max mirror the mean.
-    r_lo <- if (is.finite(rate_lo)) rate_lo else if (length(sp_rate)) sp_rate else NA_real_
-    r_hi <- if (is.finite(rate_hi)) rate_hi else if (length(sp_rate)) sp_rate else NA_real_
-    budget_lo <- (r_lo * sp_area_lo) / site_area
-    budget_hi <- (r_hi * sp_area_hi) / site_area
+    cr_lo <- if (is.finite(calc_rate_lo)) calc_rate_lo else if (length(sp_rate)) sp_rate else NA_real_
+    cr_hi <- if (is.finite(calc_rate_hi)) calc_rate_hi else if (length(sp_rate)) sp_rate else NA_real_
+    budget_lo <- (cr_lo * sp_area_lo) / site_area
+    budget_hi <- (cr_hi * sp_area_hi) / site_area
 
     # Sanity check: growth table printout
     if (check_sanity) {
       log_msg(
-        str_pad(paste0("Y", i - 1),                  width = 8),  "|",
-        str_pad(sprintf("%.2f", sp_area),            width = 8),  "|",
-        str_pad(sprintf("%.3f", carb_accr),          width = 18), "|",
-        str_pad(sprintf("%.3f", carb_budg),          width = 20), "|",
-        str_pad(sprintf("%d", colony_count_thisrun), width = 12), "|",
-        "  ", # Space area interval a bit further
-        str_pad(sprintf("%.2f", sp_area_lo),         width = 6, side = "both"),  "|",
-        str_pad(sprintf("%.2f", sp_area),            width = 6, side = "both"),  "|",
-        str_pad(sprintf("%.2f", sp_area_hi),         width = 6, side = "both")
+        str_pad(paste0("Y", i - 1),                     width = 7), " |",
+        str_pad(sprintf("%d", colony_count_thisrun_lo), width = 6), " :",
+        str_pad(sprintf("%d", colony_count_thisrun),    width = 6), " :",
+        str_pad(sprintf("%d", colony_count_thisrun_hi), width = 6), "   |",
+        "   ", # Spacer
+        # str_pad(sprintf("%.3f", carb_budg),             width = 24), " |",
+        str_pad(sprintf("%.2f", new_size_lo * 100),     width = 6), " :",
+        str_pad(sprintf("%.2f", new_size * 100),        width = 6), " :",
+        str_pad(sprintf("%.2f", new_size_hi * 100),     width = 6), "   |",
+        "   ",
+        str_pad(sprintf("%.2f", sp_area_lo),         width = 7), " : ",
+        str_pad(sprintf("%.2f", sp_area),            width = 7), " : ",
+        str_pad(sprintf("%.2f", sp_area_hi),         width = 7)
       )
     }
 
@@ -1017,28 +1125,28 @@ simulate_growth <- function(group, subregion, species, colony_count, colony_diam
     # Exclude CCA from coral cover
     if (str_detect(species, "algae")) {
       pct_cvr    <- 0
-      pct_cvr_lo <- 0
-      pct_cvr_hi <- 0
+      pct_cvcr_lo <- 0
+      pct_cvcr_hi <- 0
     } else {
-      pct_cvr    <- sp_area / site_area * 100
-      pct_cvr_lo <- sp_area_lo / site_area * 100
-      pct_cvr_hi <- sp_area_hi / site_area * 100
+      pct_cvr     <- sp_area    / site_area * 100
+      pct_cvcr_lo <- sp_area_lo / site_area * 100
+      pct_cvcr_hi <- sp_area_hi / site_area * 100
     }
 
-    out_df[i, "area"]      <- sp_area # Calcifier area
+    out_df[i, "area"]      <- sp_area   # Calcifier area
     out_df[i, "carb_accr"] <- carb_accr # Site-wide carbonate accretion contribution (kg CaCO3 / yr)
     out_df[i, "carb_budg"] <- carb_budg # Calcifier carbonate budget (kg CaCO3 / m2 / yr)
     out_df[i, "pct_cvr"]   <- pct_cvr   # Hard coral percent cover
 
     out_df_min[i, "area"]      <- sp_area_lo
-    out_df_min[i, "carb_accr"] <- r_lo * sp_area_lo
+    out_df_min[i, "carb_accr"] <- cr_lo * sp_area_lo
     out_df_min[i, "carb_budg"] <- budget_lo
-    out_df_min[i, "pct_cvr"]   <- pct_cvr_lo
+    out_df_min[i, "pct_cvr"]   <- pct_cvcr_lo
 
     out_df_max[i, "area"]      <- sp_area_hi
-    out_df_max[i, "carb_accr"] <- r_hi * sp_area_hi
+    out_df_max[i, "carb_accr"] <- cr_hi * sp_area_hi
     out_df_max[i, "carb_budg"] <- budget_hi
-    out_df_max[i, "pct_cvr"]   <- pct_cvr_hi
+    out_df_max[i, "pct_cvr"]   <- pct_cvcr_hi
   }
 
   if (check_sanity) log_msg("\n")
@@ -1130,6 +1238,8 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
   n <- sim_duration + 1
   total_rap  <- rep(0, n)
   total_cvr  <- rep(0, n)
+  total_cvr_min  <- rep(0, n)
+  total_cvr_max  <- rep(0, n)
   total_budg <- rep(0, n)
   total_budg_min <- rep(0, n)
   total_budg_max <- rep(0, n)
@@ -1146,7 +1256,8 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
     current_sp_m <- site_area * (current_sp_pct / 100)
 
     # Average colony diameter for this species, converted from cm to m
-    sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100 
+    sp_diam <- subset(diams, diams["name"] == species)["length_mean"][, 1] / 100
+    # Skip species without an initial diameter
     if (length(sp_diam) == 0 || is.na(sp_diam)) next
     # Round to nearest colony. Does this introduce too much rounding error?
     orig_colonies <- round(current_sp_m / ((sp_diam / 2) ^ 2 * pi))
@@ -1167,18 +1278,30 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
 
     #total_rap  <- total_rap  + sim$df$RAP
     total_cvr      <- total_cvr      + sim$df$pct_cvr
+    total_cvr_min  <- total_cvr_min  + sim$df_min$pct_cvr
+    total_cvr_max  <- total_cvr_max  + sim$df_max$pct_cvr
     total_budg     <- total_budg     + sim$df$carb_budg
     total_budg_min <- total_budg_min + sim$df_min$carb_budg
     total_budg_max <- total_budg_max + sim$df_max$carb_budg
-    # Per-species end-of-duration cover (last simulated year).
+    # Per-species end-of-duration cover (last simulated year). CCA's pct_cvr is
+    # forced to 0 inside simulate_growth (excluded from coral cover), so recover
+    # its cover from grown AREA instead; corals use pct_cvr as before.
     prev <- if (species %in% names(end_cover_by_species)) end_cover_by_species[[species]] else 0
-    end_cover_by_species[species] <- prev + sim$df$pct_cvr[nrow(sim$df)]
+    end_val <- if (str_detect(species, "algae")) {
+      (sim$df$area[nrow(sim$df)] / site_area) * 100
+    } else {
+      sim$df$pct_cvr[nrow(sim$df)]
+    }
+    end_cover_by_species[species] <- prev + end_val
   }
 
   log_msg(str_pad(" Baseline growth simulation complete ", side = "both", width = 90, pad = "="), "\n")
 
   df <- data.frame(Year = 0:sim_duration, #RAP_orig = total_rap,
-             pct_cvr_orig = total_cvr, carb_budg_orig = total_budg,
+             pct_cvr_orig = total_cvr,
+             pct_cvr_orig_min = total_cvr_min,
+             pct_cvr_orig_max = total_cvr_max,
+             carb_budg_orig = total_budg,
              carb_budg_orig_min = total_budg_min,
              carb_budg_orig_max = total_budg_max)
   attr(df, "end_cover_by_species") <- end_cover_by_species
@@ -1202,13 +1325,34 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
                                   sim_duration, rest_horizon,
                                   bleaching_severity, bleaching_frequency,
                                   target_cover_df, extra_years_df = NULL,
-                                  progress_cb = NULL) {
+                                  olb_pct = 0, progress_cb = NULL) {
 
-  # Guard: refuse if total target cover exceeds 100% of the site.
+  # ---- Reserved space: Other living benthos (OLB) ----
+  # OLB is permanently reserved and never grown. The competable area that all
+  # growing populations (corals + CCA) may occupy is reduced by OLB up front.
+  olb_pct <- if (is.null(olb_pct) || is.na(olb_pct)) NA_real_ else as.numeric(olb_pct)
+  if (!is.finite(olb_pct) || olb_pct < 0) {
+    log_msg("---- Error: 'REQUIRED Other living benthos' must be a number >= 0. ----")
+    showNotification("Error: 'REQUIRED Other living benthos' cover (>= 0) is required.",
+                     type = "error")
+    return(NULL)
+  }
+  olb_pct        <- min(olb_pct, 100)
+  competable_area <- site_area * (1 - olb_pct / 100)   # coral + CCA ceiling
+  if (competable_area <= 0) {
+    log_msg("---- Error: Other living benthos reserves all available space. ----")
+    showNotification("Error: Other living benthos leaves no space for growth.",
+                     type = "error")
+    return(NULL)
+  }
+
+  # Guard: refuse if total target cover exceeds the competable (post-OLB) space.
   total_target_pct <- sum(target_cover_df$target_cvr_pct, na.rm = TRUE)
-  if (is.finite(total_target_pct) && total_target_pct > 100) {
-    log_msg("---- Error: Target cover cannot exceed 100%. ----")
-    showNotification("Error: Target cover cannot exceed 100%.", type = "error")
+  cap_pct <- 100 - olb_pct
+  if (is.finite(total_target_pct) && total_target_pct > cap_pct) {
+    log_msg(sprintf("---- Error: Target cover cannot exceed %.1f%% (100%% - OLB). ----", cap_pct))
+    showNotification(sprintf("Error: Target cover cannot exceed %.1f%% (100%% minus Other living benthos).", cap_pct),
+                     type = "error")
     return(NULL)
     # return(list(budget_df = data.frame(),
     #             outplants_by_species = c(),
@@ -1245,10 +1389,11 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   carb_budg_new_max  <- rep(0, n)
   # RAP_new         <- rep(0, n)
   pct_cvr_new     <- rep(0, n)
+  pct_cvr_min     <- rep(0, n)
   pct_cvr_max     <- rep(0, n)
 
   # ---- Per-interval coral AREA accumulators (m2), all populations summed ----
-  # These drive the per-year, per-interval overgrowth cap (item 4/6). Kept
+  # These drive the per-year, per-interval overgrowth cap. Kept
   # separate from the budget accumulators so the cap can rescale area and the
   # budget is recomputed from capped area afterward.
   coral_area_orig     <- rep(0, n)   # originals, mean
@@ -1261,6 +1406,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   # Per-species summed population AREA (m2) across Y0 + additional-year efforts.
   # Converted to capped end-of-duration cover after the overgrowth cap.
   species_area_by_sp <- list()   # named: species -> numeric vector length n
+
+  # CCA grown-area series (m2, soft ceiling). NULL until a CCA row is grown.
+  cca_grown_area <- NULL
 
   outplants_by_species <- c()   # named: species -> outplant count
   achieved_cover_by_species <- c()  # named: species -> total % cover at horizon
@@ -1296,8 +1444,16 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     carb_budg_orig_max <- carb_budg_orig_max + orig_list$df_max$carb_budg
     # RAP_orig        <- RAP_orig        + od$RAP
     pct_cvr_orig    <- pct_cvr_orig    + od$pct_cvr
-    # Per-interval area (CCA excluded from the cap; handled separately last)
-    if (!str_detect(species, "algae")) {
+
+    # Per-interval area (CCA excluded from the coral cap; its grown area is
+    # captured separately as a soft maximum that coral may overgrow).
+    if (str_detect(species, "algae")) {
+      # Accumulate the CCA population's GROWN area per year (soft ceiling).
+      cca_grown_area <- (if (is.null(cca_grown_area)) rep(0, n) else cca_grown_area) + od$area
+      # CCA still contributes to species_area_by_sp so its Final cover reports.
+      species_area_by_sp[[species]] <-
+        (if (is.null(species_area_by_sp[[species]])) 0 else species_area_by_sp[[species]]) + od$area
+    } else {
       coral_area_orig    <- coral_area_orig    + od$area
       coral_area_orig_lo <- coral_area_orig_lo + orig_list$df_min$area
       coral_area_orig_hi <- coral_area_orig_hi + orig_list$df_max$area
@@ -1399,12 +1555,12 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
         outplant_guess <- max(0, ceiling(sp_to_grow_m / per_colony_area))
       }
 
-      log_msg("Initial outplant guess:", outplant_guess)
+      log_msg("Initial outplant guess: ", outplant_guess)
 
       reiterate <- TRUE
       guard <- 0
-      step_schedule <- c(100, 10, 1)
-      step_i <- if (outplant_guess > 200) 1 else if (outplant_guess > 40) 2 else 3
+      step_schedule <- c(1000, 100, 10, 1)
+      step_i <- if (outplant_guess > 2000) 1 else if (outplant_guess > 200) 2 else if (outplant_guess > 40) 3 else 4
       step <- step_schedule[step_i]
       prev_sign <- 0
 
@@ -1467,14 +1623,14 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       }
     }
 
-    if (!count_driven && rest_horizon > 0) log_msg("Outplant count solved in", guard, "iterations.")
+    if (!count_driven && rest_horizon > 0) log_msg("Outplant count solved in ", guard, " iterations.")
     if (is.function(progress_cb)) {
       iters <- if (rest_horizon > 0) guard else 0L
       progress_cb(paste0("Simulating restored ", abbrev_species(species),
                          " (", iters, " iterations)..."))
     }
 
-    log_msg(" Simulating outplanting solution...")
+    log_msg("Simulating outplanting solution...")
 
     # ---- PHASE 2: run the solved outplant count for the FULL simulation duration ----
     row_opc <- target_cover_df$opc[row_i]
@@ -1497,7 +1653,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     carb_budg_new_max <- carb_budg_new_max + nd_max$carb_budg
     # RAP_new        <- RAP_new        + nd$RAP
     pct_cvr_new    <- pct_cvr_new    + nd$pct_cvr
+    pct_cvr_min    <- pct_cvr_min    + nd_min$pct_cvr
     pct_cvr_max    <- pct_cvr_max    + nd_max$pct_cvr
+
     if (!str_detect(species, "algae")) {
       coral_area_new    <- coral_area_new    + nd$area
       coral_area_new_lo <- coral_area_new_lo + nd_min$area
@@ -1511,16 +1669,18 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     # the count produced). Baseline/original cover for the species is added so
     # the reported Target reflects total species cover, matching the input's
     # meaning (target = total % cover for that species).
-    hr_idx <- min(rest_horizon + 1, nrow(nd))
-    orig_hr <- if (!is.null(orig_only) && nrow(orig_only[[1]]) >= hr_idx) {
-      orig_only[[1]][["pct_cvr"]][hr_idx]
-    } else 0
-    achieved_cover_by_species[species] <- .safe0(nd$pct_cvr[hr_idx]) + .safe0(orig_hr)
+    dr_idx <- nrow(nd) # min(rest_horizon + 1, nrow(nd)) # duration row index
+    orig_dr <- if (!is.null(orig_only) && nrow(orig_only[[1]]) >= dr_idx) {
+      orig_only[[1]][["pct_cvr"]][dr_idx]
+    } else {
+      0
+    }
+    achieved_cover_by_species[species] <- .safe0(nd$pct_cvr[dr_idx]) + .safe0(orig_dr)
     total_cost <- total_cost + outplant_guess * row_cost
     any_growth <- TRUE
   }
 
-  # ---- Phase 2.5: additional-year outplant efforts (item 3d) ----
+  # ---- Phase 2.5: additional-year outplant efforts ----
   # Each (species, plant_year) is an independent population. It contributes 0
   # area/budget before its plant_year, then grows for the remaining duration.
   # Populations are offset in time by prepending plant_year zero-rows.
@@ -1559,6 +1719,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
       carb_budg_new_min <- carb_budg_new_min + pad(el$df_min$carb_budg)
       carb_budg_new_max <- carb_budg_new_max + pad(el$df_max$carb_budg)
       pct_cvr_new       <- pct_cvr_new       + pad(el$df$pct_cvr)
+      pct_cvr_min       <- pct_cvr_min       + pad(el$df_min$pct_cvr)
       pct_cvr_max       <- pct_cvr_max       + pad(el$df_max$pct_cvr)
       coral_area_new    <- coral_area_new    + pad(el$df$area)
       coral_area_new_lo <- coral_area_new_lo + pad(el$df_min$area)
@@ -1586,6 +1747,7 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     area_new = area_new, calc_accr_new = calc_accr_new,
     carb_budg_new = carb_budg_new,
     pct_cvr_new = pct_cvr_new,
+    pct_cvr_min = pct_cvr_min,
     pct_cvr_max = pct_cvr_max
   )
 
@@ -1594,10 +1756,14 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$carb_budg_total  <- budget_df$carb_budg_orig  + budget_df$carb_budg_new
   budget_df$pct_cvr_total    <- budget_df$pct_cvr_orig    + budget_df$pct_cvr_new
 
+  budget_df$pct_cvr_total_min    <- budget_df$pct_cvr_orig    + budget_df$pct_cvr_min
+  budget_df$pct_cvr_total_max    <- budget_df$pct_cvr_orig    + budget_df$pct_cvr_max
+
+
   budget_df$carb_budg_total_min <- carb_budg_orig_min + carb_budg_new_min
   budget_df$carb_budg_total_max <- carb_budg_orig_max + carb_budg_new_max
 
-  # ---- Per-interval overgrowth cap (items 4 & 6) ----
+  # ---- Per-interval overgrowth cap ----
   # Total coral area may overgrow UC + CCA but never exceed site_area. When the
   # summed coral area (per interval) would exceed site_area, scale that
   # interval's coral contributions down by the same factor. Independent scale
@@ -1606,8 +1772,10 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   coral_area_lo   <- coral_area_orig_lo + coral_area_new_lo
   coral_area_hi   <- coral_area_orig_hi + coral_area_new_hi
 
+  # Coral may overgrow UC + CCA but never exceed the COMPETABLE area
+  # (site_area minus permanently-reserved OLB).
   cap_factor <- function(area_vec) {
-    ifelse(area_vec > site_area & area_vec > 0, site_area / area_vec, 1)
+    ifelse(area_vec > competable_area & area_vec > 0, competable_area / area_vec, 1)
   }
   f_mean <- cap_factor(coral_area_mean)
   f_lo   <- cap_factor(coral_area_lo)
@@ -1616,8 +1784,8 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   cap_year <- which(f_mean < 1)
   if (length(cap_year)) {
     log_msg(sprintf(
-      "Coral cover reached 100%% at year %d; overgrowing UC/CCA, capping at site area.",
-      cap_year[1] - 1))
+      "Coral cover reached the competable cap (%.1f%% of site) at year %d; capping.",
+      cap_pct, cap_year[1] - 1))
   }
 
   # Apply cap factors (mean to mean, bound factors to bounds).
@@ -1627,41 +1795,51 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$pct_cvr_orig    <- budget_df$pct_cvr_orig    * f_mean
   budget_df$pct_cvr_new     <- budget_df$pct_cvr_new     * f_mean
   budget_df$pct_cvr_total   <- budget_df$pct_cvr_total   * f_mean
+  budget_df$pct_cvr_total_min   <- budget_df$pct_cvr_total_min   * f_lo
+  budget_df$pct_cvr_total_max   <- budget_df$pct_cvr_total_max   * f_hi
   budget_df$carb_budg_total_min <- budget_df$carb_budg_total_min * f_lo
   budget_df$carb_budg_total_max <- budget_df$carb_budg_total_max * f_hi
 
   capped_coral_mean <- coral_area_mean * f_mean
 
-  # Per-species end-of-duration cover (%), after applying the per-interval cap
-  # factor so the sum of species covers never exceeds 100%.
+  # End-of-duration cover (% of whole site). Coral species get the mean cap
+  # factor. CCA is special: its reported cover is the UNCOVERED grown CCA area
+  # (computed below as cca_area_yr), not its raw grown area, so it reflects
+  # overgrowth. Filled in after cca_area_yr is known.
   end_cover_by_species <- vapply(names(species_area_by_sp), function(sp_nm) {
+    if (grepl("algae", sp_nm, fixed = TRUE)) return(NA_real_)   # set after cca_area_yr
     av <- species_area_by_sp[[sp_nm]]
     (av[n] * f_mean[n]) / site_area * 100
   }, numeric(1))
   names(end_cover_by_species) <- names(species_area_by_sp)
 
-  # ---- CCA (fixed) + per-step microbioerosion (item 4) ----
-  # CCA occupies its baseline area as a fixed calcifying layer. Coral overgrows
-  # CCA and UC; CCA does NOT regrow once overgrown. CCA's calcification counts
-  # only over the CCA area that remains UNCOVERED by coral each year.
-  # Microbioerosion is recomputed each year from the remaining UC area.
+  # ---- CCA (growing, overgrowable) + per-step microbioerosion ----
+  # CCA grows (Phase 0) up to a per-year soft maximum = its grown area. Coral
+  # may overgrow CCA (and UC). The uncovered CCA area each year is the smaller
+  # of (grown CCA area) and (space left after coral). CCA calcifies over that
+  # uncovered area. Microbioerosion is recomputed from remaining UC area.
+  # All space terms are bounded by competable_area (OLB is reserved).
   uc_area0  <- site_area * uc_pct / 100
   cca_rows  <- target_cover_df[str_detect(target_cover_df$taxon, "algae"), , drop = FALSE]
-  cca_pct0  <- if (nrow(cca_rows)) sum(cca_rows$current_cvr_pct, na.rm = TRUE) else 0
-  cca_area0 <- site_area * cca_pct0 / 100
 
   be_sd <- bioerosion_stdev(subregion, habitat)
   macro_hi <- macrobioerosion + (if (is.finite(be_sd[2])) be_sd[2] else 0)
   macro_lo <- macrobioerosion + (if (is.finite(be_sd[1])) be_sd[1] else 0)
 
-  # Remaining non-coral area each year. Coral overgrows CCA first, then UC.
-  noncoral_area <- pmax(0, site_area - capped_coral_mean)
-  cca_area_yr   <- pmin(cca_area0, noncoral_area)          # uncovered CCA
-  uc_area_yr    <- pmax(0, noncoral_area - cca_area_yr)    # uncovered UC
+  # Space available to CCA + UC after coral: competable area minus capped coral.
+  # (capped_coral_mean never exceeds competable_area by construction.)
+  noncoral_area <- pmax(0, competable_area - capped_coral_mean)
+
+  # CCA soft ceiling: the grown CCA area per year (0 when no CCA present).
+  cca_ceiling <- if (is.null(cca_grown_area)) rep(0, n) else cca_grown_area
+  # Uncovered CCA = min(grown CCA, space left after coral).
+  cca_area_yr <- pmin(cca_ceiling, noncoral_area)
+  # Remaining UC after coral + uncovered CCA.
+  uc_area_yr  <- pmax(0, noncoral_area - cca_area_yr)
 
   budget_df$microbioerosion <- (uc_area_yr / site_area) * be_micro_rate
 
-  # CCA calcification over uncovered CCA area (fixed layer, no regrowth).
+  # CCA calcification over the uncovered (overgrowth-limited) grown CCA area.
   if (nrow(cca_rows)) {
     cca_sp   <- cca_rows$taxon[1]
     cca_rate <- calc_rates$rate[calc_rates$Taxon == cca_sp]
@@ -1671,7 +1849,13 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     budget_df$carb_budg_orig      <- budget_df$carb_budg_orig      + cca_budg
     budget_df$carb_budg_total_min <- budget_df$carb_budg_total_min + cca_budg
     budget_df$carb_budg_total_max <- budget_df$carb_budg_total_max + cca_budg
+
+    # Report CCA final cover as the uncovered CCA area at the final year.
+    end_cover_by_species[cca_sp] <- (cca_area_yr[n] / site_area) * 100
   }
+
+  # Drop any leftover NA CCA placeholders (e.g., a CCA row with no grown area).
+  end_cover_by_species <- end_cover_by_species[!is.na(end_cover_by_species)]
 
   por <- assemblage_porosity(target_cover_df, "target_cvr_pct")
 
@@ -1698,7 +1882,9 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     achieved_cover_by_species = achieved_cover_by_species,
     end_cover_by_species = end_cover_by_species,
     outplants = sum(outplants_by_species),
-    cost      = total_cost
+    cost      = total_cost,
+    olb_pct   = olb_pct,
+    competable_area = competable_area
   )
 }
 
@@ -1912,7 +2098,7 @@ build_impact_summary <- function(label, b_cover, r_cover, b_budget, r_budget,
     "<p>", arrow(d_cover), " Coral cover change: <b>",
     sprintf("%+.1f", d_cover), " %</b></p>",
     "<p>", arrow(d_budget), " Carbonate budget change: <b>",
-    sprintf("%+.2f", d_budget), " kg/m\u00b2/yr</b></p>",
+    sprintf("%+.2f", d_budget), " kg/m²/yr</b></p>",
     "<p>", arrow(d_rap), " Reef accretion potential change: <b>",
     sprintf("%+.2f", d_rap), " mm/yr</b></p>",
     "<p>", arrow(d_pct), " RAP percentile change: <b>",
@@ -2004,8 +2190,8 @@ body <- dashboardBody(
   tags$head(
     includeHTML(here("gtag.html")),
     includeCSS(here("styles.css")),
-    # Preserve custom background color (optional)
     tags$style(HTML("
+      /* Preserve custom background color */
       .content-wrapper, .right-side { background-color: #BFDADA; }
       .custom-absolute-panel { z-index: 9999; }
       /* .box { color: #000; } */
@@ -2110,14 +2296,17 @@ body <- dashboardBody(
         flex: 1 1 auto; font-weight: normal; font-size: 14px;
       }
       .param-inline-row .shiny-input-container { width: auto; margin-bottom: 0; }
-      .param-inline-row input {
-        width: 9ch; min-width: 9ch; padding: 2px 4px; text-align: right;
+      .param-inline-row .num-input {
+        width: 18ch; min-width: 15ch; padding: 2px 0px; text-align: right; margin-right: -20px;
+      }
+      .param-inline-row .sel-input {
+        width: 70%; min-width: 20ch; padding: 2px 0px; text-align: left;
       }
       .param-inline-row .param-unit {
         flex: 0 0 auto; font-weight: normal; font-size: 14px; width: 4ch;
       }
 
-      /* Apply bolding to shinydashboard::box titles */
+      /* Apply bolding and shadow to shinydashboard::box titles */
       .box-header .box-title {
         font-weight: bold;
         text-shadow: -1px -1px 0 black, 1px -1px 0 black,
@@ -2125,7 +2314,7 @@ body <- dashboardBody(
       }
 
       /* Shrink the main value text size and add a 1px black text shadow in the valueBox readouts */
-      .small-box h3 { 
+      .small-box h3 {
         font-size: 30px; !important;
         text-shadow: -1px -1px 0 black, 1px -1px 0 black,
                           -1px 1px 0 black, 1px 1px 0 black;
@@ -2169,7 +2358,24 @@ body <- dashboardBody(
       body.dark-mode .log-panel-body pre { color: #e6e6e6; background: #232a33; }
       body.dark-mode .log-panel-header { background: #10141a; color: #e6e6e6; }
 
-      /* ---- Responsive uniform scaling for smaller screens ---- */
+      /* ---- Full-height content area (fixes Home map + About cutoff) ----
+         Under body.fixed + zoom, the content wrapper doesn't stretch to the
+         zoom-adjusted viewport, so absolutely-positioned fills (the Home map)
+         and tall blocks (About) get clipped partway down. Pin the wrapper to
+         at least the full viewport height and let the map fill it. */
+      .content-wrapper, .right-side {
+        min-height: 100vh;
+      }
+      .home-map-outer {
+        min-height: 100vh;
+        height: 100%;
+      }
+      #mymap {
+        height: 100vh !important;
+      }
+      .tab-content, .tab-pane.active {
+        min-height: 100vh;
+      }
 
       /* ---- Responsive uniform scaling for smaller screens ---- */
       /* Shrink the whole layout proportionally so a laptop looks like a
@@ -2303,33 +2509,46 @@ body <- dashboardBody(
     tags$script(HTML("
       var RPT_TIPS = {
         'baseline_template_dl': 'Download a template baseline-input .xlsx file.',
+        'baseline_upload': 'Upload an .xlsx file containing baseline reef site percent-cover data.',
         'baseline_load_example': 'Upload example baseline data.',
         'baseline_load_cache': 'Upload cached inputs from the most recent scenario.',
         'baseline_site': 'Select an uploaded survey site, or type a name to build a scenario from scratch.',
         'site_area_m2': 'Total planar area of the reef patch being modeled, in square meters.',
         'site_latitude': 'Site latitude in decimal degrees (optional; used for mapping).',
         'site_longitude': 'Site longitude in decimal degrees (optional; used for mapping).',
-        'subregion_choice': 'Reef subregion, used to look up region-specific bioerosion rates and bleaching-mortality relationships.',
+        'subregion_choice': 'Reef subregion, used to find region-specific bioerosion rates and bleaching-mortality relationships.',
         'habitat_choice': 'Habitat type within the subregion, used to refine bioerosion rates.',
-        'additional_outplant_years': 'Comma-separated integer years (after Year 0) at which to place additional outplants for count-driven species. Each year becomes an extra effort row in that species dropdown.'
-        'add_baseline_species': 'Add another species to the Restoration Mix.',
+        'baseline_save_dl': 'Save all this inputs for this scenario as an .xlsx file.',
+        'baseline_delete_cache': 'Delete the cached baseline input. Does not affect the original input file.',
+        'reset_mix': 'Clear all input cells in the Restoration Mix except Baseline Cover.',
+        'additional_outplant_years': 'Comma-separated integer years (after Year 0) at which to place additional outplants. Each year becomes an extra row in count-driven species dropdowns.',
+        'base_REQUIRED_Other_living_benthos': 'Percent cover of other living benthos (sponges, soft corals, etc.). This space is considered unavailable for calcifier growth. A value of 0 or greater is required.',
+        'base_REQUIRED_Unconsolidated_substrate': 'Percent cover of unconsolidated substrate (sand, rubble, etc.). This value is used to determine the available non-coral consolidated substrate affected by microbioerosion. This area is considered available for calcifier growth.',
         'sim_duration': 'Number of years to project reef growth into the future.',
-        'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting.',
+        'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting and and projected coral growth.',
         'dhw': 'Thermal-stress severity of each bleaching event, in degree-heating weeks.',
         'bleach_events': 'How often bleaching occurs, expressed as events per five-year period.',
         'scenario_project': 'A project name which groups related scenarios together for comparison.',
         'scenario_name': 'A label for this specific parameter combination.',
         'reactive_sim': 'When on, the projection recomputes automatically as inputs change.',
+        'save_scenario': 'Save the results of this simulation to a .json file. Compare these outputs in the Scenario Comparison tab.',
+        'run_sim': 'Run the growth simulation with the current scenario parameters.',
         'target_cover_increase': 'Hypothetical increase in coral cover, used to preview restored reef status on the map.',
         'symbolize_by': 'Choose which metric colors the site markers.',
-        'show_named_reefs': 'Overlay labeled named-reef polygons on the map.',
+        'show_named_reefs': 'Overlay labeled named-reef points and polygons on the map.',
+        'filter_habitat_dd': 'Only display sites in the selected habitat(s).',
+        'filter_year_dd': 'Only display sites surveyed in the selected year(s).',
         'show_slr': 'Overlay projected sea-level-rise rates on the timeline.',
+        'sc_project': 'Select a project within which to compare scenarios.',
+        'sc_scenarios': 'Select which scenarios to compare within the selected project.',
         'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
         'sc_refresh': 'Re-scan the scenarios folder and update the list of options.',
         'sc_download_csv': 'Download the Comparison Table as a .csv file.',
         'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
+        'upload_cover': 'Upload an .xlsx file containing cover-monitoring timeseries data.',
         'monitoring_cover_template_dl': 'Download a template cover-monitoring-input .xlsx file.',
         'cover_load_example': 'Upload example cover-monitoring data.',
+        'upload_bioerosion': 'Upload an .xlsx file containing bioerosion-monitoring timeseries data.',
         'monitoring_bioerosion_template_dl': 'Download a template bioerosion-monitoring-input .xlsx file.',
         'bioerosion_load_example': 'Upload example bioerosion data.',
         'monitoring_show_slr': 'Overlay projected sea-level-rise reference rates on the timeline.',
@@ -2515,55 +2734,86 @@ body <- dashboardBody(
                 ),
                 fileInput("baseline_upload", NULL, accept = c(".xlsx")),
                 tags$div(
-                  style = "display: flex; margin-top: -15px; margin-bottom: 20px; gap: 6px",
+                  style = "display:flex; margin-top:-15px; margin-bottom:20px; align-items:center; justify-content:space-between",
                   actionButton("baseline_load_example", "Example",
                               icon = icon("upload"), class = "btn-sm"),
                   actionButton("baseline_load_cache", "Cache",
                               icon = icon("upload"), class = "btn-sm")
                 ),
-                selectizeInput(
-                  "baseline_site",
-                  label = tags$strong("Site"),
-                  choices = c("\u2013 Select site \u2013" = ""),
-                  selected = "",
-                  options = list(create = TRUE, placeholder = "Select or type a site...")
+                tags$hr(),
+                tags$div(
+                  class = "param-inline-row",
+                  tags$span(class = "param-label", tags$strong("Site")),
+                  tags$span(
+                    class = "sel-input",
+                    selectizeInput(
+                      "baseline_site",
+                      label = NULL,
+                      choices = c("\u2013 Select site \u2013" = ""),
+                      selected = "",
+                      options = list(create = TRUE, placeholder = "Select or type a site...")
+                    )
+                  )
                 ),
                 tags$div(
                   class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Latitude:")),
-                  numericInput("site_latitude", label = NULL,
-                    value = NA, min = -90, max = 90, step = 0.00001
+                  tags$span(class = "param-label", tags$strong("Subregion")),
+                  tags$span(
+                    class = "sel-input",
+                    selectInput(
+                      "subregion_choice",
+                      label = NULL,
+                      choices = c("\u2013 Select subregion \u2013" = "",
+                                  unname(subregion_labels)),
+                      selected = ""
+                    )
+                  )
+                ),
+                tags$div(
+                  class = "param-inline-row",
+                  tags$span(class = "param-label", tags$strong("Habitat")),
+                  tags$span(
+                    class = "sel-input",
+                    selectInput(
+                      "habitat_choice",
+                      label = NULL,
+                      choices = c("\u2013 Select habitat \u2013" = ""),
+                      selected = ""
+                    )
+                  )
+                ),
+                tags$div(
+                  class = "param-inline-row",
+                  tags$span(class = "param-label", tags$strong("Site area")),
+                  tags$span(
+                    class = "num-input",
+                    numericInput("site_area_m2", label = NULL,
+                    value = 100, min = 1, max = 10000, step = 1
+                    )
+                  ),
+                  tags$span(class = "param-unit", "m²")
+                ),
+                tags$div(
+                  class = "param-inline-row",
+                  tags$span(class = "param-label", tags$strong("Latitude")),
+                  tags$span(
+                    class = "num-input",
+                    numericInput("site_latitude", label = NULL,
+                      value = NA, min = -90, max = 90, step = 0.00001
+                    )
                   ),
                   tags$span(class = "param-unit", "\u00b0")
                 ),
                 tags$div(
                   class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Longitude:")),
-                  numericInput("site_longitude", label = NULL,
-                    value = NA, min = -180, max = 180, step = 0.00001
+                  tags$span(class = "param-label", tags$strong("Longitude")),
+                  tags$span(
+                    class = "num-input",
+                    numericInput("site_longitude", label = NULL,
+                      value = NA, min = -180, max = 180, step = 0.00001
+                    )
                   ),
                   tags$span(class = "param-unit", "\u00b0")
-                ),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Site area:")),
-                  numericInput("site_area_m2", label = NULL,
-                  value = 100, min = 1, max = 10000, step = 1
-                  ),
-                  tags$span(class = "param-unit", "m\u00b2")
-                ),
-                selectInput(
-                  "subregion_choice",
-                  label = tags$strong("Subregion"),
-                  choices = c("\u2013 Select subregion \u2013" = "",
-                              unname(subregion_labels)),
-                  selected = ""
-                ),
-                selectInput(
-                  "habitat_choice",
-                  label = tags$strong("Habitat"),
-                  choices = c("\u2013 Select habitat \u2013" = ""),
-                  selected = ""
                 )
               ),
 
@@ -2779,7 +3029,8 @@ body <- dashboardBody(
     tabItem(
       tabName = "comparison",
       fluidRow(
-      # Top row: Selection, Project Cost + ROI, RAP by scenario
+      # Top row:
+      # Left: Scenario selection
         column(
           width = 3,
           shinydashboard::box(
@@ -2794,39 +3045,48 @@ body <- dashboardBody(
             )
           )
         ),
+        # Right: Comparison DT table
         column(
-          width = 3,
+          width = 9,
+          shinydashboard::box(
+            title = "Comparison Table", width = 12,
+            status = "info", solidHeader = TRUE,
+            div(style = "overflow-x: auto;",
+              DT::DTOutput("sc_compare_dt")
+            )
+          )
+        )
+      ),
+      # Bottom row: Project Cost + ROI, RAP by scenario
+      fluidRow(
+        # Left: cost
+        column(
+          width = 4,
           shinydashboard::box(
             title = "Project Cost", width = 12,
             status = "info", solidHeader = TRUE,
-            plotOutput("sc_cost_bar", height = "300px")
+            plotOutput("sc_cost_bar"),# height = "300px")
           )
         ),
+        # Middle: ROI
         column(
-          width = 3,
+          width = 4,
           shinydashboard::box(
             title = "Return on Investment", width = 12,
-            status = "info", solidHeader = TRUE,
-            plotOutput("sc_roi_bar", height = "300px")
+            status = "primary", solidHeader = TRUE,
+            plotOutput("sc_roi_bar"),# height = "300px")
           )
         ),
+        # Right: RAP
         column(
-          width = 3,
+          width = 4,
           shinydashboard::box(
             title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
             status = "success", solidHeader = TRUE,
+            plotly::plotlyOutput("sc_rap_bar"), # height = "350px"),
             tags$div(style = "font-weight:normal; margin-bottom:4px;",
               checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
-            ),
-            plotly::plotlyOutput("sc_rap_bar", height = "350px")
-          )
-        ),
-        # Bottom row: Comparison DT table
-        shinydashboard::box(
-          title = "Comparison Table", width = 12,
-          status = "info", solidHeader = TRUE,
-          div(style = "overflow-x: auto;",
-            DT::DTOutput("sc_compare_dt")
+            )
           )
         )
       )
@@ -2912,7 +3172,8 @@ body <- dashboardBody(
               ),
               column(
                 width = 4,
-                tags$h4("Restored", style = "text-align:center; font-weight:bold;"),
+                tags$h4(textOutput("monitoring_restored_title", inline = TRUE),
+                        style = "text-align:center; font-weight:bold;"),
                 valueBoxOutput("monitoring_restored_cover", width = NULL),
                 valueBoxOutput("monitoring_restored_budget", width = NULL),
                 valueBoxOutput("monitoring_restored_rap", width = NULL)
@@ -2961,7 +3222,7 @@ body <- dashboardBody(
     tabItem(
       tabName = "about",
       shinydashboard::box(
-        width = 12, status = "primary", solidHeader = FALSE,
+        width = 12, status = "primary", solidHeader = FALSE,          
         tags$div(
           tags$h4(tags$strong("Aim")),
           HTML("The aim of this application is to provide a predictive tool for decision makers to assess reef restoration efforts under future climate change 
@@ -2969,12 +3230,12 @@ body <- dashboardBody(
           tags$br(),
           tags$h4(tags$strong("Background")),
           HTML("For reef framework to persist, constructional processes by corals and other calcifers need 
-           to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and 
-           dynamic and is currently threatened by the effects of sea-level rise, ocean warming, and ocean acidifcation.
-           
-           Although the protection and recovery of ecosystem functions are at the center of most restoration 
-           and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
-           reef accretion under different emission and bleaching scenarios."),
+          to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and 
+          dynamic and is currently threatened by the effects of sea-level rise, ocean warming, and ocean acidifcation.
+          
+          Although the protection and recovery of ecosystem functions are at the center of most restoration 
+          and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
+          reef accretion under different emission and bleaching scenarios."),
           tags$br(),
           tags$br(),
           HTML("The Reef Persistence Tool will enable decision makers to evaluate the impact of reef restoration decisions 
@@ -2993,77 +3254,97 @@ body <- dashboardBody(
             shall be held liable for any damages resulting from the authorized or unauthorized
             use of the software.", tags$br(),
           tags$br(),
-          tags$h4(tags$strong("Sources")),
-          "Chronic coral mortality rates: Browne et al. (2026)", tags$br(),
-          "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
-          "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
-          "Sea-level rise projections: Sea Level Rise and Coastal Flood Hazard Scenarios and Tools Interagency Task Force (2022)", tags$br(),
-          tags$br(),
-          "Average colony diameter: ??", tags$br(),
-          "Outplant mortality rates: ??", tags$br(),
-          "Assemblage-based reef porosity: ??", tags$br(),
-          "2014-2024 carbonate budget surveys: ??", tags$br(),
-          "Regional bioerosion rates: ??", tags$br(),
-          "Species-specific bioerosion rates: ??", tags$br(),
-          "Species-specific planar growth rates: ??", tags$br(),
-          tags$br(),
-          tags$br(),
-          tags$h4(tags$strong("Authors")),
-          "Connor M. Jenkins, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
-          "Dr. Lauren T. Toth, St. Petersburg Coastal and Marine Science Center, USGS, St. Petersburg, Florida, USA;", tags$br(),
-          "Dr. John Morris, Atlantic Oceanographic and Meteorological Laboratory, NOAA, Miami, Florida, USA", tags$br(),
-          tags$br(),
-          tags$h4(tags$strong("Contact")),
-          "Lauren Toth: ", tags$a(href = "mailto:ltoth@usgs.gov", "ltoth@usgs.gov"), tags$br(),
-          tags$br(),
-          tags$br(),
-          tags$h4(tags$strong("Acknowledgments")),
-          "A special thanks to the participants of the Carbonate Budget Tool Workshop (St. Petersburg, Florida, September 1-3, 2026),", tags$br(),
-          "who provided their time expertise to test and critique the app:", tags$br(),
-          tags$br(),
-          "Alexandra Fine, Florida Keys National Marine Sanctuary, Key Largo, Florida, USA", tags$br(),
-          "Dr. Andy Bruckner, Florida Keys National Marine Sanctuary, Key Largo, Florida, USA", tags$br(),
-          "Maurizio Martinelli, Florida Department of Environmental Protection", tags$br(),
-          "Dr. Simeon Yurek, U.S. Geological Survey Wetland and Aquatic Research Center, Gainseville, Florida, USA", tags$br(),
-          "Lucas Skay, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
-          "Dr. Stephanie Schopmeyer, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
-          "Dr. Jason Spadaro, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
-          "Dr. Sara Williams, MOTE Marine Laboratory, Sarasota, Florida", tags$br(),
-          "Dr. Jay Grove, NOAA", tags$br(),
-          "Christina Mallica, Florida Fish and Wildlife Conservation Commission", tags$br(),
-          "David Gonzales, U.S. Fish and Wildlife Commision", tags$br(),
-          "Dr. William Hall, U.S. Department of the Interior", tags$br(),
-          tags$br(),
-          "and to Dr. Alice Webb and her team, who developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "original Reef Persistence Tool"),
-          ", which was the inspiration for this project:", tags$br(),
-          tags$br(),
-          "Dr. Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
-          tags$p("Geography, College of Life and Environmental Sciences, University of Exeter, UK", style = "text-indent: 40px"),
-          "Patrick Kiel, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
-          tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
-          "Mike Jankulak, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
-          tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
-          "Dr. Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
-          tags$br(),
-          "The paper describing the original Reef Persistence Tool is published in ", tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
-
-          # Add logo panel
-          absolutePanel(
-            id = "absPanel",
-            top = "62%",
-            left = "72.5%",
-            width = "30%",
-            fixed = TRUE,
-            fluidRow(
-              column(width = 5),
-              column(width = 4,
-                tags$img(src = "noaaLogo.png", width = "200px", height = "200px")
-              ),
-              column(width = 3),
-              tags$br(),
-              tags$br(),
-              tags$br(),
-              tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
+          column(width = 8,
+            tags$h4(tags$strong("Sources")),
+            "Chronic coral mortality rates: Browne et al. (2026)", tags$br(),
+            "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
+            "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
+            "Sea-level rise projections: Sea Level Rise and Coastal Flood Hazard Scenarios and Tools Interagency Task Force (2022)", tags$br(),
+            tags$br(),
+            "Average colony diameter: ??", tags$br(),
+            "Outplant mortality rates: ??", tags$br(),
+            "Assemblage-based reef porosity: ??", tags$br(),
+            "2014-2024 carbonate budget surveys: ??", tags$br(),
+            "Regional bioerosion rates: ??", tags$br(),
+            "Species-specific bioerosion rates: ??", tags$br(),
+            "Species-specific planar growth rates: ??", tags$br(),
+            tags$br(),
+            tags$br(),
+            tags$h4(tags$strong("Authors")),
+            "Connor M. Jenkins, USGS St. Petersburg Coastal and Marine Science Center", tags$br(),
+            "Lauren T. Toth, USGS St. Petersburg Coastal and Marine Science Center", tags$br(),
+            "John Morris, NOAA Atlantic Oceanographic and Meteorological Laboratory", tags$br(),
+            "Ian Enochs, NOAA Atlantic Oceanographic and Meteorological Laboratory", tags$br(),
+            tags$br(),
+            tags$h4(tags$strong("Contact")),
+            "Lauren Toth: ", tags$a(href = "mailto:ltoth@usgs.gov", "ltoth@usgs.gov"), tags$br(),
+            tags$br(),
+            tags$br(),
+            tags$h4(tags$strong("Acknowledgments")),
+            "A special thanks to the participants of the Carbonate Budget Tool Workshop (St. Petersburg, Florida, September 1-3, 2026),", tags$br(),
+            "who provided their time and expertise to test and critique the app:", tags$br(),
+            tags$br(),
+            tags$strong("Subject Matter Experts:"), tags$br(),
+            "Simeon Yurek, USGS Wetland and Aquatic Research Center", tags$br(),
+            "Jay Grove*, NOAA Southeast Fisheries Science Center", tags$br(),
+            "Alice Webb*, University of Exeter", tags$br(),
+            "Chris Perry*, University of Exeter", tags$br(),
+            tags$br(),
+            tags$strong("Stakeholders:"), tags$br(),
+            "Sara Williams, MOTE Marine Laboratory", tags$br(),
+            "Jason Spadaro, MOTE Marine Laboratory", tags$br(),
+            "Lucas Skay, MOTE Marine Laboratory", tags$br(),
+            "Nick Alcaraz*, Florida Fish and Wildlife Conservation Commission", tags$br(),
+            "Christina Mallica, Florida Fish and Wildlife Conservation Commission", tags$br(),
+            "Stephanie Schopmeyer, Florida Fish and Wildlife Conservation Commission", tags$br(),
+            "Andy Bruckner, NOAA Florida Keys National Marine Sanctuary", tags$br(),
+            "Alexandra Fine, NOAA Florida Keys National Marine Sanctuary", tags$br(),
+            "Maurizio Martinelli, Florida Department of Environmental Protection", tags$br(),
+            tags$br(),
+            tags$strong("Facilitators:"), tags$br(),
+            "David Gonzales, U.S. Fish and Wildlife Service", tags$br(),
+            "William Hall, U.S. Department of the Interior", tags$br(),
+            tags$br(),
+            div(style = "font-style:italic", "* virtual attendee"), tags$br(),
+            tags$br(),
+            "and to Dr. Alice Webb and her team, who developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "original Reef Persistence Tool"),
+            ", which was the inspiration for this project:", tags$br(),
+            tags$br(),
+            "Dr. Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
+            tags$p("Geography, College of Life and Environmental Sciences, University of Exeter, UK", style = "text-indent: 40px"),
+            "Patrick Kiel, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
+            tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
+            "Mike Jankulak, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
+            tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
+            "Dr. Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
+            tags$br(),
+            "The paper describing the original Reef Persistence Tool is published in ", tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
+            tags$br(),
+            tags$br(),
+            tags$strong("Coral icon credit:"), tags$br(),
+            HTML("Reef ocean nature diving Icon by Lima Studio on <a href='https://icon-icons.com/authors/993-lima-studio'>Icon-Icons.com</a>")
+          ),
+          column(width = 4,
+            # Add logo panel
+            # absolutePanel(
+            #   id = "absPanel",
+            #   top = "62%",
+            #   left = "72.5%",
+            #   width = "30%",
+            #   fixed = TRUE,
+            tags$div(style = 'display:flex; justify-content:center; align-items:center; gap:40px; margin:20px',
+              fluidRow(
+                tags$img(src = "fknmsLogo.png", width = "450px", height = "200px"),
+                tags$div(style = 'margin: 0px 10px 10px 10px',
+                  tags$img(src = "moteLogo.png", width = "200px", height = "180px"),
+                  tags$img(src = "noaaLogo.png", width = "200px", height = "200px")
+                ),
+                tags$div(style = 'margin-bottom: 20px',
+                  tags$img(src = "fdepLogo.png", width = "220px", height = "200px"),
+                  tags$img(src = "fwcLogo.png", width = "200px", height = "220px")
+                ),
+                tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
+              )
             )
           )
         )
@@ -3180,6 +3461,11 @@ server <- function(input, output, session) {
   # recomputes until the token advances.
   sim_token <- reactiveVal(0)
 
+  # Set TRUE when the Site changes so the previous run's model_result() is
+  # treated as stale (NULL) until the next explicit Simulate. Cleared when a
+  # run advances sim_token.
+  model_stale <- reactiveVal(FALSE)
+
   # Inputs that should trigger a recompute when in reactive mode. Listing them
   # explicitly (rather than depending on `input`) keeps the token from bumping
   # on unrelated UI (map controls, monitoring tab, etc.).
@@ -3188,8 +3474,6 @@ server <- function(input, output, session) {
     input$site_area_m2
     input$subregion_choice
     input$habitat_choice
-    input$outplant_size
-    input$outplant_cost
     input$rest_horizon
     input$sim_duration
     input$dhw
@@ -3215,9 +3499,11 @@ server <- function(input, output, session) {
       input[[paste0("count_",  s_)]]
     }
     input$base_REQUIRED_Unconsolidated_substrate
+    input$base_REQUIRED_Other_living_benthos
 
     # Only advance automatically when reactive mode is ON.
     if (isTRUE(input$reactive_sim)) {
+      model_stale(FALSE)
       sim_token(isolate(sim_token()) + 1)
     }
   })
@@ -3225,6 +3511,7 @@ server <- function(input, output, session) {
   # Manual run: advance the token on click (works regardless of mode, but the
   # button is disabled while reactive mode is on).
   observeEvent(input$run_sim, {
+    model_stale(FALSE)
     sim_token(sim_token() + 1)
     write_cached_baseline()
   })
@@ -3238,6 +3525,9 @@ server <- function(input, output, session) {
     }
   })
 
+  .req_num <- function(x) {
+    if (is.null(x) || length(x) == 0 || is.na(x)) FALSE else as.numeric(x)
+  }
   .safe_num <- function(x) {
     if (is.null(x) || length(x) == 0 || is.na(x)) 0 else as.numeric(x)
   }
@@ -3251,10 +3541,22 @@ server <- function(input, output, session) {
   # both hold, so reactives can req() on it and value boxes / the timeline show
   # a neutral placeholder instead of erroring while inputs are incomplete.
   outplanting_ready <- reactive({
-    uc <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
-    if (uc <= 0) return(FALSE)
-    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
-    if (length(sp) == 0) return(FALSE)
+    # UC and OLB must be a valid number >= 0 (0 allowed). NA/blank blocks the sim.
+    uc <- .req_num(input$base_REQUIRED_Unconsolidated_substrate)
+    if (isFALSE(uc)) {
+      showNotification("Provde a value of at least 0 for 'Unconsolidated substrate'.", type = "error")
+      return(FALSE)
+    }
+    olb <- .req_num(input$base_REQUIRED_Other_living_benthos)
+    if (isFALSE(olb)) {
+      showNotification("Provde a value of at least 0 for 'Other living benthos'.", type = "error")
+      return(FALSE)
+    }
+    sp <- setdiff(baseline_species_list(), c(UC_TAXON, OLB_TAXON))
+    if (length(sp) == 0) {
+      showNotification("Submit at least one species to simulate.", type = "error")
+      return(FALSE)
+    }
     covers <- vapply(sp, function(s) {
       .safe_num(input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]])
     }, numeric(1))
@@ -3336,10 +3638,6 @@ server <- function(input, output, session) {
       ) |>
       setView(lng = -81, lat = 25.5, zoom = 8) |>
 
-      # Dedicated low pane for the named-reef polygons so they sit above the
-      # basemap/regions but BELOW the clickable site markers (default ~600).
-      addMapPane("named_reefs_pane", zIndex = 310) |>
-
       # Region polygons, pastel fill at 75% transparency
       addPolygons(
         data        = regions_sf,
@@ -3351,22 +3649,9 @@ server <- function(input, output, session) {
         label       = ~Region
       ) |>
 
-      # Static control: White text instruction
-      addControl(
-        html = "<div
-                  style='
-                    font-size: 22px;
-                    font-weight: bold;
-                    color: white;
-                    text-shadow:
-                      -1px -1px 0 black,
-                      1px -1px 0 black,
-                      -1px 1px 0 black,
-                      1px 1px 0 black;'>
-                  Click on a site to<br> find out more</div>",
-        position = "bottomright",
-        className = "map-title"
-      )
+      # Dedicated low pane for the named-reef polygons so they sit above the
+      # basemap/regions but BELOW the clickable site markers (default ~600).
+      addMapPane("named_reefs_pane", zIndex = 410)
   })
 
   # Add / update NCRMP markers, halos, and legend ----
@@ -3449,9 +3734,9 @@ server <- function(input, output, session) {
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current coral cover:</td>",
           "<td style='padding: 2px 0;'>", round(hardCoral_PrctCvr, 1), "%</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Parrotfish bioerosion:</td>",
-          "<td style='padding: 2px 0;'>", round(parrotfish_G, 2), "kg CaCO\u00b3/m\u00b2/yr</td></tr>",
+          "<td style='padding: 2px 0;'>", round(parrotfish_G, 2), "kg CaCO₃/m²/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Gross bioerosion:</td>",
-          "<td style='padding: 2px 0;'>", round(grossE_G, 2), "kg CaCO\u00b3/m\u00b2/yr</td></tr>",
+          "<td style='padding: 2px 0;'>", round(grossE_G, 2), "kg CaCO₃/m²/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current RAP:</td>",
           "<td style='padding: 2px 0;'>", round(rap, 2), " mm/yr (", current_state, ")</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>RAP with restoration:</td>",
@@ -3498,7 +3783,7 @@ server <- function(input, output, session) {
         "grossE_G" = pal_gross_rev
       )
       ttl <- switch(field,
-        "grossE_G" = "Gross<br/>bioerosion<br/>(kg CaCO\u00b3/m\u00b2/yr)"
+        "grossE_G" = "Gross<br/>bioerosion<br/>(kg CaCO\u00b3/m²/yr)"
       )
       proxy <- proxy |>
         addLegend("bottomleft",
@@ -3601,9 +3886,9 @@ server <- function(input, output, session) {
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current coral cover:</td>",
           "<td style='padding: 2px 0;'>", round(cover, 1), "%</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Parrotfish bioerosion:</td>",
-          "<td style='padding: 2px 0;'>", round(pfish, 2), " kg CaCO\u00b3/m\u00b2/yr</td></tr>",
+          "<td style='padding: 2px 0;'>", round(pfish, 2), " kg CaCO\u00b3/m²/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Gross bioerosion:</td>",
-          "<td style='padding: 2px 0;'>", round(gross_be, 2), " kg CaCO\u00b3/m\u00b2/yr</td></tr>",
+          "<td style='padding: 2px 0;'>", round(gross_be, 2), " kg CaCO\u00b3/m²/yr</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>Current RAP:</td>",
           "<td style='padding: 2px 0;'>", round(rap, 2), " mm/yr (", state, ")</td></tr>",
           "<tr><td style='padding: 2px 8px 2px 0; font-weight: bold;'>RAP with restoration:</td>",
@@ -3629,6 +3914,7 @@ server <- function(input, output, session) {
     }
 
     labs <- as.character(named_reefs_sf$Location)
+    labs_fknms <- as.character(named_reefs_sf_fknms$Reef_Name)
 
     proxy |>
       addPolygons(
@@ -3641,6 +3927,24 @@ server <- function(input, output, session) {
         label = labs,
         labelOptions = labelOptions(
           noHide = TRUE, direction = "center", textOnly = TRUE,
+          style = list(
+            "color" = "white",
+            "font-weight" = "bold",
+            "font-size" = "12px",
+            "text-shadow" =
+              "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000"
+          )
+        )
+      ) |>
+      addMarkers(
+        data = named_reefs_sf_fknms,
+        icon = coral_icon,
+        popup = ~paste0(Reef_Name, "<br/>Designation: ", Sanctuary_),
+        group = "named_reefs",
+        options = pathOptions(pane = "named_reefs_pane"),
+        label = labs_fknms,
+        labelOptions = labelOptions(
+          noHide = TRUE, direction = "center", textOnly = TRUE, offset = c(0, -20),
           style = list(
             "color" = "white",
             "font-weight" = "bold",
@@ -3760,7 +4064,7 @@ server <- function(input, output, session) {
           if (length(rate) == 0 || is.na(rate[1])) next
           patch <- patch + area_val * (cvr / 100) * rate[1]
           # Use CCA as a calcifying patch, but not for total cover summation.
-          if (identical(s, "Crustose coralline algae")) next
+          if (identical(s, CCA_TAXON)) next
           total_cover <- total_cover + cvr
         }
       }
@@ -3963,7 +4267,7 @@ server <- function(input, output, session) {
   # Scalar sim params repeated on every row. Shared by the download handler and
   # the cache writer (Simulate / Save scenario / Save baseline).
   build_baseline_df <- function() {
-    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    sp <- setdiff(baseline_species_list(), c(UC_TAXON, OLB_TAXON))
     if (length(sp) == 0) return(NULL)
     extra_years <- additional_outplant_years()
 
@@ -4028,8 +4332,13 @@ server <- function(input, output, session) {
     }
 
     rows[[length(rows) + 1]] <- mk_row(
-      "REQUIRED Unconsolidated substrate", 0,
+      UC_TAXON, 0,
       .safe_num(input$base_REQUIRED_Unconsolidated_substrate),
+      NA_real_, NA_real_, NA_real_, NA_real_, NA_real_
+    )
+    rows[[length(rows) + 1]] <- mk_row(
+      OLB_TAXON, 0,
+      .safe_num(input$base_REQUIRED_Other_living_benthos),
       NA_real_, NA_real_, NA_real_, NA_real_, NA_real_
     )
 
@@ -4070,6 +4379,11 @@ server <- function(input, output, session) {
   # When the selected site changes, filter the upload to that site and push
   # subregion / habitat / area / species / covers into the inputs.
   observeEvent(input$baseline_site, {
+    # New site selected: invalidate the prior run so value boxes / Final-cover
+    # columns blank out until the user runs the sim again.
+    model_stale(TRUE)
+    rt_restored_hover(NULL)
+
     up <- baseline_upload_data()
     req(up, nzchar(input$baseline_site))
 
@@ -4327,10 +4641,13 @@ output$restoration_mix_inputs <- renderUI({
     mix_repaint()                    # dependency: force re-render on demand
     sp <- baseline_species_list()
     covers <- uploaded_covers()
-    rus <- "REQUIRED Unconsolidated substrate"
+    rus <- UC_TAXON
+    olb <- OLB_TAXON
     extra_years <- additional_outplant_years()
 
-    if (rus %in% sp) sp <- c(rus, sp[sp != rus])
+    # Order the two reserved pseudo-taxa first: UC, then OLB.
+    reserved_present <- intersect(c(rus, olb), sp)
+    if (length(reserved_present)) sp <- c(reserved_present, setdiff(sp, reserved_present))
 
     make_id <- function(prefix, s) paste0(prefix, "_", gsub("[^A-Za-z0-9]", "_", s))
 
@@ -4366,6 +4683,42 @@ output$restoration_mix_inputs <- renderUI({
           tags$div(style = "flex: 1 1 0;",
             numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
           tags$div(style = "flex: 6 1 0;", "")  # spans target/diam/cost/count/opc/final
+        ))
+      }
+
+      # OLB (Other living benthos): Baseline cover only, reserved space. No
+      # target/diam/cost/count/opc and no Final-cover column (never grown).
+      if (identical(s, olb)) {
+        return(tags$div(
+          class = "mix-grid-row",
+          style = "display:flex; align-items:center; gap:6px; margin-bottom:4px;",
+          tags$div(style = "flex:0 0 auto;", remove_btn),
+          tags$div(style = "flex: 2 1 0;",
+            tags$span(class = "baseline-species-name", title = s, s)),
+          tags$div(style = "flex: 1 1 0;",
+            numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
+          tags$div(style = "flex: 6 1 0;", "")  # spans the remaining columns
+        ))
+      }
+
+      # CCA: Baseline cover + Final cover only. No target/diam/cost/count/opc.
+      if (str_detect(s, "algae")) {
+        return(tags$div(
+          class = "mix-grid-row",
+          style = "display:flex; align-items:center; gap:6px; margin-bottom:4px;",
+          tags$div(style = "flex:0 0 auto;", remove_btn),
+          tags$div(style = "flex: 2 1 0;",
+            tags$div(class = "baseline-species-name", title = s, s),
+            tags$div(class = "mix-morph-label",
+                     style = "font-size:11px; color:#666; font-style:italic;",
+                     "(crustose coralline algae)")),
+          tags$div(style = "flex: 1 1 0;",
+            numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
+          # Spacers for target / diam / cost / count / opc (5 columns)
+          tags$div(style = "flex: 5 1 0;", ""),
+          # Retain the Final-cover readout column
+          tags$div(style = "flex: 1 1 0; text-align:right; padding-top:6px; font-size:13px;",
+            textOutput(paste0("final_cover_", s_), inline = TRUE))
         ))
       }
 
@@ -4471,8 +4824,9 @@ output$restoration_mix_inputs <- renderUI({
     })
 
     remaining <- setdiff(unique(taxa), sp)
-    if (rus %in% remaining) {
-      remaining <- c(rus, remaining[remaining != rus])
+    reserved_remaining <- intersect(c(rus, olb), remaining)
+    if (length(reserved_remaining)) {
+      remaining <- c(reserved_remaining, setdiff(remaining, reserved_remaining))
     }
     picker <- selectizeInput(
       "add_baseline_species", label = NULL,
@@ -4486,7 +4840,7 @@ output$restoration_mix_inputs <- renderUI({
 
   # Helper: species in the mix that are true corals (exclude UC).
   mix_species <- reactive({
-    setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    setdiff(baseline_species_list(), c(UC_TAXON, OLB_TAXON))
   })
 
   # Parse the "Additional outplanting years" text box into a clean integer
@@ -4518,7 +4872,7 @@ output$restoration_mix_inputs <- renderUI({
     vals
   })
 
-# Repaint active-input borders whenever the mix grid re-renders (species list
+  # Repaint active-input borders whenever the mix grid re-renders (species list
   # changes recreate the inputs, dropping their CSS classes). Deferred so the
   # new inputs exist in the DOM before shinyjs targets them.
   observeEvent(baseline_species_list(), {
@@ -4580,41 +4934,57 @@ output$restoration_mix_inputs <- renderUI({
     }, numeric(1)), na.rm = TRUE)
   })
 
-  # Live sum of the Final cover column
+  # Display model_result's end_cover_by_species sum (excludes CCA)
   mix_final_total <- reactive({
-    sim_token()
-    sp <- mix_species()
-    sum(vapply(sp, function(s) {
-      v <- input[[paste0("final_cover_", gsub("[^A-Za-z0-9]", "_", s))]]
-      if (is.null(v) || is.na(v)) 0 else as.numeric(v)
-    }, numeric(1)), na.rm = TRUE)
+    if (isTRUE(model_stale())) return(0)
+    mr <- model_result()
+    if (!is.null(mr) && !is.null(mr$end_cover_by_species)) {
+      ec <- sum(mr$end_cover_by_species) - mr$end_cover_by_species[CCA_TAXON]
+      ec <- if ((is.null(ec) || is.na(ec))) 0 else ec
+      return(ec)
+    } else {
+      bg <- baseline_growth()
+      if (!is.null(bg) && is.data.frame(bg[[1]])) {
+        ecb <- attr(bg[[1]], "end_cover_by_species")
+        if (!is.null(ecb)) {
+          sum(ecb)  - ecb[CCA_TAXON]
+        } else {
+          0
+        }
+      }
+    }
   })
 
   output$mix_target_header <- renderUI({
     tot <- mix_target_total()
-    HTML(paste0("Target<br/>cover (%)<br/><strong>(total: ", round(tot, 1), "%)</strong>"))
+    tot <- if (tot == 0) "NA" else paste0(round(tot, 1), "%")
+    HTML(paste0("Target<br/>cover (%)<br/>(total: ", tot, ")"))
   })
 
   output$mix_final_header <- renderUI({
     tryCatch({
-      tot <- mix_final_total
-      HTML(paste0("Final<br/>cover (%)<br/>(total: ", round(tot, 1), "%)</strong>"))
-    }, error = function(e) {HTML(paste0("Final<br/>cover (%)<br/><br/>"))}
+      tot <- mix_final_total()
+      tot <- if (tot == 0) "NA" else paste0(round(tot, 1), "%")
+      HTML(paste0("Final<br/>cover (%)<br/>(total: ", tot, ")"))
+    }, error = function(e) {
+      HTML("Final<br/>cover (%)<br/><br/>")
+    }
     )
   })
 
-  # Live sum of the Baseline cover column (excludes UC).
+  # Live sum of the Baseline cover column (excludes UC + CCA).
   mix_baseline_total <- reactive({
     sp <- mix_species()
     sum(vapply(sp, function(s) {
       v <- input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]]
-      if (is.null(v) || is.na(v)) 0 else as.numeric(v)
+      if (grepl("algae", s, fixed = TRUE) || is.null(v) || is.na(v)) 0 else as.numeric(v)
     }, numeric(1)), na.rm = TRUE)
   })
 
   output$mix_baseline_header <- renderUI({
     tot <- mix_baseline_total()
-    HTML(paste0("Baseline<br/>cover (%)<br/>(total: ", round(tot, 1), "%)"))
+    tot <- if (tot == 0) "NA" else paste0(round(tot, 1), "%")
+    HTML(paste0("Baseline<br/>cover (%)<br/>(total: ", tot, ")"))
   })
 
   # Fire the "exceeded 100%" toast once per upward crossing of 100.
@@ -4670,8 +5040,31 @@ output$restoration_mix_inputs <- renderUI({
               }
               # If additional outplanting years are set, repaint now so this
               # species gains its multi-year dropdown without waiting.
-              if (length(isolate(additional_outplant_years())) > 0) {
+              ey <- isolate(additional_outplant_years())
+              if (length(ey) > 0) {
                 mix_repaint(isolate(mix_repaint()) + 1)
+                # Backfill any blank per-year cells from the Y0 values so extra
+                # efforts always start populated.
+                d0 <- isolate(input[[did]]); c0 <- isolate(input[[cid]])
+                n0 <- isolate(input[[nid]]); o0 <- isolate(input[[paste0("opc_", sp_)]])
+                later::later(function() {
+                  shiny::withReactiveDomain(session, {
+                    for (yr in ey) {
+                      fill_blank <- function(suf, val) {
+                        if (is.null(val) || is.na(val)) return()
+                        id_y <- paste0(suf, "_", sp_, "_y", yr)
+                        cur  <- isolate(input[[id_y]])
+                        if (is.null(cur) || is.na(cur)) {
+                          updateNumericInput(session, id_y, value = val)
+                        }
+                      }
+                      fill_blank("diam",  d0)
+                      fill_blank("cost",  c0)
+                      fill_blank("count", n0)
+                      fill_blank("opc",   o0)
+                    }
+                  })
+                }, delay = 0.3)
               }
             } else {
               # Count cleared/zeroed. If it was the active mode, drop it.
@@ -4719,6 +5112,56 @@ output$restoration_mix_inputs <- renderUI({
     autofill_bound(already)
   })
 
+  # Re-seed per-year extra-effort cells whenever the "Additional outplanting
+  # years" box changes. For every count-mode species, any blank per-year
+  # diam/cost/count/opc cell is backfilled from that species' Y0 value. Runs
+  # after a short defer so the grid has rendered the new per-year inputs.
+  observeEvent(additional_outplant_years(), {
+    ey <- additional_outplant_years()
+    sp <- mix_species()
+    if (length(sp) == 0) return()
+
+    # Force the grid to rebuild so count-mode species gain/lose per-year rows.
+    mix_repaint(isolate(mix_repaint()) + 1)
+
+    # Snapshot Y0 values + active modes now (reactive context); the deferred
+    # callback is contextless.
+    snap <- lapply(sp, function(s) {
+      s_ <- gsub("[^A-Za-z0-9]", "_", s)
+      list(
+        s_    = s_,
+        mode  = isolate(mix_active_mode[[s_]]),
+        diam  = isolate(input[[paste0("diam_",  s_)]]),
+        cost  = isolate(input[[paste0("cost_",  s_)]]),
+        count = isolate(input[[paste0("count_", s_)]]),
+        opc   = isolate(input[[paste0("opc_",   s_)]])
+      )
+    })
+
+    later::later(function() {
+      shiny::withReactiveDomain(session, {
+        for (sn in snap) {
+          # Only count-mode species carry per-year rows.
+          if (!identical(sn$mode, "count")) next
+          for (yr in ey) {
+            fill_blank <- function(suf, val) {
+              if (is.null(val) || is.na(val)) return()
+              id_y <- paste0(suf, "_", sn$s_, "_y", yr)
+              cur  <- isolate(input[[id_y]])
+              if (is.null(cur) || is.na(cur)) {
+                updateNumericInput(session, id_y, value = val)
+              }
+            }
+            fill_blank("diam",  sn$diam)
+            fill_blank("cost",  sn$cost)
+            fill_blank("count", sn$count)
+            fill_blank("opc",   sn$opc)
+          }
+        }
+      })
+    }, delay = 0.4)
+  }, ignoreInit = TRUE)
+
   # Bind a Final-cover readout output per species (end-of-duration cover from
   # the last model run). Bound once per species; re-renders pull from
   # model_result()'s end_cover_by_species. Blank until a run produces a value.
@@ -4734,6 +5177,9 @@ output$restoration_mix_inputs <- renderUI({
           sp_orig <- s
           out_id  <- oid
           output[[out_id]] <- renderText({
+            # A site switch marks the prior run stale; blank the column until
+            # the user re-runs the simulation.
+            if (isTRUE(model_stale())) return("\u2013")
             mr <- model_result()
             # Restoration run: use the model's per-species end cover.
             if (!is.null(mr) && !is.null(mr$end_cover_by_species)) {
@@ -4879,7 +5325,7 @@ output$restoration_mix_inputs <- renderUI({
         )
     sim_duration <- .safe_num(input$sim_duration)
     unconsolidated_pct_cvr <- .safe_num(input$base_REQUIRED_Unconsolidated_substrate)
-    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    sp <- setdiff(baseline_species_list(), c(UC_TAXON, OLB_TAXON))
     ids <- paste0("base_", gsub("[^A-Za-z0-9]", "_", sp))
     # Exclude CCA from cover summation
     sum_cover_ids <- NULL
@@ -4957,7 +5403,7 @@ output$restoration_mix_inputs <- renderUI({
     if (site_area <= 0) site_area <- 100
     req(nzchar(habitat), nzchar(subregion))
 
-    sp <- setdiff(baseline_species_list(), "REQUIRED Unconsolidated substrate")
+    sp <- setdiff(baseline_species_list(), c(UC_TAXON, OLB_TAXON))
     if (length(sp) == 0) return(NULL)
 
     bdf <- data.frame(taxon = character(), current_cvr_pct = numeric(), stringsAsFactors = FALSE)
@@ -5018,6 +5464,7 @@ output$restoration_mix_inputs <- renderUI({
   # per-species baseline (current) + restoration-mix (target) values.
   model_result <- reactive({
     sim_token()
+    if (isTRUE(model_stale())) return(NULL)
     isolate({ with_logged_conditions({
     req(outplanting_ready())
 
@@ -5047,13 +5494,15 @@ output$restoration_mix_inputs <- renderUI({
     sim_duration  <- .safe_num(input$sim_duration)
     rest_horizon  <- .safe_num(input$rest_horizon)
 
-    # Refuse to run when the horizon exceeds the simulation duration,
-    # and display an error message.
-    if (rest_horizon > sim_duration) {
-      log_msg("---- Error: Simulation duration must meet or exceed restoration horizon. ----")
-      showNotification("Error: Simulation duration must meet or exceed restoration horizon.", type = "error")
+    # Other living benthos: required numeric >= 0 (reserved, non-growing space).
+    olb_raw <- input$base_REQUIRED_Other_living_benthos
+    olb_pct <- if (is.null(olb_raw) || is.na(olb_raw)) NA_real_ else as.numeric(olb_raw)
+    if (!is.finite(olb_pct) || olb_pct < 0) {
+      log_msg("---- Error: 'REQUIRED Other living benthos' (>= 0) must be provided. ----")
+      showNotification("Error: Enter 'REQUIRED Other living benthos' cover (>= 0) before simulating.",
+                       type = "error")
       return(NULL)
-      }
+    }
 
     # Bleaching parameters
     bleaching_severity  <- .safe_num(input$dhw)           # degree-heating weeks
@@ -5084,9 +5533,9 @@ output$restoration_mix_inputs <- renderUI({
       stringsAsFactors = FALSE
     )
     for (s in all_sp) {
-      # CCA is handled as a fixed layer inside run_restoration_model; never grow
-      # it as a coral here.
-      if (str_detect(s, "algae")) next
+      # CCA is grown in Phase 0; OLB is reserved space. Neither is grown as a
+      # coral here.
+      if (str_detect(s, "algae") || is_reserved_taxon(s)) next
       s_    <- gsub("[^A-Za-z0-9]", "_", s)
       cur   <- .safe_num(input[[paste0("base_",   s_)]])
       dia_v <- input[[paste0("diam_",  s_)]]
@@ -5155,6 +5604,7 @@ output$restoration_mix_inputs <- renderUI({
       bleaching_frequency = bleaching_frequency,
       target_cover_df = target_cover_df,
       extra_years_df = extra_years_df,
+      olb_pct = olb_pct,
       progress_cb = progress_say
     )
     res
@@ -5172,18 +5622,18 @@ output$restoration_mix_inputs <- renderUI({
 
     duration <- .safe_num(input$sim_duration)
     if (!is.null(mr) && nrow(mr$budget_df) > 0) {
-      hr <- min(duration + 1, nrow(mr$budget_df))
+      dr <- min(duration + 1, nrow(mr$budget_df)) # Duration row
       bd <- mr$budget_df
       list(
-        b_cover  = bd$pct_cvr_orig[hr],   r_cover  = bd$pct_cvr_total[hr],
-        b_budget = bd$carb_budg_orig[hr], r_budget = bd$carb_budg_total[hr],
-        b_rap    = bd$RAP_orig[hr],       r_rap    = bd$RAP_total[hr]
+        b_cover  = bd$pct_cvr_orig[dr],   r_cover  = bd$pct_cvr_total[dr],
+        b_budget = bd$carb_budg_orig[dr], r_budget = bd$carb_budg_total[dr],
+        b_rap    = bd$RAP_orig[dr],       r_rap    = bd$RAP_total[dr]
       )
-    } else {
+    } else { # No model result present: baseline only
       list(
-        b_cover = b$cover, r_cover = r$cover,
-        b_budget = b$budget, r_budget = r$budget,
-        b_rap = b$rap, r_rap = r$rap
+        b_cover = b$cover,   r_cover = NULL, # r$cover,
+        b_budget = b$budget, r_budget = NULL, # r$budget,
+        b_rap = b$rap,       r_rap = NULL # r$rap
       )
     }
   })
@@ -5292,7 +5742,7 @@ output$restoration_mix_inputs <- renderUI({
   rt_restored_current <- reactive({
     h <- rt_restored_hover()
     if (!is.null(h)) {
-      if (h$cover != 0) return(h)
+      return(h)
     }
     fv <- final_vals()
     list(cover = fv$r_cover, budget = fv$r_budget, rap = fv$r_rap,
@@ -5306,7 +5756,7 @@ output$restoration_mix_inputs <- renderUI({
       icon = icon("percent"), color = "green")
   })
   output$rt_baseline_budget <- renderValueBox({
-    valueBox(paste0(round(baseline_metrics()$budget, 2), " kg/m\u00b2/yr"),
+    valueBox(paste0(round(baseline_metrics()$budget, 2), " kg/m²/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue")
   })
@@ -5331,34 +5781,41 @@ output$restoration_mix_inputs <- renderUI({
   })
 
   output$rt_restored_cover <- renderValueBox({
-    valueBox(paste0(round(rt_restored_current()$cover, 1), " %"),
+    cvr <- rt_restored_current()$cover
+    valueBox(if (is.null(cvr)) "NA" else paste0(round(cvr, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
       icon = icon("plus-circle"), color = "olive")
   })
   output$rt_restored_budget <- renderValueBox({
-    valueBox(paste0(round(rt_restored_current()$budget, 2), " kg/m\u00b2/yr"),
+    budg <- rt_restored_current()$budget
+    valueBox(if (is.null(budg)) "NA" else paste0(round(budg, 2), " kg/m²/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue")
   })
   output$rt_restored_rap <- renderValueBox({
-    valueBox(paste0(round(rt_restored_current()$rap, 2), " mm/yr"),
-      div(class = "bordered-text",
-        HTML(paste0("Reef accretion potential<br/>",
-          "(this reef is ",
-          "<span style='color:", # color determined by conditional below
-          if (rt_restored_current()$rap >= 0.5) "forestgreen" else if (rt_restored_current()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>",
-          if (rt_restored_current()$rap >= 0.5) "growing" else if (rt_restored_current()$rap <= -0.5) "eroding" else "in stasis",
-          "</span>",
-          ")"
+    rap <- rt_restored_current()$rap
+    valueBox(if (is.null(rap)) "NA" else paste0(round(rap, 2), " mm/yr"),
+        div(class = "bordered-text",
+          HTML(if (is.null(rap)) {
+            "Reef accretion potential<br/><br/>"
+          } else {
+              paste0("Reef accretion potential<br/>",
+              "(this reef is ",
+              "<span style='color:", # color determined by conditional below
+              if (rt_restored_current()$rap >= 0.5) "forestgreen" else if (rt_restored_current()$rap <= -0.5) "lightcoral" else "orange",
+              ";'>",
+              if (rt_restored_current()$rap >= 0.5) "growing" else if (rt_restored_current()$rap <= -0.5) "eroding" else "in stasis",
+              "</span>",
+              ")"
+              )
+            }
           )
-        )
-      ),
+        ),
       icon = icon("chart-line"), color = "teal")
   })
   output$rt_restored_title <- renderText({
     cur <- rt_restored_current()
-    if (is.null(cur$cover)) return("")
+    if (is.null(cur$cover)) return("Restored")
     yr <- if (is.null(cur$year) || is.na(cur$year)) NA else round(cur$year)
     if (is.na(yr)) "Restored" else paste0("Restored: Year ", yr)
   })
@@ -5483,7 +5940,7 @@ output$restoration_mix_inputs <- renderUI({
                                       "<br>Year ", Year,
                                       "<br>Coral cover:  ", round(pct_cvr_orig, 1), " %",
                                       "<br>RAP:    ", round(RAP_orig, 2), " mm/yr",
-                                      "<br>Budget: ", round(carb_budg_orig, 2), " kg/m\u00b2/yr")),
+                                      "<br>Budget: ", round(carb_budg_orig, 2), " kg/m²/yr")),
                     linetype = "longdash",
                     color = orig_col, linewidth = 0.7) +
           {
@@ -5495,12 +5952,14 @@ output$restoration_mix_inputs <- renderUI({
                 ),
                 geom_line(aes(y = RAP_orig_min, group = 11,
                               text = paste0("Baseline lower bound",
+                                            "<br>Coral cover:  ", round(pct_cvr_orig_min, 1), " %",
                                             "<br>Year ", Year,
                                             "<br>RAP: ", round(RAP_orig_min, 2), " mm/yr")),
                           linetype = "longdash", color = orig_col,
                           alpha = 0.6, linewidth = 0.35),
                 geom_line(aes(y = RAP_orig_max, group = 12,
                               text = paste0("Baseline upper bound",
+                                            "<br>Coral cover:  ", round(pct_cvr_orig_max, 1), " %",
                                             "<br>Year ", Year,
                                             "<br>RAP: ", round(RAP_orig_max, 2), " mm/yr")),
                           linetype = "longdash", color = orig_col,
@@ -5544,12 +6003,17 @@ output$restoration_mix_inputs <- renderUI({
         RAP_total = bd$RAP_total,
         pct_cvr_orig  = bd$pct_cvr_orig,
         pct_cvr_total = bd$pct_cvr_total,
-        pct_cvr_max   = bd$pct_cvr_max,
+        pct_cvr_total_min = bd$pct_cvr_total_min,
+        pct_cvr_total_max = bd$pct_cvr_total_max,
         carb_budg_orig  = bd$carb_budg_orig,
         carb_budg_total = bd$carb_budg_total,
         RAP_total_min = if (!is.null(bd$RAP_total_min)) bd$RAP_total_min else NA_real_,
         RAP_total_max = if (!is.null(bd$RAP_total_max)) bd$RAP_total_max else NA_real_
       )
+
+      # Cap percent cover reports at 100
+      # d$pct_cvr_min <- sapply(d$pct_cvr_min, function(p) min(100, p))
+      # d$pct_cvr_max <- sapply(d$pct_cvr_max, function(p) min(100, p))
 
       write.csv(d, here("cache", "combined_data.csv"))
       pips <- d[d$Year %in% c(0, 1, 5, 10, 20, 50, 100, dur), ]
@@ -5571,7 +6035,7 @@ output$restoration_mix_inputs <- renderUI({
                       text = paste0("<br>Year ", Year,
                                     "<br>Coral cover:  ", round(pct_cvr_orig, 1), " %",
                                     "<br>RAP:    ", round(RAP_orig, 2), " mm/yr",
-                                    "<br>Budget: ", round(carb_budg_orig, 2), " kg/m\u00b2/yr")),
+                                    "<br>Budget: ", round(carb_budg_orig, 2), " kg/m²/yr")),
                    linetype = "longdash",
                    color = orig_col, linewidth = 0.7) +
           {
@@ -5583,12 +6047,14 @@ output$restoration_mix_inputs <- renderUI({
               ),
               geom_line(aes(y = bg_df$RAP_orig_min, group = 11,
                             text = paste0("Baseline lower bound",
+                                          "<br>Coral cover:  ", round(bg_df$pct_cvr_orig_min, 1), " %",
                                           "<br>Year ", Year,
                                           "<br>RAP: ", round(bg_df$RAP_orig_min, 2), " mm/yr")),
                         linetype = "longdash", color = orig_col,
                         alpha = 0.6, linewidth = 0.35),
               geom_line(aes(y = bg_df$RAP_orig_max, group = 12,
                             text = paste0("Baseline upper bound",
+                                          "<br>Coral cover:  ", round(bg_df$pct_cvr_orig_max, 1), " %",
                                           "<br>Year ", Year,
                                           "<br>RAP: ", round(bg_df$RAP_orig_max, 2), " mm/yr")),
                         linetype = "longdash", color = orig_col,
@@ -5601,7 +6067,7 @@ output$restoration_mix_inputs <- renderUI({
                       text = paste0("<br>Year ", Year,
                                     "<br>Coral cover:  ", round(pct_cvr_total, 1), " %",
                                     "<br>RAP:    ", round(RAP_total, 2), " mm/yr",
-                                    "<br>Budget: ", round(carb_budg_total, 2), " kg/m\u00b2/yr")),
+                                  "<br>Budget: ", round(carb_budg_total, 2), " kg/m²/yr")),
                   color = "#7b3fbf", linewidth = 1.1) +
         {
           if (calc_uncert_available &&
@@ -5613,12 +6079,13 @@ output$restoration_mix_inputs <- renderUI({
               geom_line(aes(y = RAP_total_min, group = 21,
                             text = paste0("Lower bound",
                                           "<br>Year ", Year,
+                                          "<br>Coral cover: ", round(pct_cvr_total_min, 1), " %",
                                           "<br>RAP: ", round(RAP_total_min, 2), " mm/yr")),
                         color = "#7b3fbf", alpha = 0.6, linewidth = 0.55),
               geom_line(aes(y = RAP_total_max, group = 22,
                             text = paste0("Upper bound",
                                           "<br>Year   ", Year,
-                                          "<br>Coral cover: ", round(pct_cvr_max, 1), " %",
+                                          "<br>Coral cover: ", round(pct_cvr_total_max, 1), " %",
                                           "<br>RAP:   ", round(RAP_total_max, 2), " mm/yr")),
                         color = "#7b3fbf", alpha = 0.6, linewidth = 0.55)
             )
@@ -5630,12 +6097,12 @@ output$restoration_mix_inputs <- renderUI({
             "Year ", Year,
             "<br>Projected cover:  ", round(pct_cvr_total, 1), "%",
             "<br>Projected RAP:    ", round(RAP_total, 2), " mm/yr",
-            "<br>Projected budget: ", round(carb_budg_total, 2), " kg CaCO3/m\u00b2/yr"
+            "<br>Projected budget: ", round(carb_budg_total, 2), " kg CaCO₃/m²/yr"
           ),
           customdata = paste(round(pct_cvr_total, 4),
                              round(carb_budg_total, 4),
                              round(RAP_total, 4),
-                             Year, sep = "|")),
+                             Year, sep = " |")),
           size = 4, color = "#7b3fbf"
         ) +
         scale_x_continuous(breaks = x_breaks) +
@@ -5672,7 +6139,7 @@ output$restoration_mix_inputs <- renderUI({
         data = data.frame(bx = bleach_years),
         aes(xintercept = bx, text = "Bleaching event"),
         inherit.aes = FALSE,
-        linetype = "solid", color = "red", linewidth = 0.3, alpha = 0.3
+        linetype = "solid", color = "red", linewidth = 0.7, alpha = 0.6
       )
     }
 
@@ -5791,7 +6258,14 @@ output$restoration_mix_inputs <- renderUI({
     targets <- vapply(sp, function(s) {
       .safe_num(input[[paste0("target_", gsub("[^A-Za-z0-9]", "_", s))]])
     }, numeric(1))
+    plants <- vapply(sp, function(s) {
+      .safe_num(input[[paste0("count_", gsub("[^A-Za-z0-9]", "_", s))]])
+    }, numeric(1))
     top_sp <- if (length(sp) && any(targets > 0)) sp[which.max(targets)] else NA_character_
+    # Judget top_sp by outplants if no target present.
+    if (is.na(top_sp)) {
+      top_sp <- if (length(sp) && any(plants > 0)) sp[which.max(plants)] else NA_character_
+    }
     sp_code <- if (!is.na(top_sp)) abbrev_species_code(top_sp) else "NA"
 
     freq <- .safe_num(input$bleach_events)
@@ -5857,8 +6331,6 @@ output$restoration_mix_inputs <- renderUI({
       baseline_rap = scalar1(baseline_rap),
       restored_rap = scalar1(restored_rap),
       outplants = scalar1(outplants),
-      outplant_size = .safe_num(input$outplant_size),
-      outplant_cost = .safe_num(input$outplant_cost),
       dhw = .safe_num(input$dhw),
       bleach_events = .safe_num(input$bleach_events),
       rest_horizon = .safe_num(input$rest_horizon),
@@ -6301,10 +6773,10 @@ output$restoration_mix_inputs <- renderUI({
         rate <- calc_rates$rate[calc_rates$Taxon == s]
         if (length(rate) == 0 || is.na(rate[1])) next
         b <- calc_rate_bounds(s)
-        r_lo <- if (is.finite(b[1])) b[1] else rate[1]
-        r_hi <- if (is.finite(b[2])) b[2] else rate[1]
-        patch_budget_min <- patch_budget_min + site_area * (cvr / 100) * r_lo
-        patch_budget_max <- patch_budget_max + site_area * (cvr / 100) * r_hi
+        cr_lo <- if (is.finite(b[1])) b[1] else rate[1]
+        cr_hi <- if (is.finite(b[2])) b[2] else rate[1]
+        patch_budget_min <- patch_budget_min + site_area * (cvr / 100) * cr_lo
+        patch_budget_max <- patch_budget_max + site_area * (cvr / 100) * cr_hi
       }
       gross_budget_min <- patch_budget_min / site_area
       gross_budget_max <- patch_budget_max / site_area
@@ -6386,7 +6858,7 @@ output$restoration_mix_inputs <- renderUI({
   })
   output$monitoring_baseline_budget <- renderValueBox({
     req(monitoring_baseline_vals())
-    valueBox(paste0(round(monitoring_baseline_vals()$budget, 2), " kg/m\u00b2/yr"),
+    valueBox(paste0(round(monitoring_baseline_vals()$budget, 2), " kg/m²/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
@@ -6410,37 +6882,110 @@ output$restoration_mix_inputs <- renderUI({
     )
   })
 
+  # Hovered-pip Restored readout for the Monitoring timeline. Persists until the
+  # next pip hover; cleared when the selected site changes so a stale hover
+  # doesn't linger against a different series.
+  monitor_restored_hover <- reactiveVal(NULL)
+
+  observeEvent(plotly::event_data("plotly_hover", source = "monitor_tl"), {
+    ev <- plotly::event_data("plotly_hover", source = "monitor_tl")
+    cd <- ev$customdata
+    if (is.null(cd) || length(cd) == 0 || is.na(cd[1])) return()
+    parts <- strsplit(as.character(cd[1]), "\\|")[[1]]
+    parts <- trimws(parts)
+    num <- suppressWarnings(as.numeric(parts))
+    if (length(num) != 4) return()
+    monitor_restored_hover(list(
+      cover  = num[1],   # may be NA (map-driven)
+      budget = num[2],   # may be NA (map-driven)
+      rap    = num[3],
+      year   = num[4]
+    ))
+  }, ignoreInit = TRUE)
+
+  # Clear hover when the site changes.
+  observeEvent(input$monitoring_selected_site, {
+    monitor_restored_hover(NULL)
+  }, ignoreInit = TRUE)
+
+  # Current Restored readout: prefer the last pip hover, else the max-year
+  # restored values. NA fields in a hover fall back to the restored defaults
+  # (covers the map-driven case where cover/budget aren't per-year).
+  monitoring_restored_current <- reactive({
+    base_r <- monitoring_restored_vals()
+    h <- monitor_restored_hover()
+    if (is.null(h)) {
+      if (is.null(base_r)) return(NULL)
+      return(list(cover = base_r$cover, budget = base_r$budget,
+                  rap = base_r$rap, year = NA))
+    }
+    list(
+      cover  = if (is.na(h$cover))  (if (!is.null(base_r)) base_r$cover  else NA) else h$cover,
+      budget = if (is.na(h$budget)) (if (!is.null(base_r)) base_r$budget else NA) else h$budget,
+      rap    = h$rap,
+      year   = h$year
+    )
+  })
+
   output$monitoring_restored_cover <- renderValueBox({
-    req(monitoring_restored_vals())
-    valueBox(paste0(round(monitoring_restored_vals()$cover, 1), " %"),
+    cur <- monitoring_restored_current()
+    cvr <- if (is.null(cur)) NULL else cur$cover
+    valueBox(if (is.null(cvr) || is.na(cvr)) "NA" else paste0(round(cvr, 1), " %"),
       div(class = "bordered-text", "Coral cover"),
       icon = icon("plus-circle"), color = "olive"
     )
   })
   output$monitoring_restored_budget <- renderValueBox({
-    req(monitoring_restored_vals())
-    valueBox(paste0(round(monitoring_restored_vals()$budget, 2), " kg/m\u00b2/yr"),
+    cur <- monitoring_restored_current()
+    budg <- if (is.null(cur)) NULL else cur$budget
+    valueBox(if (is.null(budg) || is.na(budg)) "NA" else paste0(round(budg, 2), " kg/m²/yr"),
       div(class = "bordered-text", "Carbonate budget"),
       icon = icon("balance-scale"), color = "blue"
     )
   })
   output$monitoring_restored_rap <- renderValueBox({
-    req(monitoring_restored_vals())
-    valueBox(paste0(round(monitoring_restored_vals()$rap, 2), " mm/yr"),
+    cur <- monitoring_restored_current()
+    rap <- if (is.null(cur)) NULL else cur$rap
+    valueBox(if (is.null(rap) || is.na(rap)) "NA" else paste0(round(rap, 2), " mm/yr"),
       div(class = "bordered-text",
-        HTML(paste0("Reef accretion potential<br/>",
-          "(this reef is ",
-          "<span style='color:", # color determined by conditional below
-          if (monitoring_restored_vals()$rap >= 0.5) "forestgreen" else if (monitoring_restored_vals()$rap <= -0.5) "lightcoral" else "orange",
-          ";'>",
-          if (monitoring_restored_vals()$rap >= 0.5) "growing" else if (monitoring_restored_vals()$rap <= -0.5) "eroding" else "in stasis",
-          "</span>",
-          ")"
+        HTML(if (is.null(rap) || is.na(rap)) {
+          "Reef accretion potential<br/><br/>"
+        } else {
+          paste0("Reef accretion potential<br/>",
+            "(this reef is ",
+            "<span style='color:",
+            if (rap >= 0.5) "forestgreen" else if (rap <= -0.5) "lightcoral" else "orange",
+            ";'>",
+            if (rap >= 0.5) "growing" else if (rap <= -0.5) "eroding" else "in stasis",
+            "</span>)"
           )
-        )
+        })
       ),
       icon = icon("chart-line"), color = "teal"
     )
+  })
+
+  # Restored title mirrors the Outplanting tab: "Restored: Year X" when a
+  # file-driven monitoring series exists (X = latest observed year); otherwise
+  # the map-driven 10-year projection -> "Restored: Year 10". Falls back to
+  # "Restored" when nothing is available.
+  output$monitoring_restored_title <- renderText({
+    if (isFALSE(monitoring_uc_ok())) return("Restored")
+    cur <- monitoring_restored_current()
+    if (is.null(cur)) return("Restored")
+    yr <- cur$year
+    if (!is.null(yr) && !is.na(yr)) {
+      lbl <- if (round(yr) == -1) "Baseline" else paste0("Year ", round(yr))
+      return(paste0("Restored: ", lbl))
+    }
+    # No hover yet: label by the series' terminal year.
+    ms <- monitoring_series()
+    if (!is.null(ms) && nrow(ms) > 0) {
+      ty <- round(max(ms$Year, na.rm = TRUE))
+      if (is.finite(ty)) return(paste0("Restored: Year ", ty))
+    }
+    if (!is.null(monitoring_restored_vals())) return("Restored: Year 10")
+    "Restored"
   })
 
   # Impact summary text box (reuses shared builder)
@@ -6506,7 +7051,7 @@ output$restoration_mix_inputs <- renderUI({
                       text = paste0(ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
                                     "<br>RAP: ", round(RAP, 2), " mm/yr",
                                     "<br>Coral cover: ", round(cover, 1), " %",
-                                    "<br>Budget: ", round(budget, 2), " kg/m\u00b2/yr")),
+                                    "<br>Budget: ", round(budget, 2), " kg/m²/yr")),
                   color = "#7b3fbf", linewidth = 1.4) +
         {
           if (calc_uncert_available &&
@@ -6526,9 +7071,14 @@ output$restoration_mix_inputs <- renderUI({
             )
           }
         } +
-        geom_point(aes(y = RAP, text = paste0(
-                        ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
-                        "<br>RAP: ", round(RAP, 2), " mm/yr")),
+        geom_point(aes(y = RAP,
+                       text = paste0(
+                         ifelse(Year == -1, "Baseline", paste0("Year ", Year)),
+                         "<br>RAP: ", round(RAP, 2), " mm/yr"),
+                       customdata = paste(round(cover, 4),
+                                          round(budget, 4),
+                                          round(RAP, 4),
+                                          Year, sep = " |")),
                    color = "#7b3fbf", size = 3) +
         scale_x_continuous(breaks = x_vals, labels = x_labels) +
         scale_y_continuous(limits = c(y_lo, y_hi),
@@ -6566,6 +7116,11 @@ output$restoration_mix_inputs <- renderUI({
                       text = paste0("Year ", Year,
                                     "<br>RAP: ", round(RAP, 2), " mm/yr")),
                   color = "#7b3fbf", linewidth = 1.4) +
+        geom_point(aes(y = RAP,
+                       text = paste0("Year ", Year,
+                                     "<br>RAP: ", round(RAP, 2), " mm/yr"),
+                       customdata = paste(NA, NA, round(RAP, 4), Year, sep = " |")),
+                   color = "#7b3fbf", size = 3) +
         scale_x_continuous(breaks = years) +
         scale_y_continuous(limits = c(y_lo, y_hi),
                            breaks = rap_axis_breaks(y_lo, y_hi)) +
@@ -6575,7 +7130,7 @@ output$restoration_mix_inputs <- renderUI({
       band_x <- c(0, dur)
     }
 
-    gp <- plotly::ggplotly(p, tooltip = "text") |>
+    gp <- plotly::ggplotly(p, tooltip = "text", source = "monitor_tl") |>
       plotly::layout(
         paper_bgcolor = paper_bg,
         plot_bgcolor  = plot_bg,
@@ -6584,6 +7139,7 @@ output$restoration_mix_inputs <- renderUI({
         yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
         legend = list(orientation = "h", x = 0, y = 1.1)
       )
+    gp <- plotly::event_register(gp, "plotly_hover")
 
     # Geologic baseline (gold dashed)
     gp <- gp |>
@@ -6644,7 +7200,7 @@ output$restoration_mix_inputs <- renderUI({
         r <- monitoring_restored_vals()
         out <- data.frame(
           Site = input$monitoring_selected_site,
-          Metric = c("Coral cover (%)", "Carbonate budget (kg/m2/yr)", "Reef accretion potential (mm/yr)"),
+          Metric = c("Coral cover (%)", "Carbonate budget (kg/m²/yr)", "Reef accretion potential (mm/yr)"),
           Baseline = c(b$cover, b$budget, b$rap),
           Restored = c(r$cover, r$budget, r$rap)
         )
@@ -6684,14 +7240,36 @@ output$restoration_mix_inputs <- renderUI({
 
   # Populate the scenario multi-select based on chosen project.
   # All scenarios within the selected project are ENABLED (selected) by default.
-  # Populate the scenario multi-select based on chosen project.
-  # All scenarios within the selected project are ENABLED (selected) by default.
   observe({
     sc <- all_scenarios()
     req(input$sc_project)
     scen <- if (nrow(sc)) sort(unique(sc$scenario[sc$project == input$sc_project])) else character(0)
+    cmap <- sc_color_map()
+
+    if (length(scen) == 0) {
+      updateCheckboxGroupInput(session, "sc_scenarios",
+                               choiceNames = list(), choiceValues = list(),
+                               selected = character(0))
+      return()
+    }
+
+    # choiceNames accepts HTML/tag objects and renders them as markup;
+    # choiceValues carries the plain scenario name used as the input value.
+    choice_names <- lapply(scen, function(s) {
+      col <- if (s %in% names(cmap)) cmap[[s]] else "#cccccc"
+      tags$span(
+        tags$span(style = paste0(
+          "display:inline-block; width:12px; height:12px; border:1px solid #888; ",
+          "border-radius:2px; margin-right:6px; vertical-align:middle; background:", col, ";"
+        )),
+        tags$span(style = "vertical-align:middle;", s)
+      )
+    })
+
     updateCheckboxGroupInput(session, "sc_scenarios",
-                             choices = scen, selected = scen)
+                             choiceNames = choice_names,
+                             choiceValues = as.list(scen),
+                             selected = scen)
   })
 
   # ---- Session-persistent scenario color map ----
@@ -6729,7 +7307,7 @@ output$restoration_mix_inputs <- renderUI({
     for (col in num_cols) {
       if (col %in% names(d)) d[[col]] <- as.numeric(d[[col]])
     }
-    # Net kg CaCO3 (added product of restoration at the horizon):
+    # Net kg CaCO3 (added product of restoration at the end of the simulation):
     #   (restored_budget - baseline_budget) * site_area_m2  [no sim_duration]
     d$net_kg <- (d$restored_budget - d$baseline_budget) * d$site_area_m2
     # ROI redefined as net kg CaCO3 per dollar
@@ -6800,7 +7378,7 @@ output$restoration_mix_inputs <- renderUI({
       `Restored pctile`      = round(r_pct),
       `Outplants`            = suppressWarnings(as.integer(d$outplants)),
       `Cost ($)`             = round(as.numeric(d$cost)),
-      `Net kg CaCO3`         = round(d$net_kg),
+      `Net kg CaCO₃`         = round(d$net_kg),
       `ROI (kg/$)`           = round(d$roi_kg_per_dollar, 3),
       check.names = FALSE,
       stringsAsFactors = FALSE
@@ -6809,9 +7387,11 @@ output$restoration_mix_inputs <- renderUI({
     DT::datatable(
       tbl,
       rownames = FALSE,
+      extensions = c("FixedColumns"),
       options = list(
         scrollX = TRUE,
         scrollY = "45vh",
+        fixedColumns = list(leftColumns = 1),
         scrollCollapse = TRUE,
         paging = FALSE,
         dom = "t",
@@ -6830,7 +7410,8 @@ output$restoration_mix_inputs <- renderUI({
       labs(x = NULL, y = "Project cost ($)") +
       scale_fill_manual(values = cols) +
       sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+      theme(legend.position = "none", axis.text.x = element_blank())
+      # To use angled scenario names as x-axis labels instead: element_text(angle = 30, hjust = 1))
   }, bg = "transparent")
 
   # ROI bar: net kg CaCO3 per dollar (pastel per scenario, dark-mode aware)
@@ -6843,7 +7424,7 @@ output$restoration_mix_inputs <- renderUI({
       labs(x = NULL, y = "ROI (net kg CaCO\u2083/$)") +
       scale_fill_manual(values = cols) +
       sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+      theme(legend.position = "none", axis.text.x = element_blank())
   }, bg = "transparent")
 
   # Per-scenario RAP bar with reference lines + status bands.
@@ -6879,14 +7460,16 @@ output$restoration_mix_inputs <- renderUI({
       geom_col(aes(text = paste0(scenario,
                                  "<br>Restored RAP: ", round(restored_rap, 2), " mm/yr")),
                alpha = 1, width = 0.7) +
-      geom_rect(data = bands, inherit.aes = FALSE,
-                aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
-                    fill = fill, text = label), alpha = 0.30) +
-      scale_fill_manual(values = c(cols, setNames(c("red", "yellow"), c("red", "yellow")))) +
+      # Removed bands; they draw in front of the scenario bars. Changed to lines.
+      # geom_rect(data = bands, inherit.aes = FALSE,
+      #           aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+      #               fill = fill, text = label), alpha = 0.30) +
+      # scale_fill_manual(values = c(cols, setNames(c("red", "yellow"), c("red", "yellow")))) +
+      scale_fill_manual(values = cols) +
       scale_y_continuous(limits = c(y_lo, y_hi), breaks = rap_axis_breaks(y_lo, y_hi)) +
       labs(x = NULL, y = "Restored RAP (mm/yr)") +
       sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_text(angle = 30, hjust = 1))
+      theme(legend.position = "none", axis.text.x = element_blank())
 
     gp <- plotly::ggplotly(p, tooltip = "text") |>
       plotly::layout(
@@ -6897,10 +7480,11 @@ output$restoration_mix_inputs <- renderUI({
       )
 
     # Geologic baseline always drawn; SLR Int rates only when toggled on.
+    # ref_df expanded to include stasis and erosion thresholds:
     ref_df <- data.frame(
-      label = "Geologic baseline",
-      yval  = geo_baseline,
-      col   = "#b8860b",
+      label = c("Geologic baseline", "Stasis", "Erosion"),
+      yval  = c(geo_baseline, 0.5, -0.5),
+      col   = c("gold", "orange", "red"),
       stringsAsFactors = FALSE
     )
     if (isTRUE(input$sc_show_slr)) {

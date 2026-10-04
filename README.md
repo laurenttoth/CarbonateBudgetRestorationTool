@@ -212,7 +212,7 @@ source("path/to/launch_app_quiet.R")
 
 ## Artificial Intelligence Disclosure
 
-Claude Opus 4.8 was employed in July and August 2026 to convert the original Shiny bootstrapPage logic to dashboardPage logic, and to assist in creating the app layout and connecting widgets to their intended functions. All code was reviewed, tested, and validated by the authors to ensure correctness and reproducibility. Any use of trade, firm, or product names is for descriptive purposes only and does not imply endorsement by the U.S. Government.
+Claude Opus 4.8 was employed in July - September 2026 to convert the original Shiny bootstrapPage logic to dashboardPage logic, and to assist in organizing the app layout and connecting widgets to their intended functions. All code was reviewed, tested, and validated by the authors to ensure correctness and reproducibility. Any use of trade, firm, or product names is for descriptive purposes only and does not imply endorsement by the U.S. Government.
 
 ## Recommended Citation
 
