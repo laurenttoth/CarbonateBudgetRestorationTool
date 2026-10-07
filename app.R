@@ -1296,7 +1296,7 @@ run_baseline_growth <- function(subregion, site_area, uc_pct, sim_duration,
     log_msg(" ============================ ")
     log_msg(" Simulating baseline growth: ", species, "...")
     if (is.function(progress_cb)) {
-      progress_cb(paste0("Simulating baseline ", abbrev_species(species), "..."))
+      progress_cb(HTML(paste0("Simulating baseline ", abbrev_species(species), "...")))
     }
 
     sim <- simulate_growth(group = "original", subregion = subregion, species = species,
@@ -1420,8 +1420,16 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   macrobioerosion <- resolve_regional_bioerosion(subregion, habitat)
   be_micro_rate   <- 0.24 # kg CaCO3/m2 consolidated substrate/yr
 
-  # Assign porosity by target assemblage
+  # Assign porosity by target assemblage (drives total/restored RAP).
   por <- assemblage_porosity(target_cover_df, "target_cvr_pct")
+  # Baseline-assemblage porosity (drives RAP_orig) so the originals' curve is
+  # independent of the restoration target and matches baseline_growth().
+  base_por <- assemblage_porosity(
+    data.frame(taxon = target_cover_df$taxon,
+               current_cvr_pct = target_cover_df$current_cvr_pct,
+               stringsAsFactors = FALSE),
+    "current_cvr_pct"
+  )
 
   n <- sim_duration + 1
 
@@ -1966,11 +1974,11 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
   budget_df$RAP_total_max <- budget_df$carb_budg_total_max / 2.9 / (1 - por)
 
   budget_df$carb_budg_orig <- budget_df$carb_budg_orig - budget_df$microbioerosion - macrobioerosion
-  budget_df$RAP_orig       <- budget_df$carb_budg_orig / 2.9 / (1 - por)
+  budget_df$RAP_orig       <- budget_df$carb_budg_orig / 2.9 / (1 - base_por)
   budget_df$carb_budg_orig_min <- carb_budg_orig_min - budget_df$microbioerosion - macro_hi
   budget_df$carb_budg_orig_max <- carb_budg_orig_max - budget_df$microbioerosion - macro_lo
-  budget_df$RAP_orig_min <- budget_df$carb_budg_orig_min / 2.9 / (1 - por)
-  budget_df$RAP_orig_max <- budget_df$carb_budg_orig_max / 2.9 / (1 - por)
+  budget_df$RAP_orig_min <- budget_df$carb_budg_orig_min / 2.9 / (1 - base_por)
+  budget_df$RAP_orig_max <- budget_df$carb_budg_orig_max / 2.9 / (1 - base_por)
 
   log_msg(str_pad(" Restoration simulation complete ", side = "both", width = 90, pad = "="), "\n\n")
 
@@ -2167,25 +2175,59 @@ mix_massive_species <- c(
 # (good/bad) meaning; the pool is blues/purples/oranges/teals/pinks/neutrals.
 # Session-persistent assignment lives in the server (sc_color_map) so toggling
 # a scenario does not reshuffle the colors.
-scenario_pastel_pool <- c(
-  "#AEC7E8", # light blue
-  "#C5B0D5", # light purple
-  "#FFBB78", # light orange
-  "#9EDAE5", # light teal
-  "#F7B6D2", # light pink
-  "#C7C7C7", # light gray
-  "#DBDB8D", # khaki (muted yellow-green, not a "growth" green)
-  "#BCBD9A", # sage
-  "#D5A6BD", # mauve
-  "#A9CCE3"  # steel blue
-)
+# Supports comparing up to 10 scenarios. Expand if necessary.
+# scenario_pastel_pool <- c(
+#   "#1f77b4", # strong blue
+#   "#9467bd", # strong purple
+#   "#ff7f0e", # strong orange
+#   "#17becf", # strong teal
+#   "#b35e9a", # magenta-pink
+#   "#8c564b", # brown
+#   "#ecec2f", # olive-gold (not a "growth" green)
+#   "#7f7f7f", # mid gray
+#   "#393b79", # indigo
+#   "#843c39"  # brick (not a "danger" red)
+# )
+
+# Generate `n` well-separated enamel-pastel colors by walking evenly spaced
+# hues in HCL space at fixed chroma/luminance. Red (~0-40, ~340-360) and green
+# (~100-160) hue bands are skipped so bar colors carry no good/bad connotation.
+# Scales to arbitrary n without the contrast collapse that interpolating a
+# fixed qualitative palette causes.
+make_scenario_pool <- function(n, chroma = 55, luminance = 72) {
+  if (n <= 0) return(character(0))
+  # Allowed hue arcs (degrees), excluding red + green bands.
+  arcs <- list(c(40, 100), c(160, 340))   # orange->yellow, cyan->blue->purple->magenta
+  arc_len <- vapply(arcs, function(a) a[2] - a[1], numeric(1))
+  total   <- sum(arc_len)
+  # Place n points proportionally across the allowed arcs.
+  pos <- (seq_len(n) - 0.5) / n * total
+  hues <- vapply(pos, function(p) {
+    for (a in arcs) {
+      span <- a[2] - a[1]
+      if (p <= span) return(a[1] + p)
+      p <- p - span
+    }
+    arcs[[length(arcs)]][2]
+  }, numeric(1))
+  # Set seed so randomization is consistent
+  set.seed(002)
+  # Shuffle hues so like colors are not sequential
+  hues <- sample(hues)
+  grDevices::hcl(h = hues, c = chroma, l = luminance)
+}
+
+# Base pool of 12 for the common case; scenario_palette() regenerates at the
+# exact count needed when more are requested.
+scenario_pastel_pool <- make_scenario_pool(12)
 
 # Fallback generator (used only for names not yet in the session color map).
 scenario_palette <- function(scenario_names) {
   n <- length(scenario_names)
   if (n == 0) return(character(0))
-  pool <- scenario_pastel_pool
-  if (n > length(pool)) pool <- colorRampPalette(pool)(n)
+  # Regenerate at the exact count so hues stay evenly separated at any n,
+  # instead of interpolating (which collapses contrast for large n).
+  pool <- if (n <= length(scenario_pastel_pool)) scenario_pastel_pool else make_scenario_pool(n)
   setNames(pool[seq_len(n)], scenario_names)
 }
 
@@ -2379,10 +2421,15 @@ body <- dashboardBody(
         border: 2px solid #2C8CB9 !important;
         box-shadow: 0 0 0 1px #2C8CB933 !important;
       }
-      body.dark-mode .mix-active-input input,
-      body.dark-mode input.mix-active-input {
-        border-color: #a06fd6 !important;
-        box-shadow: 0 0 0 1px #a06fd644 !important;
+      /* Higher specificity than the generic dark-mode input border rule
+         (body.dark-mode input[type='number']) so the active-cell blue wins
+         regardless of source order. */
+      body.dark-mode .mix-active-input input[type='number'],
+      body.dark-mode .mix-active-input input[type='text'],
+      body.dark-mode input.mix-active-input[type='number'],
+      body.dark-mode input.mix-active-input[type='text'] {
+        border: 2px solid #2C8CB9 !important;
+        box-shadow: 0 0 0 2px #2C8CB966 !important;
       }
 
       /* Stacked species name above its numeric input in the Restoration Mix */
@@ -2595,6 +2642,22 @@ body <- dashboardBody(
       body.dark-mode table.dataTable tbody tr { background-color: #232a33 !important; }
       body.dark-mode table.dataTable tbody tr:hover { background-color: #2c353f !important; }
       body.dark-mode table.dataTable thead th { border-bottom-color: #3a4552 !important; }
+      /* FixedColumns frozen cells. */
+      body.dark-mode table.dataTable th.dtfc-fixed-left,
+      body.dark-mode table.dataTable td.dtfc-fixed-left,
+      body.dark-mode table.dataTable th.dtfc-fixed-start,
+      body.dark-mode table.dataTable td.dtfc-fixed-start,
+      body.dark-mode .DTFC_LeftHeadWrapper table thead th,
+      body.dark-mode .DTFC_LeftBodyWrapper table tbody td,
+      body.dark-mode .DTFC_LeftBodyLiner table tbody td {
+        background-color: #232a33 !important;
+        color: #e6e6e6 !important;
+      }
+      /* Preserve the hover shade on pinned cells too. */
+      body.dark-mode table.dataTable tbody tr:hover td.dtfc-fixed-left,
+      body.dark-mode table.dataTable tbody tr:hover td.dtfc-fixed-start {
+        background-color: #2c353f !important;
+      }
       /* Column-filter search boxes injected by DT filter = 'top' */
       body.dark-mode .dataTables_wrapper input,
       body.dark-mode table.dataTable thead input {
@@ -2625,12 +2688,12 @@ body <- dashboardBody(
       }
       #sim_overlay.open { display: flex; }
       #sim_overlay .coral-wrap {
-        position: relative; width: 90px; height: 90px;
+        position: relative; width: 120px; height: 120px;
       }
       /* Dim base layer (uncovered portion of the icon). */
       #sim_overlay .coral-base svg,
       #sim_overlay .coral-fill svg {
-        width: 90px; height: 90px; display: block;
+        width: 120px; height: 120px; display: block;
       }
       #sim_overlay .coral-base { position: absolute; inset: 0;
         opacity: 0.0; filter: grayscale(100%); } /* Invisible. Change to 0.18 opacity for semitransparent */
@@ -2641,8 +2704,8 @@ body <- dashboardBody(
         transition: clip-path 0.35s ease;
       }
       #sim_overlay .sim-caption {
-        margin-top: 10px; font-weight: bold; font-size: 13px;
-        color: #2f4f2f; text-align: center; max-width: 26ch;
+        margin-top: 10px; font-weight: bold; font-size: 14px;
+        color: #2f4f2f; text-align: center; min-width: 30ch; max-width: 33ch;
         overflow-wrap: break-word;
       }
       body.dark-mode #sim_overlay .sim-caption { color: #9fd08a; }
@@ -2692,6 +2755,7 @@ body <- dashboardBody(
     ")),
     # Native-title tooltips keyed by input id. Re-applied on a short interval so
     # dynamically-rendered inputs (tabs, uiOutput) also receive their titles.
+    # Shiny titles do not support HTML tags. Important words emphasized with unicode mathematical bolding.
     tags$script(HTML("
       var RPT_TIPS = {
         'baseline_template_dl': 'Download a template baseline-input .xlsx file.',
@@ -2708,8 +2772,9 @@ body <- dashboardBody(
         'baseline_delete_cache': 'Delete the cached baseline input. Does not affect the original input file.',
         'reset_mix': 'Clear all input cells in the Restoration Mix except Baseline Cover.',
         'additional_outplant_years': 'Comma-separated integer years (after Year 0) at which to place additional outplants. Each year becomes an extra row in count-driven species dropdowns.',
-        'base_REQUIRED_Other_living_benthos': 'Percent cover of other living benthos (sponges, soft corals, etc.). This space is considered unavailable for calcifier growth. A value of 0 or greater is required.',
-        'base_REQUIRED_Unconsolidated_substrate': 'Percent cover of unconsolidated substrate (sand, rubble, etc.). This value is used to determine the available non-coral consolidated substrate affected by microbioerosion. This area is considered available for calcifier growth.',
+        'base_REQUIRED_Other_living_benthos': 'Percent cover of other living benthos (sponges, soft corals, etc.). This space is considered 𝐮𝐧𝐚𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞 for calcifier growth. A value of 0 or greater is required.',
+        'base_REQUIRED_Unconsolidated_substrate': 'Percent cover of unconsolidated substrate (sand, rubble, etc.). This value is used to determine the available non-coral consolidated substrate affected by microbioerosion. This area is considered 𝐚𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞 for calcifier growth.',
+        'base_Crustose_coralline_algae': 'Percent cover of calcifying algae. This space is considered 𝐚𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞 for other calcifier growth.',
         'sim_duration': 'Number of years to project reef growth into the future.',
         'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting and and projected coral growth.',
         'dhw': 'Thermal-stress severity of each bleaching event, in degree-heating weeks.',
@@ -3408,128 +3473,149 @@ body <- dashboardBody(
     tabItem(
       tabName = "about",
       shinydashboard::box(
-        width = 12, status = "primary", solidHeader = FALSE,          
+        width = 12, status = "primary", solidHeader = FALSE,
         tags$div(
-          tags$h4(tags$strong("Aim")),
-          HTML("The aim of this application is to provide a predictive tool for decision makers to assess reef restoration efforts under future climate change 
-            and bleaching scenarios. The modelling approach that is used to build projections in this interactive tool is described in a forthcoming journal publication."), tags$br(),
-          tags$br(),
-          tags$h4(tags$strong("Background")),
-          HTML("For reef framework to persist, constructional processes by corals and other calcifers need 
-          to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and 
-          dynamic and is currently threatened by the effects of sea-level rise, ocean warming, and ocean acidifcation.
-          
-          Although the protection and recovery of ecosystem functions are at the center of most restoration 
-          and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
-          reef accretion under different emission and bleaching scenarios."),
-          tags$br(),
-          tags$br(),
-          HTML("The Reef Persistence Tool will enable decision makers to evaluate the impact of reef restoration decisions 
-                in the context of climate change and a variety of bleaching scenarios."), tags$br(),
-          tags$br(),
-          tags$h4(tags$strong("Code")),
-          "Code and input data used to generate this Shiny app are available on ", tags$a(href = "https://github.com/laurenttoth/CarbonateBudgetRestorationTool", "Github."), tags$br(),
-          tags$br(),
-          tags$h4(tags$strong("Disclaimer")),
-          "This software is preliminary or provisional and is subject to revision. It is being
-            provided to meet the need for timely best science. The software has not received final
-            approval by the U.S. Geological Survey (USGS). No warranty, expressed or implied, is
-            made by the USGS or the U.S. Government as to the functionality of the software and
-            related material nor shall the fact of release constitute any such warranty. The
-            software is provided on the condition that neither the USGS nor the U.S. Government
-            shall be held liable for any damages resulting from the authorized or unauthorized
-            use of the software.", tags$br(),
-          tags$br(),
           column(width = 8,
+            tags$h4(tags$strong("Aim")),
+            "The aim of this application is to provide a predictive tool for decision makers to assess reef restoration efforts 
+             under future climate change and bleaching scenarios. The modelling approach that is used to build projections in
+             this interactive tool is described in a forthcoming journal publication.", tags$br(),
+            tags$br(),
+            tags$h4(tags$strong("Background")),
+            HTML("For reef framework to persist, constructional processes by corals and other calcifers need 
+            to outpace loss due to physical, chemical, and biological erosion. This balance is both delicate and 
+            dynamic and is currently threatened by the effects of sea-level rise, ocean warming, and ocean acidifcation.
+            Although the protection and recovery of ecosystem functions are at the center of most restoration 
+            and conservation programs, decision makers are limited by the lack of predictive tools to forecast 
+            reef accretion under different emission and bleaching scenarios."),
+            tags$br(),
+            tags$br(),
+            HTML("The Reef Persistence Tool will enable decision makers to evaluate the impact of reef restoration decisions 
+                  in the context of climate change and a variety of bleaching scenarios."), tags$br(),
+            tags$br(),
+            tags$h4(tags$strong("Code")),
+            "Code and input data used to generate this Shiny app are available on ", tags$a(href = "https://github.com/laurenttoth/CarbonateBudgetRestorationTool", "Github."), tags$br(),
+            tags$br(),
+            tags$h4(tags$strong("Disclaimer")),
+            "This software is preliminary or provisional and is subject to revision. It is being
+              provided to meet the need for timely best science. The software has not received final
+              approval by the U.S. Geological Survey (USGS). No warranty, expressed or implied, is
+              made by the USGS or the U.S. Government as to the functionality of the software and
+              related material nor shall the fact of release constitute any such warranty. The
+              software is provided on the condition that neither the USGS nor the U.S. Government
+              shall be held liable for any damages resulting from the authorized or unauthorized
+              use of the software.", tags$br(),
+            tags$br(),
             tags$h4(tags$strong("Sources")),
             "Chronic coral mortality rates: Browne et al. (2026)", tags$br(),
             "Species-specific calcification rates: Courtney et al. (2024)", tags$br(),
+            "Degree-heating-week driven bleaching mortality slopes: Webb et al. unpublished (??)", tags$br(),
             "Generalized Caribbean microbioerosion rate: Perry and Lange (2019)", tags$br(),
             "Sea-level rise projections: Sea Level Rise and Coastal Flood Hazard Scenarios and Tools Interagency Task Force (2022)", tags$br(),
             tags$br(),
             "Average colony diameter: ??", tags$br(),
-            "Outplant mortality rates: ??", tags$br(),
+            "Outplant mortality rates: MOTE Data [CITATION]", tags$br(),
             "Assemblage-based reef porosity: ??", tags$br(),
-            "2014-2024 carbonate budget surveys: ??", tags$br(),
+            "2014-2024 carbonate budget surveys: NCRMP Survey Data [CITATION]", tags$br(),
             "Regional bioerosion rates: ??", tags$br(),
             "Species-specific bioerosion rates: ??", tags$br(),
             "Species-specific planar growth rates: ??", tags$br(),
             tags$br(),
             tags$br(),
             tags$h4(tags$strong("Authors")),
-            "Connor M. Jenkins, USGS St. Petersburg Coastal and Marine Science Center", tags$br(),
-            "Lauren T. Toth, USGS St. Petersburg Coastal and Marine Science Center", tags$br(),
-            "John Morris, NOAA Atlantic Oceanographic and Meteorological Laboratory", tags$br(),
-            "Ian Enochs, NOAA Atlantic Oceanographic and Meteorological Laboratory", tags$br(),
+            tags$table(
+              tags$tr(tags$td(HTML(paste0("Connor M. Jenkins", strrep("&nbsp;", 2)))), tags$td("St. Petersburg Coastal and Marine Science Center")),
+              tags$tr(tags$td("Lauren Toth"), tags$td("St. Petersburg Coastal and Marine Science Center")),
+              tags$tr(tags$td("John Morris"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory")),
+              tags$tr(tags$td("Ian Enochs"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory"))
+            ),
             tags$br(),
             tags$h4(tags$strong("Contact")),
             "Lauren Toth: ", tags$a(href = "mailto:ltoth@usgs.gov", "ltoth@usgs.gov"), tags$br(),
             tags$br(),
             tags$br(),
             tags$h4(tags$strong("Acknowledgments")),
-            "A special thanks to the participants of the Carbonate Budget Tool Workshop (St. Petersburg, Florida, September 1-3, 2026),", tags$br(),
+            "A special thanks to the participants of the ", tags$strong("Carbonate Budget Tool Workshop"), "(St. Petersburg, Florida, September 1-3, 2026),", tags$br(),
             "who provided their time and expertise to test and critique the app:", tags$br(),
             tags$br(),
-            tags$strong("Subject Matter Experts:"), tags$br(),
-            "Simeon Yurek, USGS Wetland and Aquatic Research Center", tags$br(),
-            "Jay Grove*, NOAA Southeast Fisheries Science Center", tags$br(),
-            "Alice Webb*, University of Exeter", tags$br(),
-            "Chris Perry*, University of Exeter", tags$br(),
+            tags$div(style = "padding-left:40px",
+              tags$strong("Subject Matter Experts:"), tags$br(),
+              tags$table(
+                  #tags$tr(tags$th("Participant"), tags$th("Affiliation")),
+                  tags$tr(tags$td("Simeon Yurek"), tags$td("USGS Wetland and Aquatic Research Center")),
+                  tags$tr(tags$td("Lauren Toth"), tags$td("St. Petersburg Coastal and Marine Science Center")),
+                  tags$tr(tags$td("Selena Johnson"), tags$td("St. Petersburg Coastal and Marine Science Center")),
+                  # Pad the longest name with nonbreaking spaces so the table remains comfortable.
+                  tags$tr(tags$td(HTML(paste0("Connor M. Jenkins", strrep("&nbsp;", 10)))), tags$td("St. Petersburg Coastal and Marine Science Center")),
+                  tags$tr(tags$td("Alice Webb*"), tags$td("University of Exeter")),
+                  tags$tr(tags$td("Chris Perry*"), tags$td("University of Exeter")),
+                  tags$tr(tags$td("John Morris"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory")),
+                  tags$tr(tags$td("Ian Enochs*"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory")),
+                  tags$tr(tags$td("Jay Grove*"), tags$td("NOAA Southeast Fisheries Science Center"))
+              ),
+              tags$br(),
+              tags$strong("Stakeholders:"), tags$br(),
+              tags$table(
+                tags$tr(tags$td("Sara Williams"), tags$td("MOTE Marine Laboratory")),
+                tags$tr(tags$td("Jason Spadaro"), tags$td("MOTE Marine Laboratory")),
+                tags$tr(tags$td("Lucas Skay"), tags$td("MOTE Marine Laboratory")),
+                tags$tr(tags$td("Nick Alcaraz*"), tags$td("Florida Fish and Wildlife Conservation Commission")),
+                tags$tr(tags$td("Christina Mallica"), tags$td("Florida Fish and Wildlife Conservation Commission")),
+                tags$tr(tags$td(HTML(paste0("Stephanie Schopmeyer", strrep("&nbsp;", 2)))), tags$td("Florida Fish and Wildlife Conservation Commission")),
+                tags$tr(tags$td("Andy Bruckner"), tags$td("NOAA Florida Keys National Marine Sanctuary")),
+                tags$tr(tags$td("Alexandra Fine"), tags$td("NOAA Florida Keys National Marine Sanctuary")),
+                tags$tr(tags$td("Maurizio Martinelli"), tags$td("Florida Department of Environmental Protection"))
+              ),
+              tags$br(),
+              tags$strong("Facilitators:"), tags$br(),
+              tags$table(
+                tags$tr(tags$td(HTML(paste0("David Gonzales", strrep("&nbsp;", 15)))), tags$td("U.S. Fish and Wildlife Service")),
+                tags$tr(tags$td("William Hall"), tags$td("U.S. Department of the Interior"))
+              ),
+              tags$br(),
+              tags$div(style = "font-style:italic;", "* virtual attendee")
+            ),
             tags$br(),
-            tags$strong("Stakeholders:"), tags$br(),
-            "Sara Williams, MOTE Marine Laboratory", tags$br(),
-            "Jason Spadaro, MOTE Marine Laboratory", tags$br(),
-            "Lucas Skay, MOTE Marine Laboratory", tags$br(),
-            "Nick Alcaraz*, Florida Fish and Wildlife Conservation Commission", tags$br(),
-            "Christina Mallica, Florida Fish and Wildlife Conservation Commission", tags$br(),
-            "Stephanie Schopmeyer, Florida Fish and Wildlife Conservation Commission", tags$br(),
-            "Andy Bruckner, NOAA Florida Keys National Marine Sanctuary", tags$br(),
-            "Alexandra Fine, NOAA Florida Keys National Marine Sanctuary", tags$br(),
-            "Maurizio Martinelli, Florida Department of Environmental Protection", tags$br(),
-            tags$br(),
-            tags$strong("Facilitators:"), tags$br(),
-            "David Gonzales, U.S. Fish and Wildlife Service", tags$br(),
-            "William Hall, U.S. Department of the Interior", tags$br(),
-            tags$br(),
-            div(style = "font-style:italic", "* virtual attendee"), tags$br(),
             tags$br(),
             "and to Dr. Alice Webb and her team, who developed the ", tags$a(href = "https://github.com/alice35/ReefPersistence_app", "original Reef Persistence Tool"),
             ", which was the inspiration for this project:", tags$br(),
             tags$br(),
-            "Dr. Alice Webb, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA;", tags$br(),
-            tags$p("Geography, College of Life and Environmental Sciences, University of Exeter, UK", style = "text-indent: 40px"),
-            "Patrick Kiel, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
-            tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
-            "Mike Jankulak, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, Miami, Florida, USA;", tags$br(),
-            tags$p("Cooperative Institute for Marine and Atmospheric Studies, University of Miami, USA", style = "text-indent: 40px"),
-            "Dr. Ian Enochs, Atlantic Oceanographic and Meteorological Laboratory, Ocean Chemistry and Ecosystem Division, NOAA, USA", tags$br(),
-            tags$br(),
-            "The paper describing the original Reef Persistence Tool is published in ", tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br(),
-            tags$br(),
+            tags$div(
+              style = "padding-left:40px",
+              tags$table(
+                tags$tr(tags$td("Alice Webb"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory; Geography, College of Life and Environmental Sciences, University of Exeter")),
+                tags$tr(tags$td("Patrick Kiel"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory; Cooperative Institute for Marine and Atmospheric Studies, University of Miami")),
+                tags$tr(tags$td(HTML("Mike Jankulak &nbsp;&nbsp;")), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory; Cooperative Institute for Marine and Atmospheric Studies, University of Miami")),
+                tags$tr(tags$td("Ian Enochs"), tags$td("NOAA Atlantic Oceanographic and Meteorological Laboratory"))
+              ),
+              tags$br(),
+              "The paper describing the original Reef Persistence Tool is published in ", tags$a(href = "https://www.nature.com/articles/s41598-022-26930-4", "Scientific Reports"), ".", tags$br()
+            ),
             tags$br(),
             tags$strong("Coral icon credit:"), tags$br(),
             HTML("Reef ocean nature diving Icon by Lima Studio on <a href='https://icon-icons.com/authors/993-lima-studio'>Icon-Icons.com</a>")
           ),
           column(width = 4,
             # Add logo panel
-            # absolutePanel(
-            #   id = "absPanel",
-            #   top = "62%",
-            #   left = "72.5%",
-            #   width = "30%",
-            #   fixed = TRUE,
-            tags$div(style = 'display:flex; justify-content:center; align-items:center; gap:40px; margin:20px',
-              fluidRow(
-                tags$img(src = "fknmsLogo.png", width = "450px", height = "200px"),
-                tags$div(style = 'margin: 0px 10px 10px 10px',
-                  tags$img(src = "moteLogo.png", width = "200px", height = "180px"),
-                  tags$img(src = "noaaLogo.png", width = "200px", height = "200px")
-                ),
-                tags$div(style = 'margin-bottom: 20px',
-                  tags$img(src = "fdepLogo.png", width = "220px", height = "200px"),
-                  tags$img(src = "fwcLogo.png", width = "200px", height = "220px")
-                ),
-                tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
+            absolutePanel(
+              id = "absPanel",
+              top = "8%",
+              left = "68%",
+              width = "30%",
+              fixed = TRUE,
+              tags$div(style = "display:flex; justify-content:center; align-items:center; gap:40px; margin:20px",
+                fluidRow(
+                  tags$img(src = "fknmsLogo.png", width = "450px", height = "200px"),
+                  tags$div(style = "margin: 0px 10px 10px 10px",
+                    tags$img(src = "moteLogo.png", width = "200px", height = "180px"),
+                    tags$img(src = "noaaLogo.png", width = "200px", height = "200px")
+                  ),
+                  tags$div(style = 'margin-bottom: 20px',
+                    tags$img(src = "fdepLogo.png", width = "220px", height = "200px"),
+                    tags$img(src = "fwcLogo.png", width = "200px", height = "220px")
+                  ),
+                  tags$img(src = "usgsLogo.png", width = "450px", height = "150px")
+                )
               )
             )
           )
@@ -3697,6 +3783,8 @@ server <- function(input, output, session) {
   # Manual run: advance the token on click (works regardless of mode, but the
   # button is disabled while reactive mode is on).
   observeEvent(input$run_sim, {
+    announce_readiness(TRUE)
+    on.exit(later::later(function() announce_readiness(FALSE), delay = 1))
     model_stale(FALSE)
     sim_token(sim_token() + 1)
     write_cached_baseline()
@@ -3712,7 +3800,7 @@ server <- function(input, output, session) {
   })
 
   .req_num <- function(x) {
-    if (is.null(x) || length(x) == 0 || is.na(x)) FALSE else as.numeric(x)
+    if (is.null(x) || length(x) == 0 || is.na(x) || x < 0) FALSE else as.numeric(x)
   }
   .safe_num <- function(x) {
     if (is.null(x) || length(x) == 0 || is.na(x)) 0 else as.numeric(x)
@@ -3723,30 +3811,55 @@ server <- function(input, output, session) {
 
   # Outplanting-tab readiness gate ----
   # Baseline/restoration projections require a nonzero unconsolidated-substrate
-  # value AND at least one coral species with cover > 0. Returns TRUE only when
-  # both hold, so reactives can req() on it and value boxes / the timeline show
-  # a neutral placeholder instead of erroring while inputs are incomplete.
+  # and other-living-benthod value, AND at least one coral species with cover > 0.
+  # Returns TRUE only when both hold, so reactives can req() on it and value boxes /
+  # the timeline show a neutral placeholder instead of erroring while inputs are incomplete.
+  # When TRUE, outplanting_ready() is permitted to surface its validation
+  # notifications. Set by the Simulate / Save handlers, cleared after the run so
+  # passive (display-time) evaluations stay silent.
+  announce_readiness <- reactiveVal(FALSE)
+
   outplanting_ready <- reactive({
-    # UC and OLB must be a valid number >= 0 (0 allowed). NA/blank blocks the sim.
+    announce <- isolate(announce_readiness())
+    note <- function(msg) if (announce) showNotification(msg, type = "error")
+
+    present <- baseline_species_list()  # live rows only
+
+    # UC and OLB must be PRESENT as rows AND a valid number >= 0 (0 allowed).
+    # A removed row leaves a stale input value behind; treat it as missing.
+    if (!(UC_TAXON %in% present)) {
+      note("'Unconsolidated substrate' is required. Add it to the Restoration Mix.")
+      return(FALSE)
+    }
     uc <- .req_num(input$base_REQUIRED_Unconsolidated_substrate)
     if (isFALSE(uc)) {
-      showNotification("Provde a value of at least 0 for 'Unconsolidated substrate'.", type = "error")
+      note("Provide a value of at least 0 for 'Unconsolidated substrate'.")
+      return(FALSE)
+    }
+    if (!(OLB_TAXON %in% present)) {
+      note("'Other living benthos' is required. Add it to the Restoration Mix.")
       return(FALSE)
     }
     olb <- .req_num(input$base_REQUIRED_Other_living_benthos)
     if (isFALSE(olb)) {
-      showNotification("Provde a value of at least 0 for 'Other living benthos'.", type = "error")
+      note("Provide a value of at least 0 for 'Other living benthos'.")
       return(FALSE)
     }
     sp <- setdiff(baseline_species_list(), c(UC_TAXON, OLB_TAXON))
     if (length(sp) == 0) {
-      showNotification("Submit at least one species to simulate.", type = "error")
+      note("Submit at least one species to simulate.")
       return(FALSE)
     }
     covers <- vapply(sp, function(s) {
       .safe_num(input[[paste0("base_", gsub("[^A-Za-z0-9]", "_", s))]])
     }, numeric(1))
-    any(covers > 0)
+    if (any(covers > 0)) {
+      return(TRUE)
+    } else {
+      note("Submit at least one baseline or target cover percentage to simulate.")
+      return(FALSE)
+    }
+
   })
 
   # Dark Mode: toggle the body CSS class from the switch ----
@@ -3823,21 +3936,24 @@ server <- function(input, output, session) {
         options = providerTileOptions(attribution = 'Map data &copy; <a href="https://www.esri.com/">Esri</a>')
       ) |>
       setView(lng = -81, lat = 25.5, zoom = 8) |>
+      # Dedicated lowest pane for reef regions
+      addMapPane("regions_pane", zIndex = 380) |>
 
       # Region polygons, pastel fill at 75% transparency
       addPolygons(
         data        = regions_sf,
         fillColor   = ~ region_pal(Region),
-        fillOpacity = 0.45,
+        fillOpacity = 0.25,
         color       = "white",
         weight      = 1,
         opacity     = 0.8,
-        label       = ~Region
+        label       = ~Region,
+        options     = pathOptions(pane = "regions_pane")
       ) |>
 
-      # Dedicated low pane for the named-reef polygons so they sit above the
+      # Dedicated low pane for the named-reef points + polygons so they sit above the
       # basemap/regions but BELOW the clickable site markers (default ~600).
-      addMapPane("named_reefs_pane", zIndex = 410)
+      addMapPane("named_reefs_pane", zIndex = 390)
   })
 
   # Add / update NCRMP markers, halos, and legend ----
@@ -4094,13 +4210,18 @@ server <- function(input, output, session) {
     proxy <- leafletProxy("mymap") |>
       clearGroup("named_reefs")
 
+    labs <- as.character(named_reefs_sf$Location)
+    labs_fknms <- as.character(named_reefs_sf_fknms$Reef_Name)
+
+    # Only display named-reef labels above zoom 8. Depending on the live zoom
+    # redraws (adds/removes the group) as the user zooms in/out.
+    cur_zoom <- input$mymap_zoom
     if (!isTRUE(input$show_named_reefs) || is.null(named_reefs_sf) ||
-        nrow(named_reefs_sf) == 0) {
+        nrow(named_reefs_sf) == 0 ||
+        is.null(cur_zoom) || cur_zoom <= 10) {
       return(proxy)
     }
 
-    labs <- as.character(named_reefs_sf$Location)
-    labs_fknms <- as.character(named_reefs_sf_fknms$Reef_Name)
 
     proxy |>
       addPolygons(
@@ -4116,7 +4237,7 @@ server <- function(input, output, session) {
           style = list(
             "color" = "white",
             "font-weight" = "bold",
-            "font-size" = "12px",
+            "font-size" = "14px",
             "text-shadow" =
               "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000"
           )
@@ -4134,7 +4255,7 @@ server <- function(input, output, session) {
           style = list(
             "color" = "white",
             "font-weight" = "bold",
-            "font-size" = "12px",
+            "font-size" = "14px",
             "text-shadow" =
               "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000"
           )
@@ -4815,14 +4936,18 @@ server <- function(input, output, session) {
     rm_bound(already)
   })
 
-  # Dynamic per-species numericInputs: species:%cover, with the add-species
-  # dropdown rendered BELOW the list (or as the sole component when empty).
-  # Restoration Mix: one 4-column row per baseline species. Columns:
-  #   base_<s>   Baseline cover (%)
-  #   target_<s> Target cover (%)
-  #   diam_<s>   Avg. outplant diameter (cm)   (blank = don't outplant)
-  #   cost_<s>   Avg. outplant cost ($)        (blank = don't outplant)
-  # UC row is a single plain cell (no morphology, no target/diam/cost).
+# Dynamic per-species numericInputs: species:%cover, with the add-species
+# dropdown rendered above the list (or as the sole component when empty).
+# Restoration Mix: one 7-column row per baseline species. Columns:
+#   base_<s>   Baseline cover (%)
+#   target_<s> Target cover (%)
+#   diam_<s>   Avg. outplant diameter (cm)     (blank = don't outplant)
+#   cost_<s>   Avg. outplant cost ($)          (blank = don't outplant)
+#   count_<s>  Number of fragments to outplant. Drives model if Target cover is empty.
+#   opc_<s>    Outplants-per-cluster for this species.
+#   final_cover_<s> Percent cover at the end of the simulation.
+# UC, OLB, and CCA rows are a single base_<s> cell (no morphology, no target/diam/cost).
+
 output$restoration_mix_inputs <- renderUI({
     mix_repaint()                    # dependency: force re-render on demand
     sp <- baseline_species_list()
@@ -4863,9 +4988,13 @@ output$restoration_mix_inputs <- renderUI({
         return(tags$div(
           class = "mix-grid-row",
           style = "display:flex; align-items:center; gap:6px; margin-bottom:4px;",
-          tags$div(style = "flex:0 0 auto;", remove_btn),
-          tags$div(style = "flex: 2 1 0;",
-            tags$span(class = "baseline-species-name", title = s, s)),
+          # Required taxon: no remove button; keep a spacer so columns align.
+          tags$div(style = "flex:0 0 auto; width:28px;", ""),
+          tags$div(style = "flex: 2 1 0; margin-bottom:8px; margin-right:4px;",
+            tags$div(class = "baseline-species-name", title = s, s),
+            tags$div(class = "mix-morph-label",
+                     style = "font-size:11px; color:#666; font-style:italic;",
+                     "(Required baseline data)")),
           tags$div(style = "flex: 1 1 0;",
             numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
           tags$div(style = "flex: 6 1 0;", "")  # spans target/diam/cost/count/opc/final
@@ -4878,9 +5007,13 @@ output$restoration_mix_inputs <- renderUI({
         return(tags$div(
           class = "mix-grid-row",
           style = "display:flex; align-items:center; gap:6px; margin-bottom:4px;",
-          tags$div(style = "flex:0 0 auto;", remove_btn),
-          tags$div(style = "flex: 2 1 0;",
-            tags$span(class = "baseline-species-name", title = s, s)),
+          # Required taxon: no remove button; keep a spacer so columns align.
+          tags$div(style = "flex:0 0 auto; width:28px;", ""),
+          tags$div(style = "flex: 2 1 0; margin-bottom:8px; margin-right:4px;",
+            tags$div(class = "baseline-species-name", title = s, s),
+            tags$div(class = "mix-morph-label",
+                     style = "font-size:11px; color:#666; font-style:italic;",
+                     "(Required baseline data)")),
           tags$div(style = "flex: 1 1 0;",
             numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
           tags$div(style = "flex: 6 1 0;", "")  # spans the remaining columns
@@ -4893,11 +5026,11 @@ output$restoration_mix_inputs <- renderUI({
           class = "mix-grid-row",
           style = "display:flex; align-items:center; gap:6px; margin-bottom:4px;",
           tags$div(style = "flex:0 0 auto;", remove_btn),
-          tags$div(style = "flex: 2 1 0;",
+          tags$div(style = "flex: 2 1 0; margin-bottom:8px; margin-right:12px;",
             tags$div(class = "baseline-species-name", title = s, s),
             tags$div(class = "mix-morph-label",
                      style = "font-size:11px; color:#666; font-style:italic;",
-                     "(crustose coralline algae)")),
+                     "(Weedy / Other)")),
           tags$div(style = "flex: 1 1 0;",
             numericInput(bid, label = NULL, value = base_val, min = 0, max = 100, step = 0.1)),
           # Spacers for target / diam / cost / count / opc (5 columns)
@@ -5125,7 +5258,10 @@ output$restoration_mix_inputs <- renderUI({
     if (isTRUE(model_stale())) return(0)
     mr <- model_result()
     if (!is.null(mr) && !is.null(mr$end_cover_by_species)) {
-      ec <- sum(mr$end_cover_by_species) - mr$end_cover_by_species[CCA_TAXON]
+      ec <- sum(mr$end_cover_by_species)
+      if (!is.na(mr$end_cover_by_species[CCA_TAXON])) {
+        ec <- ec - mr$end_cover_by_species[CCA_TAXON]
+      }
       ec <- if ((is.null(ec) || is.na(ec))) 0 else ec
       return(ec)
     } else {
@@ -5133,7 +5269,11 @@ output$restoration_mix_inputs <- renderUI({
       if (!is.null(bg) && is.data.frame(bg[[1]])) {
         ecb <- attr(bg[[1]], "end_cover_by_species")
         if (!is.null(ecb)) {
-          sum(ecb)  - ecb[CCA_TAXON]
+          if (!is.na(ecb[CCA_TAXON])) {
+            sum(ecb) - ecb[CCA_TAXON]
+          } else {
+            sum(ecb)
+          }
         } else {
           0
         }
@@ -5398,74 +5538,6 @@ output$restoration_mix_inputs <- renderUI({
     "Pseudodiploria spp.",   "Siderastrea siderea",
     "Solenastrea bournoni",  "Stephanocoenia intersepta"
   )
-
-  # Helper: build a column of species target-cover inputs for one morphology sub-box.
-  # STATIC: inputs must not depend on model output, or the UI would rebuild
-  # (resetting every input to 0) whenever the model reruns. Per-species
-  # outplant counts render in separate, independent outputs below.
-  # step = 0.5 (accept half-percent), ticks hidden; two-line italic labels.
-  make_mix_inputs <- function(species_vec) {
-    lapply(species_vec, function(s) {
-      id  <- paste0("rest_target_", gsub("[^A-Za-z0-9]", "_", s))
-      nid <- paste0("outplants_", gsub("[^A-Za-z0-9]", "_", s))
-      tagList(
-        tags$div(
-          class = "mix-species-stacked",
-          tags$div(class = "baseline-species-name mix-species-label",
-                   title = s, HTML(make_species_label(s, split_line = FALSE))),
-          fluidRow(
-            column(6,
-              # Blank by default (value = NA renders empty). A blank target is
-              # treated as "no target" in the model, not a forced-zero target.
-              numericInput(id, label = NULL, value = NA,
-                          min = 0, max = 100, step = 0.1)
-            ),
-            column(6,
-              tags$div(class = "rest-outplant-note", textOutput(nid, inline = TRUE))
-            )
-          )
-        )
-      )
-    })
-  }
-
-  # Branching sub-box: two columns
-  output$mix_branching <- renderUI({
-    sl <- make_mix_inputs(branching_species)
-    half <- ceiling(length(sl) / 2)
-    fluidRow(
-      column(6, tagList(sl[1:half])),
-      column(6, tagList(sl[(half + 1):length(sl)]))
-    )
-  })
-
-  # Weedy / Other sub-box: two columns
-  output$mix_weedy <- renderUI({
-    sl <- make_mix_inputs(weedy_species)
-    half <- ceiling(length(sl) / 2)
-    fluidRow(
-      column(6, tagList(sl[1:half])),
-      column(6, tagList(sl[(half + 1):length(sl)]))
-    )
-  })
-
-  # Massive sub-box: four columns
-  output$mix_massive <- renderUI({
-    sl <- make_mix_inputs(mix_massive_species)
-    n <- length(sl)
-    per <- ceiling(n / 4)
-    col_idx <- function(k) {
-      lo <- (k - 1) * per + 1
-      hi <- min(k * per, n)
-      if (lo <= hi) lo:hi else integer(0)
-    }
-    fluidRow(
-      column(3, tagList(sl[col_idx(1)])),
-      column(3, tagList(sl[col_idx(2)])),
-      column(3, tagList(sl[col_idx(3)])),
-      column(3, tagList(sl[col_idx(4)]))
-    )
-  })
 
   # Reset every Species-Mix target input back to blank (NA).
   observeEvent(input$reset_mix, {
@@ -5736,11 +5808,19 @@ output$restoration_mix_inputs <- renderUI({
       outplant_count = numeric(), opc = numeric(),
       stringsAsFactors = FALSE
     )
+    live_sp <- baseline_species_list()  # currently-rendered species only
     for (s in all_sp) {
       # CCA is grown in Phase 0; OLB is reserved space. Neither is grown as a
       # coral here.
       if (str_detect(s, "algae") || is_reserved_taxon(s)) next
+      # Skip species no longer present in the (live) baseline list: a removed
+      # row leaves a stale input value behind, which must not drive the sim.
+      if (!(s %in% live_sp)) next
       s_    <- gsub("[^A-Za-z0-9]", "_", s)
+      # Honor the live widget: a base cover edited to blank/NA means this
+      # species contributes nothing, regardless of any cached input value.
+      base_raw <- input[[paste0("base_", s_)]]
+      if (is.null(base_raw)) next
       cur   <- .safe_num(input[[paste0("base_",   s_)]])
       dia_v <- input[[paste0("diam_",  s_)]]
       cst_v <- input[[paste0("cost_",  s_)]]
@@ -5835,9 +5915,9 @@ output$restoration_mix_inputs <- renderUI({
       )
     } else { # No model result present: baseline only
       list(
-        b_cover = b$cover,   r_cover = NULL, # r$cover,
-        b_budget = b$budget, r_budget = NULL, # r$budget,
-        b_rap = b$rap,       r_rap = NULL # r$rap
+        b_cover = b$cover,   r_cover = NULL,
+        b_budget = b$budget, r_budget = NULL,
+        b_rap = b$rap,       r_rap = NULL
       )
     }
   })
@@ -6497,11 +6577,13 @@ output$restoration_mix_inputs <- renderUI({
 
     # Wire the "Save scenario" button press to also run the simulation,
     # so the appropriate simulated values for the current slider values are saved.
+    announce_readiness(TRUE)
+    on.exit(later::later(function() announce_readiness(FALSE), delay = 1), add = TRUE)
     sim_token(sim_token() + 1)
     write_cached_baseline()
     base_mets <- baseline_metrics()
     mr <- model_result()
-    fv <- final_vals()   # baseline/restored evaluated at the restoration horizon
+    fv <- final_vals()   # baseline/restored metrics evaluated at final simulation year
 
     restored_rap <- fv$r_rap
     baseline_rap <- fv$b_rap
@@ -6515,9 +6597,8 @@ output$restoration_mix_inputs <- renderUI({
     outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
     elev_gain_10yr <- restored_rap * 10 # mm over 10 years
 
-    # Legacy ROI field retained for backward compatibility; the Scenario
-    # Comparison plot now recomputes ROI from net kg CaCO3 / cost at render.
-    # roi <- if (cost > 0) (elev_gain_10yr / cost) * 1000 else 0
+    # ROI not included here; the Scenario Comparison plot
+    # recomputes ROI from net kg CaCO3 / cost at render.
 
     # ---- Assemble yearly series for the expanded save ----
     # yearly_rap: per-year total RAP + CI bands from the model's budget_df.
