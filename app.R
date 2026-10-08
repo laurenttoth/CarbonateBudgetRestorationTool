@@ -34,6 +34,7 @@ library(RColorBrewer)
 library(shiny)
 library(shinyjs)
 library(shinyBS)
+library(shinyFiles)
 library(shinythemes)
 library(shinyWidgets)
 library(shinydashboard)
@@ -367,10 +368,15 @@ fit <- lm(rap ~ hardCoral_PrctCvr, data = df)
 cover_rap_slope <- unname(coef(fit)["hardCoral_PrctCvr"])
 
 # Directory for saved restoration scenarios (Scenario Comparison tab)
-scenario_dir <- here("scenarios")
-if (!dir.exists(scenario_dir)) dir.create(scenario_dir, showWarnings = FALSE)
+# Removed in favor of local file saving in a custom directory. Files
+# only persist on the Posit server while at least one instance of 
+# the app is running. Host all saved files with NOAA once they host the site?
+# scenario_dir <- here("scenarios")
+# if (!dir.exists(scenario_dir)) dir.create(scenario_dir, showWarnings = FALSE)
 
 # Cache dir for the most-recent baseline .xlsx (auto-reload on launch) ----
+# This will also need to be adjusted for Posit server logic. But is only 
+# a convenience function, so leave as-is for now.
 cache_dir <- here("cache")
 if (!dir.exists(cache_dir)) dir.create(cache_dir, showWarnings = FALSE)
 cached_baseline_path <- file.path(cache_dir, "last_baseline.xlsx")
@@ -1553,13 +1559,6 @@ run_restoration_model <- function(habitat, subregion, site_area, uc_pct,
     any_growth <- TRUE
   }
 
-  log_msg("DIAG pop_series after Phase 0: ",
-          paste(names(pop_series), collapse = ", "))
-  for (nm in names(pop_series)) {
-    log_msg("  ", nm, " baseline Y0=", pop_series[[nm]]$baseline$mean[1],
-            " YN=", pop_series[[nm]]$baseline$mean[length(pop_series[[nm]]$baseline$mean)])
-  }
-
   # ---- Phase 1 + 2: outplant solve + full-duration growth (restored only) ----
   for (row_i in seq_len(nrow(target_cover_df))) {
     species        <- target_cover_df$taxon[row_i]
@@ -2194,14 +2193,22 @@ mix_massive_species <- c(
 # (~100-160) hue bands are skipped so bar colors carry no good/bad connotation.
 # Scales to arbitrary n without the contrast collapse that interpolating a
 # fixed qualitative palette causes.
-make_scenario_pool <- function(n, chroma = 55, luminance = 72) {
+make_scenario_pool <- function(n, chroma = 55, luminance = 72, seed = NULL) {
   if (n <= 0) return(character(0))
   # Allowed hue arcs (degrees), excluding red + green bands.
   arcs <- list(c(40, 100), c(160, 340))   # orange->yellow, cyan->blue->purple->magenta
   arc_len <- vapply(arcs, function(a) a[2] - a[1], numeric(1))
   total   <- sum(arc_len)
-  # Place n points proportionally across the allowed arcs.
+  # Base positions: n points evenly across the allowed arcs.
   pos <- (seq_len(n) - 0.5) / n * total
+  # Seed offset: rotate all positions by a seed-derived fraction of the spacing
+  # (deterministic per seed) so distinct seeds produce distinct palettes while
+  # preserving even separation.
+  if (!is.null(seed) && !is.na(seed)) {
+    set.seed(as.integer(seed))
+    shift <- stats::runif(1, 0, total / n)
+    pos <- (pos + shift) %% total
+  }
   hues <- vapply(pos, function(p) {
     for (a in arcs) {
       span <- a[2] - a[1]
@@ -2210,10 +2217,6 @@ make_scenario_pool <- function(n, chroma = 55, luminance = 72) {
     }
     arcs[[length(arcs)]][2]
   }, numeric(1))
-  # Set seed so randomization is consistent
-  set.seed(002)
-  # Shuffle hues so like colors are not sequential
-  hues <- sample(hues)
   grDevices::hcl(h = hues, c = chroma, l = luminance)
 }
 
@@ -2769,7 +2772,7 @@ body <- dashboardBody(
         'subregion_choice': 'Reef subregion, used to find region-specific bioerosion rates and bleaching-mortality relationships.',
         'habitat_choice': 'Habitat type within the subregion, used to refine bioerosion rates.',
         'baseline_save_dl': 'Save all this inputs for this scenario as an .xlsx file.',
-        'baseline_delete_cache': 'Delete the cached baseline input. Does not affect the original input file.',
+        'baseline_delete_cache': 'Delete the cached baseline input. The original input file will be unaffected.',
         'reset_mix': 'Clear all input cells in the Restoration Mix except Baseline Cover.',
         'additional_outplant_years': 'Comma-separated integer years (after Year 0) at which to place additional outplants. Each year becomes an extra row in count-driven species dropdowns.',
         'base_REQUIRED_Other_living_benthos': 'Percent cover of other living benthos (sponges, soft corals, etc.). This space is considered 𝐮𝐧𝐚𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞 for calcifier growth. A value of 0 or greater is required.',
@@ -2779,8 +2782,10 @@ body <- dashboardBody(
         'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting and and projected coral growth.',
         'dhw': 'Thermal-stress severity of each bleaching event, in degree-heating weeks.',
         'bleach_events': 'How often bleaching occurs, expressed as events per five-year period.',
-        'scenario_project': 'A project name which groups related scenarios together for comparison.',
+        'scenario_project': 'A project name which groups related scenarios together for comparison. The Reef Persistence Tool searches for projects saved in the output folder designated in the Outplanting Scenarios tab.',
         'scenario_name': 'A label for this specific parameter combination.',
+        'folder': 'Browse to a folder where scenario results will be saved.',
+        'scenario_folder': 'Type, paste, or browse to a folder where scenario results will be saved. Scenarios in this folder can be compared using the Scenario Comparison tab.'
         'reactive_sim': 'When on, the projection recomputes automatically as inputs change.',
         'save_scenario': 'Save the results of this simulation to a .json file. Compare these outputs in the Scenario Comparison tab.',
         'run_sim': 'Run the growth simulation with the current scenario parameters.',
@@ -2792,10 +2797,11 @@ body <- dashboardBody(
         'show_slr': 'Overlay projected sea-level-rise rates on the timeline.',
         'sc_project': 'Select a project within which to compare scenarios.',
         'sc_scenarios': 'Select which scenarios to compare within the selected project.',
+        'sc_generate_palette': 'Generate a palette of random, high-contrast pastels using the current seed.',
+        'sc_palette_seed': 'The randomization seed to use when generating the chart color palette. The same seed will result in the same palette for equal numbers of scenarios.',
         'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
         'sc_refresh': 'Re-scan the scenarios folder and update the list of options.',
         'sc_download_csv': 'Download the Comparison Table as a .csv file.',
-        'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
         'upload_cover': 'Upload an .xlsx file containing cover-monitoring timeseries data.',
         'monitoring_cover_template_dl': 'Download a template cover-monitoring-input .xlsx file.',
         'cover_load_example': 'Upload example cover-monitoring data.',
@@ -2966,252 +2972,263 @@ body <- dashboardBody(
       # `outplant-toprow` class tightens the inter-box gutters.
       fluidRow(
         class = "outplant-toprow",
-        # ---- Restoration Scenario (baseline cover + per-species mix) ----
-        shinydashboard::box(
-          title = "Restoration Scenario",
-          width = 12, status = "primary", solidHeader = TRUE,
-          column(width = 12,
-            fluidRow(
-              # Left: site controls
-              column(
-                width = 3,
-                tags$div(
-                  class = "upload-label-row",
-                  tags$span(class = "control-label", tags$strong("Load .xlsx")),
+        column(width = 12,
+          # ---- Restoration Scenario (baseline cover + per-species mix) ----
+          shinydashboard::box(
+            title = "Restoration Scenario",
+            width = 12, status = "primary", solidHeader = TRUE,
+            column(width = 12,
+              fluidRow(
+                # Left: site controls
+                column(
+                  width = 3,
                   tags$div(
-                    style = "display: flex; gap: 6px;",
-                    downloadButton("baseline_template_dl", "Template", class = "btn-sm"),
-                  )
-                ),
-                fileInput("baseline_upload", NULL, accept = c(".xlsx")),
-                tags$div(
-                  style = "display:flex; margin-top:-15px; margin-bottom:20px; align-items:center; justify-content:space-between",
-                  actionButton("baseline_load_example", "Example",
-                              icon = icon("upload"), class = "btn-sm"),
-                  actionButton("baseline_load_cache", "Cache",
-                              icon = icon("upload"), class = "btn-sm")
-                ),
-                tags$hr(),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Site")),
-                  tags$span(
-                    class = "sel-input",
-                    selectizeInput(
-                      "baseline_site",
-                      label = NULL,
-                      choices = c("\u2013 Select site \u2013" = ""),
-                      selected = "",
-                      options = list(create = TRUE, placeholder = "Select or type a site...")
-                    )
-                  )
-                ),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Subregion")),
-                  tags$span(
-                    class = "sel-input",
-                    selectInput(
-                      "subregion_choice",
-                      label = NULL,
-                      choices = c("\u2013 Select subregion \u2013" = "",
-                                  unname(subregion_labels)),
-                      selected = ""
-                    )
-                  )
-                ),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Habitat")),
-                  tags$span(
-                    class = "sel-input",
-                    selectInput(
-                      "habitat_choice",
-                      label = NULL,
-                      choices = c("\u2013 Select habitat \u2013" = ""),
-                      selected = ""
-                    )
-                  )
-                ),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Site area")),
-                  tags$span(
-                    class = "num-input",
-                    numericInput("site_area_m2", label = NULL,
-                    value = 100, min = 1, max = 10000, step = 1
+                    class = "upload-label-row",
+                    tags$span(class = "control-label", tags$strong("Load .xlsx")),
+                    tags$div(
+                      style = "display: flex; gap: 6px;",
+                      downloadButton("baseline_template_dl", "Template", class = "btn-sm"),
                     )
                   ),
-                  tags$span(class = "param-unit", "m²")
-                ),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Latitude")),
-                  tags$span(
-                    class = "num-input",
-                    numericInput("site_latitude", label = NULL,
-                      value = NA, min = -90, max = 90, step = 0.00001
-                    )
-                  ),
-                  tags$span(class = "param-unit", "\u00b0")
-                ),
-                tags$div(
-                  class = "param-inline-row",
-                  tags$span(class = "param-label", tags$strong("Longitude")),
-                  tags$span(
-                    class = "num-input",
-                    numericInput("site_longitude", label = NULL,
-                      value = NA, min = -180, max = 180, step = 0.00001
-                    )
-                  ),
-                  tags$span(class = "param-unit", "\u00b0")
-                )
-              ),
-
-              # Right: 7-column Restoration mix grid
-              column(
-                width = 9,
-                tags$div(class = "mix-grid",
-                  style = "border: 2px solid #2C8CB9; border-radius: 8px; padding: 8px",
-                  tags$div(style = "text-align:center;", tags$strong("Restoration Mix")),
-                  # Column headers
+                  fileInput("baseline_upload", NULL, accept = c(".xlsx")),
                   tags$div(
-                    class = "mix-grid-header",
-                    style = "display:flex; align-items:flex-end; gap:6px;
-                              font-weight:bold; font-size:12px; margin:4px 30px 0px 0;",
-                    tags$div(style = "flex:0 0 auto; width:28px;", ""),
-                    tags$div(style = "flex: 2 1 0;",
-                      tags$div(style = "text-align:center;",
-                        tags$div("Additional outplanting years"),
-                        textInput("additional_outplant_years", label = NULL,
-                                  value = "", placeholder = "e.g. 3, 5, 10", width = "100%")
+                    style = "display:flex; margin-top:-15px; margin-bottom:20px; align-items:center; justify-content:space-between",
+                    actionButton("baseline_load_example", "Example",
+                                icon = icon("upload"), class = "btn-sm"),
+                    actionButton("baseline_load_cache", "Cache",
+                                icon = icon("upload"), class = "btn-sm")
+                  ),
+                  tags$hr(),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", tags$strong("Site")),
+                    tags$span(
+                      class = "sel-input",
+                      selectizeInput(
+                        "baseline_site",
+                        label = NULL,
+                        choices = c("\u2013 Select site \u2013" = ""),
+                        selected = "",
+                        options = list(create = TRUE, placeholder = "")
+                      )
+                    )
+                  ),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", tags$strong("Subregion")),
+                    tags$span(
+                      class = "sel-input",
+                      selectInput(
+                        "subregion_choice",
+                        label = NULL,
+                        choices = c("\u2013 Select subregion \u2013" = "",
+                                    unname(subregion_labels)),
+                        selected = ""
+                      )
+                    )
+                  ),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", tags$strong("Habitat")),
+                    tags$span(
+                      class = "sel-input",
+                      selectInput(
+                        "habitat_choice",
+                        label = NULL,
+                        choices = c("\u2013 Select habitat \u2013" = ""),
+                        selected = ""
+                      )
+                    )
+                  ),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", tags$strong("Site area")),
+                    tags$span(
+                      class = "num-input",
+                      numericInput("site_area_m2", label = NULL,
+                      value = 100, min = 1, max = 10000, step = 1
                       )
                     ),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Current (baseline) percent cover for this species at the site.",
-                      uiOutput("mix_baseline_header")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Desired total percent cover for this species. Drives the simulation and solves for outplants when this is the active (blue) input.",
-                      uiOutput("mix_target_header")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Average starting diameter of each outplanted coral fragment, in centimeters.",
-                      HTML("Avg. outplant<br/>diameter (cm)<br/><br/> ")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Average cost per outplant, used to compute total project cost.",
-                      HTML("Avg. outplant<br/>cost ($)<br/><br/> ")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Number of coral fragments to outplant. Drives the simulation when this is the active (blue) input.",
-                      HTML("Outplants<br/><br/><br/> ")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Optional: fragments outplanted per 'cluster'. Clusters are constructed by packing this quantity of fragments into a modeled circle, with a 0.5 cm inter-fragment gap. Each cluster is simulated as a single colony.",
-                      HTML("Outplants<br/>per cluster<br/>(optional)")),
-                    tags$div(style = "flex: 1 1 0; text-align:center;",
-                      title = "Read-only: this species' total projected percent cover at the end of the simulation duration.",
-                      uiOutput("mix_final_header")
-                    )
+                    tags$span(class = "param-unit", "m²")
                   ),
-                  div(
-                    style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
-                    uiOutput("restoration_mix_inputs")
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", tags$strong("Latitude")),
+                    tags$span(
+                      class = "num-input",
+                      numericInput("site_latitude", label = NULL,
+                        value = NA, min = -90, max = 90, step = 0.00001
+                      )
+                    ),
+                    tags$span(class = "param-unit", "\u00b0")
+                  ),
+                  tags$div(
+                    class = "param-inline-row",
+                    tags$span(class = "param-label", tags$strong("Longitude")),
+                    tags$span(
+                      class = "num-input",
+                      numericInput("site_longitude", label = NULL,
+                        value = NA, min = -180, max = 180, step = 0.00001
+                      )
+                    ),
+                    tags$span(class = "param-unit", "\u00b0")
                   )
-                )
-              ),
+                ),
 
-              # Bottom row: function buttons and scenario naming
-              fluidRow(
-                column(12,
-                  tags$hr(),
-                  column(3,
+                # Right: 7-column Restoration mix grid
+                column(
+                  width = 9,
+                  tags$div(class = "mix-grid",
+                    style = "border: 2px solid #2C8CB9; border-radius: 8px; padding: 8px",
+                    tags$div(style = "text-align:center;", tags$strong("Restoration Mix")),
+                    # Column headers
                     tags$div(
-                      style = "display:flex; gap:30px; margin-top:25px; align-items:center; justify-content:flex-start",
-                      downloadButton("baseline_save_dl", tags$strong("Save baseline"),
-                        icon = icon("floppy-disk"), class = "btn-sm"),
-                      actionButton("baseline_delete_cache", tags$strong("Clear cache"),
-                        icon = icon("trash"), class = "btn-sm"),
-                      actionButton("reset_mix", tags$strong("Reset targets"),
-                        icon = icon("eraser"), class = "btn-sm")
+                      class = "mix-grid-header",
+                      style = "display:flex; align-items:flex-end; gap:6px;
+                                font-weight:bold; font-size:12px; margin:4px 30px 0px 0;",
+                      tags$div(style = "flex:0 0 auto; width:28px;", ""),
+                      tags$div(style = "flex: 2 1 0;",
+                        tags$div(style = "text-align:center;",
+                          tags$div("Additional outplanting years"),
+                          textInput("additional_outplant_years", label = NULL,
+                                    value = "", placeholder = "e.g. 3, 5, 10", width = "100%")
+                        )
+                      ),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Current (baseline) percent cover for this species at the site.",
+                        uiOutput("mix_baseline_header")),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Desired total percent cover for this species. Drives the simulation and solves for outplants when this is the active (blue) input.",
+                        uiOutput("mix_target_header")),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Average starting diameter of each outplanted coral fragment, in centimeters.",
+                        HTML("Avg. outplant<br/>diameter (cm)<br/><br/> ")),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Average cost per outplant, used to compute total project cost.",
+                        HTML("Avg. outplant<br/>cost ($)<br/><br/> ")),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Number of coral fragments to outplant. Drives the simulation when this is the active (blue) input.",
+                        HTML("Outplants<br/><br/><br/> ")),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Optional: fragments outplanted per 'cluster'. Clusters are constructed by packing this quantity of fragments into a modeled circle, with a 0.5 cm inter-fragment gap. Each cluster is simulated as a single colony.",
+                        HTML("Outplants<br/>per cluster<br/>(optional)")),
+                      tags$div(style = "flex: 1 1 0; text-align:center;",
+                        title = "Read-only: this species' total projected percent cover at the end of the simulation duration.",
+                        uiOutput("mix_final_header")
+                      )
+                    ),
+                    div(
+                      style = "overflow-y: scroll; height: 380px; padding: 5px; border: 1px solid #ccc",
+                      uiOutput("restoration_mix_inputs")
                     )
-                  ),
-                  # Save and run scenario
-                  column(9,
-                    tags$div(style = "display:flex; gap:15px; align-items:center; justify-content:flex-end",
-                      textInput("scenario_project", tags$strong("Project name"), value = ""),
-                      textInput("scenario_name", tags$strong("Scenario name"), value = ""),
-                      actionButton("save_scenario", tags$strong("Save result"), icon = icon("floppy-disk")),
-                      materialSwitch("reactive_sim", HTML("<strong>Reactive<br/>simulation</strong>"),
-                        value = FALSE, status = "primary", right = TRUE, inline = TRUE),
-                      actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"))
+                  )
+                ),
+
+                # Bottom row: function buttons and scenario naming
+                fluidRow(
+                  column(12,
+                    tags$hr(),
+                    column(3,
+                      tags$div(
+                        style = "display:flex; gap:30px; margin-top:25px; align-items:center; justify-content:flex-start",
+                        downloadButton("baseline_save_dl", tags$strong("Save baseline"),
+                          icon = icon("floppy-disk"), class = "btn-sm"),
+                        actionButton("baseline_delete_cache", tags$strong("Clear cache"),
+                          icon = icon("trash"), class = "btn-sm"),
+                        actionButton("reset_mix", tags$strong("Reset targets"),
+                          icon = icon("eraser"), class = "btn-sm")
+                      )
+                    ),
+                    # Save and run scenario
+                    column(9,
+                      tags$div(style = "display:flex; gap:15px; align-items:center; justify-content:flex-end",
+                        textInput("scenario_project", tags$strong("Project name"), value = ""),
+                        textInput("scenario_name", tags$strong("Scenario name"), value = ""),
+                        shinyDirButton("folder",
+                                      "Browse...",
+                                      "Browse to a directory where the scenario results will be saved.",
+                                      icon = icon("folder"),
+                                      style = "margin: 10px -15px 0px 10px"),
+                        textInput("scenario_folder", tags$strong("Output folder"), value = ""),
+                        actionButton("save_scenario", tags$strong("Save result"), icon = icon("floppy-disk"), style = "margin-top:10px; margin-right:30px"),
+                        tags$div(
+                          style = "margin-top:20px",
+                          materialSwitch("reactive_sim", HTML("<strong>Reactive<br/>simulation</strong>"),
+                            value = FALSE, status = "primary", right = TRUE, inline = TRUE
+                          )
+                        ),
+                        actionButton("run_sim", tags$strong("Simulate"), icon = icon("play"), style = "margin-top:5px")
+                      )
                     )
                   )
                 )
               )
             )
-          )
-        ),
+          ),
 
-        # ---- Bottom row: Target Years / Bleaching ----
-        # Target Years
-        shinydashboard::box(
-          title = "Target Years",
-          width = 6, status = "success", solidHeader = TRUE,
-          column(6,
-            sliderInput(
-              "sim_duration", tags$strong("Simulation duration (years)"),
-              value = 10, min = 0, max = 30, step = 1
+          # ---- Bottom row: Bleaching / Target Years / Additional moratlity? ----
+          # Bleaching parameters
+          shinydashboard::box(
+            title = "Bleaching Scenario",
+            width = 6, status = "warning", solidHeader = TRUE,
+            column(6,
+              sliderTextInput(
+                inputId = "bleach_events",
+                label = tags$strong("Bleaching (Events / 5 years)"),
+                choices = c(0, 1, 2, 5),
+                selected = 0,
+                grid = TRUE
+              )
+            ),
+            column(6,
+              sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
+                min = 8, max = 24, value = 8, step = 1
+              )
             )
           ),
-          column(6,
-            sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
-              value = 0, min = 0, max = 30, step = 1
+
+          # Target Years
+          shinydashboard::box(
+            title = "Target Years",
+            width = 6, status = "success", solidHeader = TRUE,
+            column(6,
+              sliderInput("rest_horizon", tags$strong("Restoration horizon (years)"),
+                value = 0, min = 0, max = 30, step = 1
+              )
+            ),
+            column(6,
+              sliderInput(
+                "sim_duration", tags$strong("Simulation duration (years)"),
+                value = 10, min = 0, max = 30, step = 1
+              )
             )
           )
-        ),
 
-        # Mortality factors
-        shinydashboard::box(
-          title = "Bleaching Scenario",
-          width = 6, status = "warning", solidHeader = TRUE,
-          column(6,
-            sliderInput("dhw", tags$strong("Degree-Heating Weeks"),
-              min = 8, max = 24, value = 8, step = 1
-            )
-          ),
-          column(6,
-            sliderTextInput(
-              inputId = "bleach_events",
-              label = tags$strong("Bleaching (Events / 5 years)"),
-              choices = c(0, 1, 2, 5),
-              selected = 0,
-              grid = TRUE
-            )
-          )
-        )
-
-        # Temporarily removed placeholders:
-
-        # shinydashboard::box(
-        #   id = "mort_opt_box",
-        #   title = "Additional Mortality (optional)",
-        #   width = 12,
-        #   status = "danger",
-        #   collapsible = TRUE,
-        #   collapsed = TRUE,
-        #   solidHeader = TRUE,
-        #   sliderInput("mort_adj", tags$strong("Chronic Mortality (%)"),
-        #     min = -10, max = 10, value = 0, step = 1
-        #   ),
-        #   sliderInput("mort_adj", tags$strong("Episodic Mortality (%)"),
-        #     min = -10, max = 10, value = 0, step = 1
-        #   ),
-        #   sliderTextInput(
-        #     inputId = "mort_events",
-        #     label = tags$strong("Episodic Mortality (Events / 5 years)"),
-        #     choices = c(0, 1, 2, 5),
-        #     selected = 0,
-        #     grid = TRUE
-        #   )
+          # Temporarily removed mortality placeholders:
+          # shinydashboard::box(
+          #   id = "mort_opt_box",
+          #   title = "Additional Mortality (optional)",
+          #   width = 12,
+          #   status = "danger",
+          #   collapsible = TRUE,
+          #   collapsed = TRUE,
+          #   solidHeader = TRUE,
+          #   sliderInput("mort_adj", tags$strong("Chronic Mortality (%)"),
+          #     min = -10, max = 10, value = 0, step = 1
+          #   ),
+          #   sliderInput("mort_adj", tags$strong("Episodic Mortality (%)"),
+          #     min = -10, max = 10, value = 0, step = 1
+          #   ),
+          #   sliderTextInput(
+          #     inputId = "mort_events",
+          #     label = tags$strong("Episodic Mortality (Events / 5 years)"),
+          #     choices = c(0, 1, 2, 5),
+          #     selected = 0,
+          #     grid = TRUE
+          #   )
+          # )
         # )
-      # )
+        )
       ),
 
       # --- Timeline (bottom) ---
@@ -3290,8 +3307,16 @@ body <- dashboardBody(
             selectInput("sc_project", tags$strong("Project name"), choices = NULL),
             checkboxGroupInput("sc_scenarios", tags$strong("Scenarios"), choices = NULL),
             tags$div(
-              style = "display:flex; gap:8px; align-items:center;",
-              actionButton("sc_refresh", "Refresh list", icon = icon("rotate")),
+              style = "display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap;",
+              #tags$div(style = "display:flex; gap:6px; align-items:center;",
+                #tags$span(style = "font-size:12px; font-weight:bold;", "Palette seed"),
+              numericInput("sc_palette_seed", label = "Palette seed", value = 1,
+                            min = 1, step = 1, width = "100px"),
+              actionButton("sc_refresh", "Refresh list", icon = icon("rotate"), style = "margin-top:10px")
+            ),
+            tags$div(
+              style = "display:flex; gap:8px; justify-content:space-between; align-items:center; flex-wrap:wrap;",
+              actionButton("sc_generate_palette", "Generate palette", icon = icon("palette")),
               downloadButton("sc_download_csv", "Download report")
             )
           )
@@ -3308,35 +3333,115 @@ body <- dashboardBody(
           )
         )
       ),
+
       # Bottom row: Project Cost + ROI, RAP by scenario
       fluidRow(
-        # Left: cost
         column(
-          width = 4,
+          width = 12,
           shinydashboard::box(
-            title = "Project Cost", width = 12,
+            title = "Total Metrics", width = 12,
+            collapsible = TRUE,
             status = "info", solidHeader = TRUE,
-            plotOutput("sc_cost_bar"),# height = "300px")
+            column(
+              width = 4,
+              plotly::plotlyOutput("sc_cost_bar")
+            ),
+            column(
+              width = 4,
+              plotly::plotlyOutput("sc_roi_bar")
+            ),
+            column(
+              width = 4,
+              plotly::plotlyOutput("sc_rap_bar"), # height = "350px"),
+              tags$div(style = "font-weight:normal; margin-bottom:4px;",
+                checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
+              )
+            )
           )
-        ),
-        # Middle: ROI
+        )
+        # Left: cost
+        # column(
+        #   width = 4,
+        #   shinydashboard::box(
+        #     title = "Project Cost", width = 12,
+        #     status = "info", solidHeader = TRUE,
+        #     plotly::plotlyOutput("sc_cost_bar")
+        #   )
+        # ),
+        # # Middle: ROI
+        # column(
+        #   width = 4,
+        #   shinydashboard::box(
+        #     title = "Return on Investment", width = 12,
+        #     status = "primary", solidHeader = TRUE,
+        #     plotly::plotlyOutput("sc_roi_bar")
+        #   )
+        # ),
+        # # Right: RAP
+        # column(
+        #   width = 4,
+        #   shinydashboard::box(
+        #     title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
+        #     status = "success", solidHeader = TRUE,
+        #     plotly::plotlyOutput("sc_rap_bar"), # height = "350px"),
+        #     tags$div(style = "font-weight:normal; margin-bottom:4px;",
+        #       checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
+        #     )
+        #   )
+        # )
+      ),
+      # Row 3: population timeline for the scenario selected in the DT table
+      fluidRow(
         column(
-          width = 4,
+          width = 12,
           shinydashboard::box(
-            title = "Return on Investment", width = 12,
+            title = "Population Timeline (selected scenario)", width = 12,
+            status = "info", solidHeader = TRUE,
+            collapsible = TRUE,
+            tags$p(style = "font-size:12px; color:#777; margin-bottom:4px;",
+              "Click a row in the Comparison Table above to select a scenario."),
+            plotly::plotlyOutput("sc_population_timeline", height = "350px")
+          )
+        )
+      ),
+      # Row 4: diversity timeline across scenarios
+      fluidRow(
+        column(
+          width = 12,
+          shinydashboard::box(
+            title = "Diversity Timeline", width = 12,
             status = "primary", solidHeader = TRUE,
-            plotOutput("sc_roi_bar"),# height = "300px")
+            collapsible = TRUE,
+            plotly::plotlyOutput("sc_diversity_timeline", height = "350px")
           )
-        ),
-        # Right: RAP
+        )
+      ),
+      # Row 5: per-scenario-year percent-cover pie grid
+      fluidRow(
         column(
-          width = 4,
+          width = 12,
           shinydashboard::box(
-            title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
+            title = "Species Distribution", width = 12,
             status = "success", solidHeader = TRUE,
-            plotly::plotlyOutput("sc_rap_bar"), # height = "350px"),
-            tags$div(style = "font-weight:normal; margin-bottom:4px;",
-              checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
+            collapsible = TRUE,
+            # Legend pinned in an absolute div (top-right); the scrolling grid
+            # sits to its left. The plot height is computed server-side from the
+            # number of scenario rows so pies always render at full fitted width
+            # and the container grows downward (scrolls past 600px).
+            div(
+              style = "position: relative;",
+              tags$div(
+                id = "sc_pie_legend",
+                style = "position: absolute; top: 5px; right: 5px; z-index: 20;
+                         width: 220px; max-height: 560px; overflow-y: auto;
+                         background: rgba(255,255,255,0.0); padding: 4px;",
+                uiOutput("sc_pie_legend_ui")
+              ),
+              div(
+                style = "overflow-y: scroll; max-height: 600px; padding: 5px;
+                         margin-right: 230px;",
+                plotly::plotlyOutput("sc_pie_grid", height = "auto")
+              )
             )
           )
         )
@@ -3654,10 +3759,18 @@ ui <- dashboardPage(
 
 # Shiny Server ----
 server <- function(input, output, session) {
-  # define reactVal to store coordinates
+  # reactiveVal to store the reef selected on the map
   reef_name       <- reactiveVal()
-  reef_year       <- reactiveVal(2019)
-  initial_budget  <- reactiveVal(NULL)
+
+  # Read the directory chosen by shinyDirButton
+  roots <- c(home = fs::path_home(), wd = ".")
+  shinyDirChoose(input, "folder", roots = roots, session = session)
+
+  # Display the chosen directory in the scenario_folder textInput
+  observe({
+    req(input$folder)
+    updateTextInput(session, "scenario_folder", value = parseDirPath(roots, input$folder))
+  })
 
   # ---- Log panel: drain the global buffer into a reactiveVal for display ----
   # A short poller watches the global version counter; when it changes, the
@@ -6684,6 +6797,16 @@ output$restoration_mix_inputs <- renderUI({
         }), names(ps))
       }
 
+      # Per-species, per-year percent cover (mean). Serialize cby directly, one
+      # rounded numeric vector per species keyed by species name.
+      if (!is.null(cby) && length(cby)) {
+        yearly_cover <- setNames(lapply(names(cby), function(sp_nm) {
+          round(as.numeric(cby[[sp_nm]]), 4)
+        }), names(cby))
+      } else {
+        yearly_cover <- NULL
+      }
+
       # Per-year diversity from coral cover proportions (exclude CCA + reserved).
       if (!is.null(cby) && length(cby)) {
         coral_names <- names(cby)[!vapply(names(cby), function(nm) {
@@ -6727,6 +6850,7 @@ output$restoration_mix_inputs <- renderUI({
       # Expanded yearly series.
       yearly_rap        = yearly_rap,
       yearly_counts     = yearly_counts,
+      yearly_cover      = yearly_cover,
       yearly_diversity  = yearly_diversity,
       # Nested per-species mix (variable-length), keyed by full species name.
       additional_outplant_years = additional_outplant_years(),
@@ -6761,7 +6885,7 @@ output$restoration_mix_inputs <- renderUI({
     )
 
     fname <- file.path(
-      scenario_dir,
+      input$scenario_folder, #scenario_dir,
       paste0(
         gsub("[^A-Za-z0-9]", "_", input$scenario_project), "__",
         gsub("[^A-Za-z0-9]", "_", input$scenario_name), ".json"
@@ -7607,7 +7731,10 @@ output$restoration_mix_inputs <- renderUI({
   all_scenarios <- reactive({
     input$sc_refresh
     input$save_scenario # refresh after a save
-    files <- list.files(scenario_dir, pattern = "\\.json$", full.names = TRUE)
+    files <- list.files(
+      input$scenario_folder, # scenario_dir,
+      pattern = "\\.json$",
+      full.names = TRUE)
     if (length(files) == 0) {
       return(data.frame())
     }
@@ -7685,6 +7812,34 @@ output$restoration_mix_inputs <- renderUI({
     sc_color_map(c(cmap, new_cols))
   })
 
+  # Regenerate the ENTIRE scenario color map from the palette seed. Unlike the
+  # fill observer above, this reassigns every scenario a fresh color so a
+  # too-close palette can be reshuffled on demand.
+  observeEvent(input$sc_generate_palette, {
+    sc <- all_scenarios()
+    if (!nrow(sc)) {
+      showNotification("No scenarios to recolor.", type = "warning")
+      return(invisible(NULL))
+    }
+    seed <- suppressWarnings(as.integer(input$sc_palette_seed))
+    if (is.na(seed)) seed <- 1L
+    all_names <- sort(unique(sc$scenario))
+
+    pool <- make_scenario_pool(length(all_names), seed = seed)
+    pool <- sample(pool)
+    sc_color_map(setNames(pool[seq_along(all_names)], all_names))
+
+    # Regenerate the per-species map too so population/pie colors refresh. Use a
+    # different offset so species hues don't track scenario hues.
+    sp_names <- names(sp_color_map())
+    if (length(sp_names)) {
+      sp_pool <- make_scenario_pool(length(sp_names), seed = seed + 1L)
+      sp_color_map(setNames(sp_pool[seq_along(sp_names)], sp_names))
+    }
+
+    showNotification(paste0("Regenerated palette (seed ", seed, ")."), type = "message")
+  })
+
   # Filtered scenarios for plotting (coerce numeric cols used by the plots)
   sc_selected <- reactive({
     sc <- all_scenarios()
@@ -7703,6 +7858,64 @@ output$restoration_mix_inputs <- renderUI({
     d$roi_kg_per_dollar <- ifelse(d$cost > 0, d$net_kg / d$cost, NA_real_)
     d
   })
+
+  # Load the FULL nested scenario objects (yearly_rap/counts/cover/diversity +
+  # mix) for the selected scenarios, straight from their .json files, since
+  # all_scenarios() flattens to scalar fields only.
+  sc_selected_full <- reactive({
+    req(input$sc_project, input$sc_scenarios)
+    files <- list.files(input$scenario_folder, pattern = "\\.json$", full.names = TRUE)
+    if (length(files) == 0) return(list())
+    objs <- lapply(files, function(f) tryCatch(fromJSON(f), error = function(e) NULL))
+    objs <- objs[!vapply(objs, is.null, logical(1))]
+    keep <- vapply(objs, function(o) {
+      identical(as.character(o$project), input$sc_project) &&
+        as.character(o$scenario) %in% input$sc_scenarios
+    }, logical(1))
+    objs <- objs[keep]
+    setNames(objs, vapply(objs, function(o) as.character(o$scenario), character(1)))
+  })
+
+  # fromJSON simplifies a JSON array-of-objects into a data.frame. These helpers
+  # pull a field as a numeric vector whether the series came back as a
+  # data.frame (simplified) or a list-of-lists (unsimplified).
+  series_col <- function(series, field) {
+    if (is.null(series)) return(numeric(0))
+    if (is.data.frame(series)) {
+      if (!(field %in% names(series))) return(numeric(0))
+      return(vapply(series[[field]], function(v) .safe_num(v), numeric(1)))
+    }
+    vapply(series, function(z) .safe_num(z[[field]]), numeric(1))
+  }
+  series_len <- function(series) {
+    if (is.null(series)) return(0L)
+    if (is.data.frame(series)) nrow(series) else length(series)
+  }
+
+  # Session-persistent, per-SPECIES pastel colors shared by the population
+  # timeline and the pie grid. Uses the same generator as the scenario palette.
+  sp_color_map <- reactiveVal(setNames(character(0), character(0)))
+
+  # Resolve/extend the species color map for a set of species names, returning
+  # the full named vector. New species get freshly generated contrasting pastels
+  # appended; existing assignments are retained for the session.
+  resolve_species_colors <- function(species_names) {
+    species_names <- sort(unique(species_names[nzchar(species_names)]))
+    cmap <- sp_color_map()
+    missing <- setdiff(species_names, names(cmap))
+    if (length(missing)) {
+      total <- length(cmap) + length(missing)
+      pool  <- make_scenario_pool(total)
+      used  <- unname(cmap)
+      avail <- setdiff(pool, used)
+      if (length(avail) < length(missing)) avail <- make_scenario_pool(total + length(missing))
+      avail <- setdiff(avail, used)
+      new_cols <- setNames(avail[seq_along(missing)], missing)
+      cmap <- c(cmap, new_cols)
+      sp_color_map(cmap)
+    }
+    cmap[species_names]
+  }
 
   # Session-persistent pastel color mapping for the selected scenarios.
   # Reads from sc_color_map so colors never shift when a scenario is toggled.
@@ -7776,6 +7989,7 @@ output$restoration_mix_inputs <- renderUI({
     DT::datatable(
       tbl,
       rownames = FALSE,
+      selection = "single",
       extensions = c("FixedColumns"),
       options = list(
         scrollX = TRUE,
@@ -7789,32 +8003,41 @@ output$restoration_mix_inputs <- renderUI({
     )
   })
 
-  # Project cost bar (pastel per scenario, dark-mode aware)
-  output$sc_cost_bar <- renderPlot({
+  # Project cost bar (ggplotly; hover shows scenario + value)
+  output$sc_cost_bar <- plotly::renderPlotly({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     cols <- sc_colors()
-    ggplot(d, aes(x = scenario, y = cost, fill = scenario)) +
+    d$scenario <- factor(d$scenario, levels = d$scenario)
+    p <- ggplot(d, aes(x = scenario, y = cost, fill = scenario,
+                       text = paste0(scenario, "<br>Cost: $",
+                                     format(round(cost), big.mark = ",")))) +
       geom_col() +
-      labs(x = NULL, y = "Project cost ($)") +
+      labs(x = NULL, y = "Cost ($)") +
       scale_fill_manual(values = cols) +
       sc_theme()[[1]] +
       theme(legend.position = "none", axis.text.x = element_blank())
-      # To use angled scenario names as x-axis labels instead: element_text(angle = 30, hjust = 1))
-  }, bg = "transparent")
+    plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(showlegend = FALSE, margin = list(t = 50), title = "Project Cost")
+  })
 
-  # ROI bar: net kg CaCO3 per dollar (pastel per scenario, dark-mode aware)
-  output$sc_roi_bar <- renderPlot({
+  # ROI bar: net kg CaCO3 per dollar (ggplotly; hover shows scenario + value)
+  output$sc_roi_bar <- plotly::renderPlotly({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     cols <- sc_colors()
-    ggplot(d, aes(x = scenario, y = roi_kg_per_dollar, fill = scenario)) +
+    d$scenario <- factor(d$scenario, levels = d$scenario)
+    p <- ggplot(d, aes(x = scenario, y = roi_kg_per_dollar, fill = scenario,
+                       text = paste0(scenario, "<br>ROI: ",
+                                     round(roi_kg_per_dollar, 3), " kg/$"))) +
       geom_col() +
       labs(x = NULL, y = "ROI (net kg CaCO\u2083/$)") +
       scale_fill_manual(values = cols) +
       sc_theme()[[1]] +
       theme(legend.position = "none", axis.text.x = element_blank())
-  }, bg = "transparent")
+    plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(showlegend = FALSE, margin = list(t = 50), title = "Return on Investment")
+  })
 
   # Per-scenario RAP bar with reference lines + status bands.
   # Bands ride through tooltip="text" as "erosion"/"stasis".
@@ -7862,6 +8085,8 @@ output$restoration_mix_inputs <- renderUI({
 
     gp <- plotly::ggplotly(p, tooltip = "text") |>
       plotly::layout(
+        margin = list(t = 50),
+        title = "Restored Reef Accretion Potential",
         paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
         font = list(color = font_col),
         xaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
@@ -7897,6 +8122,340 @@ output$restoration_mix_inputs <- renderUI({
     }
     gp
   })
+
+  # ---- Population timeline for the DT-selected scenario ----
+  # Baseline colonies: solid line. Outplant colonies: long-dashed. Mean band
+  # per species, colored by the shared species color map.
+  output$sc_population_timeline <- plotly::renderPlotly({
+    full <- sc_selected_full()
+    sel  <- input$sc_compare_dt_rows_selected
+    d    <- sc_selected()
+    shiny::validate(shiny::need(length(sel) == 1, "Select a scenario row in the table above."))
+
+    # The DT is ordered ascending by scenario; map the selected display row to
+    # its scenario name via the same ordering used to build the table.
+    scen_order <- sort(unique(d$scenario))
+    shiny::validate(shiny::need(sel <= length(scen_order), "Selection out of range."))
+    scen_name <- scen_order[sel]
+
+    obj <- full[[scen_name]]
+    shiny::validate(shiny::need(
+      !is.null(obj) && !is.null(obj$yearly_counts) && length(obj$yearly_counts) > 0,
+      "No per-species population series saved for this scenario."))
+
+    yc  <- obj$yearly_counts
+    yrs <- if (!is.null(obj$yearly_rap)) series_col(obj$yearly_rap, "year") else NULL
+    if (length(yrs) == 0) yrs <- NULL
+    sp_names <- names(yc)
+    cols <- resolve_species_colors(sp_names)
+
+    rows <- list()
+    for (sp_nm in sp_names) {
+      p <- yc[[sp_nm]]
+      bl <- as.numeric(p$baseline$mean)
+      op <- as.numeric(p$outplant$mean)
+      n  <- max(length(bl), length(op))
+      yvec <- if (!is.null(yrs) && length(yrs) == n) yrs else (0:(n - 1))
+      # Skip populations that are zero in every year.
+      if (any(bl > 0, na.rm = TRUE)) {
+        rows[[length(rows) + 1]] <- data.frame(
+          Year = yvec, count = bl, species = sp_nm, pop = "Baseline", stringsAsFactors = FALSE
+        )
+      }
+      if (any(op > 0, na.rm = TRUE)) {
+        rows[[length(rows) + 1]] <- data.frame(
+          Year = yvec, count = op, species = sp_nm, pop = "Outplant", stringsAsFactors = FALSE
+        )
+      }
+    }
+    shiny::validate(shiny::need(length(rows) > 0, "No nonzero populations to plot."))
+    dfp <- do.call(rbind, rows)
+    dfp$grp <- paste(dfp$species, dfp$pop, sep = " | ")
+    max_yr <- max(dfp$Year)
+
+    dark <- isTRUE(input$dark_mode)
+    font_col <- if (dark) "#e6e6e6" else "#333333"
+    grid_col <- if (dark) "#5a6472" else "#d9d9d9"
+    paper_bg <- if (dark) "#232a33" else "white"
+
+    p <- ggplot(dfp, aes(x = Year, y = count, group = grp,
+                         color = species, linetype = pop,
+                         text = paste0(species, " (", pop, ")",
+                                       "<br>Year ", Year,
+                                       "<br>Colonies: ", round(count)))) +
+      geom_line(linewidth = 1.1) +
+      scale_color_manual(values = cols, guide = "none") +
+      scale_linetype_manual(values = c("Baseline" = "solid", "Outplant" = "longdash"),
+                            guide = "none") +
+      scale_x_continuous(limits = c(0, max_yr + 1), breaks = seq(0, max_yr, if (max_yr < 25) 2 else 5)) +
+      labs(x = "Year", y = "Colonies") +
+      sc_theme()[[1]]
+
+    gp <- plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(
+        paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
+        font = list(color = font_col),
+        xaxis = list(color = font_col, gridcolor = grid_col),
+        yaxis = list(color = font_col, gridcolor = grid_col)
+      )
+
+    # Custom legend via off-canvas swatch traces: black solid "Baseline", black
+    # dashed "Outplant", then one solid colored line per species present.
+    off_x <- c(-1e6, -1e6 + 1)
+    swatch <- function(g, name, color, dash = "solid") {
+      plotly::add_trace(g, x = off_x, y = c(0, 0), type = "scatter", mode = "lines",
+        line = list(color = color, dash = dash, width = 2),
+        name = name, showlegend = TRUE, inherit = FALSE, hoverinfo = "skip")
+    }
+    gp <- swatch(gp, "Baseline", "black", "solid")
+    gp <- swatch(gp, "Outplant", "black", "dash")
+    present_sp <- sort(unique(dfp$species))
+    for (sp_nm in present_sp) {
+      gp <- swatch(gp, sp_nm, unname(cols[sp_nm]), "solid")
+    }
+    gp |> plotly::layout(
+      showlegend = TRUE,
+      title = list(
+        text = paste0("Population over Time: Scenario ", scen_name),
+        x = 0.5, xanchor = "center",
+        y = 1.05, yanchor = "bottom"
+      ),
+      margin = list(t = 60),
+      legend = list(font = list(color = font_col)),
+      xaxis = list(range = c(min(dfp$Year), max(dfp$Year)))
+    )
+  })
+
+  # ---- Diversity timeline across scenarios ----
+  # Simpson: solid. Shannon: long-dashed. Colored by sc_color_map per scenario.
+  output$sc_diversity_timeline <- plotly::renderPlotly({
+    full <- sc_selected_full()
+    shiny::validate(shiny::need(length(full) > 0, "Select one or more scenarios."))
+    cmap <- sc_color_map()
+    rows <- list()
+    for (scen_name in names(full)) {
+      obj <- full[[scen_name]]
+      yd  <- obj$yearly_diversity
+      if (series_len(yd) == 0) next
+      yr  <- series_col(yd, "year")
+      si  <- series_col(yd, "simpson")
+      rows[[length(rows) + 1]] <- data.frame(
+        Year = yr, value = si, scenario = scen_name, stringsAsFactors = FALSE)
+    }
+    shiny::validate(shiny::need(length(rows) > 0, "No diversity series saved for these scenarios."))
+    dfd <- do.call(rbind, rows)
+    dfd$grp <- dfd$scenario
+
+    scen_names <- sort(unique(dfd$scenario))
+    cols <- vapply(scen_names, function(s) if (s %in% names(cmap)) cmap[[s]] else "#888888", character(1))
+
+    dark <- isTRUE(input$dark_mode)
+    font_col <- if (dark) "#e6e6e6" else "#333333"
+    grid_col <- if (dark) "#5a6472" else "#d9d9d9"
+    paper_bg <- if (dark) "#232a33" else "white"
+
+    max_yr <- max(dfd$Year)
+
+    p <- ggplot(dfd, aes(x = Year, y = value, group = grp,
+                         color = scenario,
+                         text = paste0(scenario,
+                                       "<br>Year ", Year,
+                                       "<br>Simpson: ", round(value, 3)))) +
+      geom_line(linewidth = 1.1) +
+      scale_color_manual(values = cols, guide = "none") +
+      scale_x_continuous(limits = c(0, max_yr + 1), breaks = seq(0, max_yr, if (max_yr < 25) 2 else 5)) +
+      labs(x = "Year", y = "Simpson diversity (1 - D)") +
+      sc_theme()[[1]]
+
+    gp <- plotly::ggplotly(p, tooltip = "text") |>
+      plotly::layout(
+        paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
+        font = list(color = font_col),
+        xaxis = list(color = font_col, gridcolor = grid_col),
+        yaxis = list(color = font_col, gridcolor = grid_col)
+      )
+
+    # Custom legend: one solid colored line per scenario.
+    off_x <- c(-1e6, -1e6 + 1)
+    swatch <- function(g, name, color, dash = "solid") {
+      plotly::add_trace(g, x = off_x, y = c(0, 0), type = "scatter", mode = "lines",
+        line = list(color = color, dash = dash, width = 2),
+        name = name, showlegend = TRUE, inherit = FALSE, hoverinfo = "skip")
+    }
+    for (s in scen_names) {
+      gp <- swatch(gp, s, unname(cols[s]), "solid")
+    }
+    gp |> plotly::layout(
+      showlegend = TRUE,
+      title = list(
+        text = "Diversity over Time",
+        x = 0.5, xanchor = "center",
+        y = 1.05, yanchor = "bottom"
+      ),
+      margin = list(t = 60),
+      legend = list(font = list(color = font_col)),
+      xaxis = list(range = c(min(dfd$Year), max(dfd$Year)))
+    )
+  })
+
+  # ---- Percent-cover composition pie grid ----
+  # Rows = scenarios (descending final-year Simpson), columns = years. Each
+  # cell is a pie of per-species % cover (mean band). Shared species colors;
+  # one master legend. Hover shows species + % cover.
+  # Shared helper: resolve the ordered scenarios/years/species for the pie grid
+  # (reused by the grid and its external legend).
+  sc_pie_data <- reactive({
+    full <- sc_selected_full()
+    if (length(full) == 0) return(NULL)
+    have <- Filter(function(o) !is.null(o$yearly_cover) && length(o$yearly_cover) > 0, full)
+    if (length(have) == 0) return(NULL)
+
+    final_simpson <- vapply(names(have), function(nm) {
+      si <- series_col(have[[nm]]$yearly_diversity, "simpson")
+      if (length(si) == 0) return(-Inf)
+      si[length(si)]
+    }, numeric(1))
+    scen_order <- names(have)[order(final_simpson, decreasing = TRUE)]
+
+    year_set <- sort(unique(unlist(lapply(have, function(o) {
+      yr <- series_col(o$yearly_rap, "year")
+      if (length(yr) > 0) yr else seq_along(o$yearly_cover[[1]]) - 1
+    }))))
+    pref_years <- intersect(c(0, 1, 5, 10, 20, 50, 100, max(year_set)), year_set)
+    if (length(pref_years) >= 2) year_set <- sort(unique(pref_years))
+
+    all_species <- sort(unique(unlist(lapply(have, function(o) names(o$yearly_cover)))))
+    list(have = have, scen_order = scen_order, year_set = year_set,
+         all_species = all_species)
+  })
+
+  output$sc_pie_grid <- plotly::renderPlotly({
+    pd <- sc_pie_data()
+    shiny::validate(shiny::need(!is.null(pd),
+      "No per-species cover series saved for these scenarios."))
+
+    have       <- pd$have
+    scen_order <- pd$scen_order
+    year_set   <- pd$year_set
+    sp_cols    <- resolve_species_colors(pd$all_species)
+
+    nrow_g <- length(scen_order)
+    ncol_g <- length(year_set)
+    shiny::validate(shiny::need(nrow_g > 0 && ncol_g > 0, "Nothing to plot."))
+
+    fig <- plotly::plot_ly()
+    pad_x <- 0.02; pad_y <- 0.06
+
+    for (ri in seq_along(scen_order)) {
+      scen_name <- scen_order[ri]
+      yc <- have[[scen_name]]$yearly_cover
+      yr_full <- {
+        yr <- series_col(have[[scen_name]]$yearly_rap, "year")
+        if (length(yr) > 0) yr else seq_along(yc[[1]]) - 1
+      }
+      for (ci in seq_along(year_set)) {
+        yr <- year_set[ci]
+        idx <- match(yr, yr_full)
+        labs <- character(0); vals <- numeric(0); mcols <- character(0)
+        if (!is.na(idx)) {
+          for (sp_nm in names(yc)) {
+            v <- .safe_num(yc[[sp_nm]][idx])
+            if (is.finite(v) && v > 0) {
+              labs  <- c(labs, sp_nm)
+              vals  <- c(vals, v)
+              mcols <- c(mcols, unname(sp_cols[sp_nm]))
+            }
+          }
+        }
+        x0 <- (ci - 1) / ncol_g + pad_x
+        x1 <-  ci      / ncol_g - pad_x
+        y1 <- 1 - ((ri - 1) / nrow_g) - pad_y
+        y0 <- 1 - ( ri      / nrow_g) + pad_y
+        if (length(vals) == 0) next
+        fig <- plotly::add_pie(
+          fig, labels = labs, values = vals,
+          domain = list(x = c(max(0, x0), min(1, x1)),
+                        y = c(max(0, y0), min(1, y1))),
+          marker = list(colors = mcols),
+          textinfo = "none", sort = FALSE,
+          hovertemplate = paste0("%{label}<br>", "Year ", yr,
+                                 ": %{value:.1f}%<extra></extra>"),
+          showlegend = FALSE, name = paste0(scen_name, "_", yr)
+        )
+      }
+    }
+
+    dark <- isTRUE(input$dark_mode)
+    font_col <- if (dark) "#e6e6e6" else "#333333"
+    paper_bg <- if (dark) "#232a33" else "white"
+
+    anns <- list()
+    for (ri in seq_along(scen_order)) {
+      yc_row <- 1 - ((ri - 0.75) / nrow_g)
+      anns[[length(anns) + 1]] <- list(
+        x = 0.0, y = yc_row, xref = "paper", yref = "paper",
+        text = scen_order[ri], showarrow = FALSE, xanchor = "right",
+        font = list(color = font_col, size = 14)
+      )
+    }
+    for (ci in seq_along(year_set)) {
+      xc_col <- (ci - 0.5) / ncol_g
+      anns[[length(anns) + 1]] <- list(
+        x = xc_col, y = 1.0, xref = "paper", yref = "paper",
+        text = paste0("Year ", year_set[ci]), showarrow = FALSE, yanchor = "bottom",
+        font = list(color = font_col, size = 14)
+      )
+    }
+
+    # Per-row pixel height so pies never shrink: each scenario row gets a fixed
+    # band; the container div scrolls when the total exceeds its max-height.
+    row_px   <- 240
+    total_px <- max(row_px, nrow_g * row_px + 60)
+
+    fig |> plotly::layout(
+      height = total_px,
+      paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
+      font = list(color = font_col),
+      margin = list(l = 140, t = 40, r = 10, b = 10),
+      annotations = anns,
+      title = "Percent-Cover Composition over Time",
+      showlegend = FALSE
+    )
+  })
+
+  # External, pinned species legend for the pie grid.
+  output$sc_pie_legend_ui <- renderUI({
+    pd <- sc_pie_data()
+    if (is.null(pd)) return(NULL)
+    have <- pd$have; scen_order <- pd$scen_order
+    sp_cols <- resolve_species_colors(pd$all_species)
+
+    present_species <- sort(unique(unlist(lapply(scen_order, function(scen_name) {
+      yc <- have[[scen_name]]$yearly_cover
+      names(yc)[vapply(names(yc), function(sp_nm) {
+        v <- suppressWarnings(as.numeric(yc[[sp_nm]]))
+        any(!is.na(v) & v > 0)
+      }, logical(1))]
+    }))))
+    if (length(present_species) == 0) return(NULL)
+
+    dark <- isTRUE(input$dark_mode)
+    txt_col <- if (dark) "#e6e6e6" else "#333333"
+    tagList(
+      tags$div(style = paste0("font-weight:bold; margin-bottom:4px; color:", txt_col, ";"),
+               "Species"),
+      lapply(present_species, function(sp_nm) {
+        tags$div(style = "display:flex; align-items:center; gap:6px; margin-bottom:2px;",
+          tags$span(style = paste0(
+            "display:inline-block; width:14px; height:14px; border:1px solid #888;",
+            "border-radius:2px; background:", unname(sp_cols[sp_nm]), ";")),
+          tags$span(style = paste0("font-size:12px; font-style:italic; color:", txt_col, ";"),
+                    sp_nm)
+        )
+      })
+    )
+  })
+
   # Download the selected scenarios as a .csv report
   output$sc_download_csv <- downloadHandler(
     filename = function() {

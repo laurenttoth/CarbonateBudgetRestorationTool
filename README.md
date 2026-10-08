@@ -104,7 +104,7 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     Scroll down to view the simulation's growth results and predicted cost in the `Projected Reef Accretion Potential (RAP)` timeline.
 
-8. Optionally, save the result of the constructed scenario. Enter the name of the project and scenario in the `Project name` and `Scenario name` inputs, and click `Save`. The scenario will be saved as `{project}__{scenario}.json` in an automatically-generated `scenarios` folder wherever `app.R` is stored.  
+8. Optionally, save the result of the constructed scenario. Enter the name of the project and scenario in the `Project name` and `Scenario name` inputs. Type, paste, or browse to an output location using the `Output folder` browser/text box. Click `Save`. The scenario will be saved as `{project}__{scenario}.json` in the `Output folder`. The scenarios saved in the designated folder can be compared in the `Scenario Comparison` tab.  
 
     A suggested scenario name is automatically constructed using the input values, using the following convention:  
 
@@ -126,11 +126,11 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
 Use this tab to compare cost, return-on-investment, and projected reef accretion potential across scenarios created in the `Outplanting Scenarios` tab.
 
-The app will automatically detect scenarios saved in the `scenarios` folder. Use the `Project name` dropdown to switch between projects, if more than one is present. By default, the first discovered project is loaded in the dropdown, and all of that project's scenarios are enabled for comparison. Toggle the scenarios on and off as desired.
+The app will automatically detect scenarios saved in the `Output folder` designated in the `Outplanting Scenarios` tab. Use the `Project name` dropdown to switch between projects, if more than one is present. By default, the first discovered project is loaded in the dropdown, and all of that project's scenarios are enabled for comparison. Toggle the scenarios on and off as desired.
 
-Use the `Refresh list` button to re-scan the `scenarios` folder and refresh the available projects and scenarios.
+Use the `Refresh list` button to re-scan the `Output folder` and refresh the available projects and scenarios.
 
-A summary table is displayed below the comparison graphs. Use the `Download report` button to download this table as a `.csv` file.
+A summary table is displayed above the comparison graphs. Use the `Download report` button to download this table as a `.csv` file.
 
 #### Restoration Monitoring
 
