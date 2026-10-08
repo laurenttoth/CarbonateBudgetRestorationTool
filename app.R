@@ -2314,7 +2314,7 @@ header <- dashboardHeader(
         inputId = "dark_mode",
         label = "Dark Mode",
         status = "primary",
-        # value = TRUE,
+        value = TRUE,
         right = TRUE,
         inline = TRUE
       )
@@ -3149,7 +3149,7 @@ body <- dashboardBody(
                                       "Browse to a directory where the scenario results will be saved.",
                                       icon = icon("folder"),
                                       style = "margin: 10px -15px 0px 10px"),
-                        textInput("scenario_folder", tags$strong("Output folder"), value = ""),
+                        textInput("scenario_folder", tags$strong("Output folder"), value = "./scenarios"),
                         actionButton("save_scenario", tags$strong("Save result"), icon = icon("floppy-disk"), style = "margin-top:10px; margin-right:30px"),
                         tags$div(
                           style = "margin-top:20px",
@@ -3763,7 +3763,7 @@ server <- function(input, output, session) {
   reef_name       <- reactiveVal()
 
   # Read the directory chosen by shinyDirButton
-  roots <- c(home = fs::path_home(), wd = ".")
+  roots <- c(wd = ".", home = fs::path_home())
   shinyDirChoose(input, "folder", roots = roots, session = session)
 
   # Display the chosen directory in the scenario_folder textInput
@@ -7990,6 +7990,7 @@ output$restoration_mix_inputs <- renderUI({
       tbl,
       rownames = FALSE,
       selection = "single",
+      filter = "top",
       extensions = c("FixedColumns"),
       options = list(
         scrollX = TRUE,
@@ -7997,11 +7998,31 @@ output$restoration_mix_inputs <- renderUI({
         fixedColumns = list(leftColumns = 1),
         scrollCollapse = TRUE,
         paging = FALSE,
-        dom = "t",
+        dom = "ft",
         order = list(list(0, "asc"))
       )
     )
   })
+
+  # When the DT column filters hide rows, unselect the hidden scenarios in the
+  # Scenario Selection checkbox group. `_rows_all` is the row index vector after
+  # filtering (independent of paging); map it back to scenario names.
+  observeEvent(input$sc_compare_dt_rows_all, {
+    d <- sc_selected()
+    if (nrow(d) == 0) return()
+    # The table is ordered ascending by scenario; reproduce that order so the
+    # filtered row indices line up with the displayed table.
+    ord <- order(d$scenario)
+    scen_in_order <- d$scenario[ord]
+    visible_idx <- input$sc_compare_dt_rows_all
+    if (is.null(visible_idx)) return()
+    visible_scen <- scen_in_order[visible_idx]
+    cur_sel <- input$sc_scenarios
+    new_sel <- intersect(cur_sel, visible_scen)
+    if (!setequal(new_sel, cur_sel)) {
+      updateCheckboxGroupInput(session, "sc_scenarios", selected = new_sel)
+    }
+  }, ignoreInit = TRUE)
 
   # Project cost bar (ggplotly; hover shows scenario + value)
   output$sc_cost_bar <- plotly::renderPlotly({
