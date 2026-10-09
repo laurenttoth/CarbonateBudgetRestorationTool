@@ -34,7 +34,6 @@ library(RColorBrewer)
 library(shiny)
 library(shinyjs)
 library(shinyBS)
-library(shinyFiles)
 library(shinythemes)
 library(shinyWidgets)
 library(shinydashboard)
@@ -2109,6 +2108,30 @@ compute_parrotfish_erosion <- function(rows, rate_df) {
 year_choices <- sort(unique(df$YEAR))
 habitat_choices <- sort(unique(df$HABITAT_TYPE))
 
+# Numeric filter ranges + quintile breaks for the Home-tab sliders.
+year_min <- min(df$YEAR, na.rm = TRUE)
+year_max <- max(df$YEAR, na.rm = TRUE)
+
+quintile_breaks <- function(x) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) return(c(0, 1))
+  round(unname(stats::quantile(x, probs = seq(0, 1, 0.2), na.rm = TRUE)), 2)
+}
+
+unique_jenks_breaks <- function(x, n = 5) {
+  x <- x[is.finite(x)]
+  if (length(x) == 0) return(c(0, 1))
+  brks <- round(classInt::classIntervals(x, n = n, style = "fisher")$brks, 1)
+  # Guard against duplicate breaks (can happen with skewed/zero-heavy data)
+  unique(brks)
+}
+
+#gross_breaks <- quintile_breaks(df$grossE_G)
+#cover_breaks <- quintile_breaks(df$hardCoral_PrctCvr)
+
+gross_breaks <- unique_jenks_breaks(df$grossE_G)
+cover_breaks <- unique_jenks_breaks(df$hardCoral_PrctCvr)
+
 # White-to-red palettes ----
 # Used for the "Symbolize by" numeric options.
 # Each clamped 0 -> field max.
@@ -2118,10 +2141,7 @@ make_wr_pal <- function(field, n = 7, rev = FALSE) {
   vals <- vals[is.finite(vals)]
 
   # Jenks natural-breaks classification
-  brks <- classInt::classIntervals(vals, n = n, style = "fisher")$brks
-
-  # Guard against duplicate breaks (can happen with skewed/zero-heavy data)
-  brks <- unique(brks)
+  brks <- unique_jenks_breaks(vals, n = n)
 
   colorBin(
     palette = colorRampPalette(c("white", "red"))(length(brks) - 1),
@@ -2361,7 +2381,7 @@ body <- dashboardBody(
       }
       /* Map Controls floating panel */
       .map-controls-panel {
-        position: absolute; top: 115px; right: 10px; z-index: 1000;
+        position: absolute; top: 115px; right: 40px; z-index: 1000;
         width: 280px; background: rgba(255,255,255,0.92);
         border-radius: 8px; box-shadow: 0 1px 6px rgba(0,0,0,0.3);
       }
@@ -2370,7 +2390,7 @@ body <- dashboardBody(
         background: #3c8dbc; color: white; border-radius: 8px 8px 0 0;
         display: flex; justify-content: space-between; align-items: center;
       }
-      .map-controls-body { padding: 10px 12px; max-height: 60vh; overflow-y: auto; }
+      .map-controls-body { padding: 10px 12px; overflow-y: auto; }
       .map-controls-body .form-group { margin-bottom: 10px; }
       /* Compact baseline species inputs: name + narrow box side-by-side */
       .baseline-species-row {
@@ -2508,7 +2528,7 @@ body <- dashboardBody(
       }
       .log-panel-body { padding: 8px 12px; overflow-y: auto; flex: 1 1 auto; }
       .log-toggle-tab {
-        position: fixed; top: 120px; right: 0; z-index: 1201;
+        position: fixed; top: 115px; right: 0; z-index: 1201;
         background: #3c8dbc; color: white; cursor: pointer;
         padding: 8px 6px; border-radius: 6px 0 0 6px; writing-mode: vertical-rl;
         font-weight: bold; box-shadow: -1px 1px 4px rgba(0,0,0,0.3);
@@ -2673,6 +2693,20 @@ body <- dashboardBody(
         background: #2c353f !important; color: #e6e6e6 !important;
         border-color: #3a4552 !important;
       }
+      /* DT noUi filter popup: the unclassed wrapper div that follows the
+         .form-group search box in each header cell. Carries an inline white
+         background, so override needs !important (inline non-important props
+         are beaten by an important stylesheet rule). Matched structurally
+         since the wrapper has no class/id of its own. */
+      body.dark-mode table.dataTable thead td .form-group.has-feedback + div {
+        background-color: #2c353f !important;
+        border-color: #3a4552 !important;
+        color: #e6e6e6 !important;
+      }
+      /* The min/max value labels are the <span>s inside that same wrapper. */
+      body.dark-mode table.dataTable thead td .form-group.has-feedback + div > span {
+        color: #e6e6e6 !important;
+      }
 
       /* ---- Simulation progress overlay (coral SVG, bottom-up reveal) ---- */
       /* Anchored to the bottom-right corner (where the old progress bar sat),
@@ -2716,7 +2750,6 @@ body <- dashboardBody(
         margin-top: 4px; font-size: 13px; color: #555;
       }
       body.dark-mode #sim_overlay .sim-pct { color: #bbb; }
-
     ")),
     # Toggle the body dark-mode class from the switch
     tags$script(HTML("
@@ -2782,10 +2815,11 @@ body <- dashboardBody(
         'rest_horizon': 'Target year by which the desired coral cover should be reached through outplanting and and projected coral growth.',
         'dhw': 'Thermal-stress severity of each bleaching event, in degree-heating weeks.',
         'bleach_events': 'How often bleaching occurs, expressed as events per five-year period.',
-        'scenario_project': 'A project name which groups related scenarios together for comparison. The Reef Persistence Tool searches for projects saved in the output folder designated in the Outplanting Scenarios tab.',
-        'scenario_name': 'A label for this specific parameter combination.',
-        'folder': 'Browse to a folder where scenario results will be saved.',
-        'scenario_folder': 'Type, paste, or browse to a folder where scenario results will be saved. Scenarios in this folder can be compared using the Scenario Comparison tab.'
+        'scenario_project': 'A project name which groups related scenarios together. Used to build the suggested filename when saving a result.',
+        'scenario_name': 'A label for this specific parameter combination. Used to build the suggested filename when saving a result.',
+        'save_scenario_dl': 'Save the results of this simulation as a .json file which can be re-uploaded to compare in the Scenario Comparison tab.',
+        'timeline_upload': 'Upload one or more saved scenario .json files to view their timelines.',
+        'sc_upload': 'Upload one or more saved scenario .json files to compare.',
         'reactive_sim': 'When on, the projection recomputes automatically as inputs change.',
         'save_scenario': 'Save the results of this simulation to a .json file. Compare these outputs in the Scenario Comparison tab.',
         'run_sim': 'Run the growth simulation with the current scenario parameters.',
@@ -2800,7 +2834,6 @@ body <- dashboardBody(
         'sc_generate_palette': 'Generate a palette of random, high-contrast pastels using the current seed.',
         'sc_palette_seed': 'The randomization seed to use when generating the chart color palette. The same seed will result in the same palette for equal numbers of scenarios.',
         'sc_show_slr': 'Overlay projected sea-level-rise reference rates on the bar chart.',
-        'sc_refresh': 'Re-scan the scenarios folder and update the list of options.',
         'sc_download_csv': 'Download the Comparison Table as a .csv file.',
         'upload_cover': 'Upload an .xlsx file containing cover-monitoring timeseries data.',
         'monitoring_cover_template_dl': 'Download a template cover-monitoring-input .xlsx file.',
@@ -2894,7 +2927,7 @@ body <- dashboardBody(
               min = 0, max = 30, value = 0, step = 1, post = "%", width = "100%"
             ),
 
-            # Filter group: Year + Habitat dropdown checkboxes
+            # Filter group: Habitat dropdown + numeric range sliders
             tags$div(
               style = "display:flex; gap:8px; align-items:center;",
               tags$strong("Filter by:"),
@@ -2905,15 +2938,28 @@ body <- dashboardBody(
                 checkboxGroupInput("filter_habitat", NULL,
                   choices = habitat_choices, selected = habitat_choices
                 )
-              ),
-              shinyWidgets::dropdownButton(
-                inputId = "filter_year_dd",
-                label = "Year",
-                circle = FALSE, width = "100%", status = "default",
-                checkboxGroupInput("filter_year", NULL,
-                  choices = year_choices, selected = year_choices
-                )
               )
+            ),
+
+            # Year range (every year an explicit tick)
+            sliderInput("filter_year_range", tags$strong("Survey year"),
+              min = year_min, max = year_max,
+              value = c(year_min, year_max), step = 2, sep = "",
+              ticks = TRUE, width = "100%"
+            ),
+
+            # Gross bioerosion range (quintile breaks as ticks)
+            sliderTextInput("filter_gross_range", tags$strong("Gross bioerosion (kg CaCO₃/m²/yr)"),
+              choices = gross_breaks,
+              selected = c(gross_breaks[1], gross_breaks[length(gross_breaks)]),
+              grid = TRUE, width = "100%"
+            ),
+
+            # Current coral cover range (quintile breaks as ticks)
+            sliderTextInput("filter_cover_range", tags$strong("Current coral cover (%)"),
+              choices = cover_breaks,
+              selected = c(cover_breaks[1], cover_breaks[length(cover_breaks)]),
+              grid = TRUE, width = "100%"
             ),
 
             tags$hr(),
@@ -3144,13 +3190,10 @@ body <- dashboardBody(
                       tags$div(style = "display:flex; gap:15px; align-items:center; justify-content:flex-end",
                         textInput("scenario_project", tags$strong("Project name"), value = ""),
                         textInput("scenario_name", tags$strong("Scenario name"), value = ""),
-                        shinyDirButton("folder",
-                                      "Browse...",
-                                      "Browse to a directory where the scenario results will be saved.",
-                                      icon = icon("folder"),
-                                      style = "margin: 10px -15px 0px 10px"),
-                        textInput("scenario_folder", tags$strong("Output folder"), value = "./scenarios"),
-                        actionButton("save_scenario", tags$strong("Save result"), icon = icon("floppy-disk"), style = "margin-top:10px; margin-right:30px"),
+                        downloadButton("save_scenario_dl", tags$strong("Save result"),
+                                       icon = icon("floppy-disk"),
+                                       class = "btn-default",
+                                       style = "margin-top:10px; margin-right:30px"),
                         tags$div(
                           style = "margin-top:20px",
                           materialSwitch("reactive_sim", HTML("<strong>Reactive<br/>simulation</strong>"),
@@ -3244,15 +3287,31 @@ body <- dashboardBody(
             tags$div(
               style = "display:flex; justify-content:space-between; align-items:center;
                        gap:12px; padding:2px 6px; font-size:14px; font-weight:bold;",
-              tags$div(style = "display:flex; gap:16px; align-items:center;",
-                tags$div(style = "font-weight:normal;",
-                  checkboxInput("show_slr", "Display SLR projections", value = FALSE)
-                ),
-                htmlOutput("rap_pctile_baseline", inline = TRUE),
-                htmlOutput("rap_pctile_restored", inline = TRUE),
-                tags$span(style = "color:#2f4f2f; display:flex; gap:16px; align-items:center;",
-                htmlOutput("model_final_cost", inline = TRUE),
-                uiOutput("target_cover_warning")
+              tags$div(style = "display:flex; gap:16px; align-items:center; justify-content:flex-start;",
+                tags$div(style = "font-weight:normal; display:flex; gap:8px; align-items:center;",
+                  tags$div(style = "min-width:160px; margin-top:5px",
+                    fileInput("timeline_upload", NULL, multiple = TRUE,
+                              accept = ".json", buttonLabel = "Upload scenarios",
+                              placeholder = "No files")
+                  ),
+                  tags$div(style = "min-width:320px; margin-top:-20px",
+                    selectInput("timeline_source", NULL,
+                                choices = c("Current" = "__current__"),
+                                selected = "__current__", width = "320px")
+                  )
+                )
+              ),
+              tags$div(style = "display:flex; gap:8px; margin-top:-10px; align-items:center; justify-content:flex-end;",
+                checkboxInput("show_slr", "Display SLR projections", value = FALSE),
+                tags$div(style = "margin-top:-20px; display:flex; gap:6px; align-items:center; justify-content:space-between;",
+                  htmlOutput("rap_pctile_baseline", inline = TRUE),
+                  htmlOutput("rap_pctile_restored", inline = TRUE),
+                  tags$div(style = "color:gray;",
+                    htmlOutput("model_final_cost", inline = TRUE)
+                  ),
+                  tags$div(style = "color:orange;",
+                    uiOutput("target_cover_warning")
+                  )
                 )
               )
             ),
@@ -3304,15 +3363,17 @@ body <- dashboardBody(
           shinydashboard::box(
             title = "Scenario Selection", width = 12,
             status = "primary", solidHeader = TRUE,
-            selectInput("sc_project", tags$strong("Project name"), choices = NULL),
+            fileInput("sc_upload", NULL,
+                      multiple = TRUE, accept = ".json",
+                      buttonLabel = tags$strong("Upload scenarios"), placeholder = "No files"),
             checkboxGroupInput("sc_scenarios", tags$strong("Scenarios"), choices = NULL),
+            tags$hr(),
             tags$div(
               style = "display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap;",
               #tags$div(style = "display:flex; gap:6px; align-items:center;",
                 #tags$span(style = "font-size:12px; font-weight:bold;", "Palette seed"),
               numericInput("sc_palette_seed", label = "Palette seed", value = 1,
-                            min = 1, step = 1, width = "100px"),
-              actionButton("sc_refresh", "Refresh list", icon = icon("rotate"), style = "margin-top:10px")
+                            min = 1, step = 1, width = "100px")
             ),
             tags$div(
               style = "display:flex; gap:8px; justify-content:space-between; align-items:center; flex-wrap:wrap;",
@@ -3339,56 +3400,17 @@ body <- dashboardBody(
         column(
           width = 12,
           shinydashboard::box(
-            title = "Total Metrics", width = 12,
+            title = "Summary Metrics", width = 12,
             collapsible = TRUE,
             status = "info", solidHeader = TRUE,
-            column(
-              width = 4,
-              plotly::plotlyOutput("sc_cost_bar")
+            tags$div(
+              style = "position:absolute; top:60px; right:80px; 
+                      z-index:20; font-weight:normal; padding:4px;",
+              checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
             ),
-            column(
-              width = 4,
-              plotly::plotlyOutput("sc_roi_bar")
-            ),
-            column(
-              width = 4,
-              plotly::plotlyOutput("sc_rap_bar"), # height = "350px"),
-              tags$div(style = "font-weight:normal; margin-bottom:4px;",
-                checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
-              )
-            )
+            plotly::plotlyOutput("sc_metrics_bar", height = "420px"),
           )
         )
-        # Left: cost
-        # column(
-        #   width = 4,
-        #   shinydashboard::box(
-        #     title = "Project Cost", width = 12,
-        #     status = "info", solidHeader = TRUE,
-        #     plotly::plotlyOutput("sc_cost_bar")
-        #   )
-        # ),
-        # # Middle: ROI
-        # column(
-        #   width = 4,
-        #   shinydashboard::box(
-        #     title = "Return on Investment", width = 12,
-        #     status = "primary", solidHeader = TRUE,
-        #     plotly::plotlyOutput("sc_roi_bar")
-        #   )
-        # ),
-        # # Right: RAP
-        # column(
-        #   width = 4,
-        #   shinydashboard::box(
-        #     title = "Reef Accretion Potential (RAP) by Scenario", width = 12,
-        #     status = "success", solidHeader = TRUE,
-        #     plotly::plotlyOutput("sc_rap_bar"), # height = "350px"),
-        #     tags$div(style = "font-weight:normal; margin-bottom:4px;",
-        #       checkboxInput("sc_show_slr", "Display SLR projections", value = FALSE)
-        #     )
-        #   )
-        # )
       ),
       # Row 3: population timeline for the scenario selected in the DT table
       fluidRow(
@@ -3762,16 +3784,6 @@ server <- function(input, output, session) {
   # reactiveVal to store the reef selected on the map
   reef_name       <- reactiveVal()
 
-  # Read the directory chosen by shinyDirButton
-  roots <- c(wd = ".", home = fs::path_home())
-  shinyDirChoose(input, "folder", roots = roots, session = session)
-
-  # Display the chosen directory in the scenario_folder textInput
-  observe({
-    req(input$folder)
-    updateTextInput(session, "scenario_folder", value = parseDirPath(roots, input$folder))
-  })
-
   # ---- Log panel: drain the global buffer into a reactiveVal for display ----
   # A short poller watches the global version counter; when it changes, the
   # displayed lines refresh. This bridges the non-reactive global writer (usable
@@ -4015,12 +4027,27 @@ server <- function(input, output, session) {
   map_data_reactive <- reactive({
     d <- df
 
-    # Year / Habitat filters (checkbox groups); empty selection => no sites
-    yr_sel  <- input$filter_year
+    # Habitat checkbox (empty selection => no sites) + numeric range sliders.
     hab_sel <- input$filter_habitat
-    if (is.null(yr_sel))  yr_sel  <- character(0)
     if (is.null(hab_sel)) hab_sel <- character(0)
-    d <- d[d$YEAR %in% yr_sel & d$HABITAT_TYPE %in% hab_sel, , drop = FALSE]
+    d <- d[d$HABITAT_TYPE %in% hab_sel, , drop = FALSE]
+
+    yr_rng <- input$filter_year_range
+    if (!is.null(yr_rng) && length(yr_rng) == 2) {
+      d <- d[d$YEAR >= yr_rng[1] & d$YEAR <= yr_rng[2], , drop = FALSE]
+    }
+
+    # sliderTextInput returns character; coerce before comparing.
+    gr <- suppressWarnings(as.numeric(input$filter_gross_range))
+    if (length(gr) == 2 && all(is.finite(gr))) {
+      d <- d[is.finite(d$grossE_G) & d$grossE_G >= gr[1] & d$grossE_G <= gr[2], , drop = FALSE]
+    }
+    cr <- suppressWarnings(as.numeric(input$filter_cover_range))
+    if (length(cr) == 2 && all(is.finite(cr))) {
+      d <- d[is.finite(d$hardCoral_PrctCvr) &
+             d$hardCoral_PrctCvr >= cr[1] & d$hardCoral_PrctCvr <= cr[2], , drop = FALSE]
+    }
+
     if (nrow(d) == 0) return(d)
 
     # Projected RAP from the target cover increase, via the regression slope
@@ -6218,7 +6245,220 @@ output$restoration_mix_inputs <- renderUI({
   })
 
   output$restoration_timeline <- plotly::renderPlotly({
-    sim_token()                      # freeze: only a simulation run redraws
+    # Dropdown selection must be a LIVE dependency so switching scenarios
+    # redraws. Read it before the sim_token() freeze gate below; otherwise the
+    # freeze dominates and the renderer never re-runs on a dropdown change.
+    scn_obj <- timeline_scenario_obj()
+
+    # If a saved scenario is chosen as the timeline source, render it directly
+    # from its yearly_rap series and short-circuit the live-model path below.
+    # Replicates the live display: CI bands, pips, bleaching lines, horizon
+    # marker, SLR overlay, geologic baseline, and the manual legend.
+    scn_obj <- timeline_scenario_obj()
+    if (!is.null(scn_obj) && series_len(scn_obj$yearly_rap) > 0) {
+      yr  <- series_col(scn_obj$yearly_rap, "year")
+      rp  <- series_col(scn_obj$yearly_rap, "rap")
+      rpn <- series_col(scn_obj$yearly_rap, "rap_min")
+      rpx <- series_col(scn_obj$yearly_rap, "rap_max")
+      rpo <- series_col(scn_obj$yearly_rap, "rap_orig")
+      cov <- series_col(scn_obj$yearly_rap, "cover")
+      bud <- series_col(scn_obj$yearly_rap, "budget")
+      dur <- max(yr, na.rm = TRUE)
+
+      horizon <- .safe_num(scn_obj$rest_horizon)
+      bfreq   <- .safe_num(scn_obj$bleach_events)
+
+      dark     <- isTRUE(input$dark_mode)
+      paper_bg <- if (dark) "#232a33" else "white"
+      plot_bg  <- if (dark) "#232a33" else "white"
+      font_col <- if (dark) "#e6e6e6" else "#333333"
+      orig_col <- if (dark) "#cfcfcf" else "gray30"
+      grid_col <- if (dark) "#5a6472" else "#d9d9d9"
+
+      d <- data.frame(
+        Year = yr, RAP_total = rp, RAP_orig = rpo,
+        RAP_total_min = rpn, RAP_total_max = rpx,
+        pct_cvr_total = cov, carb_budg_total = bud,
+        stringsAsFactors = FALSE
+      )
+
+      # SLR overlay (same construction as the live path).
+      show_slr <- isTRUE(input$show_slr)
+      start_year <- as.integer(format(Sys.Date(), "%Y")) + 1
+      slr_tl <- build_slr_timeline(start_year, n_years = dur)
+      slr_ymax <- if (show_slr && !is.null(slr_tl) && nrow(slr_tl) > 0) {
+        max(slr_tl$SLR, na.rm = TRUE)
+      } else {
+        -Inf
+      }
+      slr_weight <- c(Low = 0.2, IntLow = 0.4, Int = 0.75, IntHigh = 0.4, High = 0.2)
+      slr_dash   <- c(Low = "dash", IntLow = "dash", Int = "solid",
+                      IntHigh = "dash", High = "dash")
+
+      x_breaks <- if (dur <= 20) 0:dur else if (dur <= 50) seq(0, dur, 5) else seq(0, dur, 10)
+
+      has_ci <- any(is.finite(d$RAP_total_min)) && any(is.finite(d$RAP_total_max))
+      y_lo <- rap_axis_min(min(c(d$RAP_orig, d$RAP_total,
+                                 if (has_ci) d$RAP_total_min else NA), na.rm = TRUE))
+      rap_top <- max(c(d$RAP_total, if (has_ci) d$RAP_total_max else NA), na.rm = TRUE)
+      y_hi <- if (show_slr) max(slr_ymax, rap_top) else max(4, rap_top)
+      bands <- status_bands_df(0, dur, y_lo)
+
+      pips <- d[d$Year %in% c(0, 1, 5, 10, 20, 50, 100, dur), ]
+
+      p <- ggplot(d, aes(x = Year)) +
+        geom_rect(data = bands, inherit.aes = FALSE,
+                  aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
+                      fill = fill, text = label), alpha = 0.30) +
+        scale_fill_identity() +
+        geom_ribbon(aes(ymin = 0.5, ymax = pmax(0.5, RAP_total)),
+                    fill = "#1f6fd6", alpha = 0.20) +
+        geom_line(aes(y = RAP_orig, group = 1,
+                      text = paste0("Baseline<br>Year ", Year,
+                                    "<br>RAP: ", round(RAP_orig, 2), " mm/yr")),
+                  linetype = "longdash", color = orig_col, linewidth = 0.7) +
+        geom_line(aes(y = RAP_total, group = 2,
+                      text = paste0("Year ", Year,
+                                    "<br>Coral cover:  ", round(pct_cvr_total, 1), " %",
+                                    "<br>RAP:    ", round(RAP_total, 2), " mm/yr",
+                                    "<br>Budget: ", round(carb_budg_total, 2), " kg/m²/yr")),
+                  color = "#7b3fbf", linewidth = 1.1) +
+        {
+          if (has_ci) {
+            list(
+              geom_ribbon(aes(ymin = RAP_total_min, ymax = RAP_total_max),
+                          fill = "#7b3fbf", alpha = 0.20),
+              geom_line(aes(y = RAP_total_min, group = 21,
+                            text = paste0("Lower bound<br>Year ", Year,
+                                          "<br>RAP: ", round(RAP_total_min, 2), " mm/yr")),
+                        color = "#7b3fbf", alpha = 0.6, linewidth = 0.55),
+              geom_line(aes(y = RAP_total_max, group = 22,
+                            text = paste0("Upper bound<br>Year ", Year,
+                                          "<br>RAP: ", round(RAP_total_max, 2), " mm/yr")),
+                        color = "#7b3fbf", alpha = 0.6, linewidth = 0.55)
+            )
+          }
+        } +
+        geom_point(
+          data = pips,
+          aes(y = RAP_total, text = paste0(
+            "Year ", Year,
+            "<br>Projected cover:  ", round(pct_cvr_total, 1), "%",
+            "<br>Projected RAP:    ", round(RAP_total, 2), " mm/yr",
+            "<br>Projected budget: ", round(carb_budg_total, 2), " kg CaCO₃/m²/yr"),
+          customdata = paste(round(pct_cvr_total, 4), round(carb_budg_total, 4),
+                             round(RAP_total, 4), Year, sep = " |")),
+          size = 4, color = "#7b3fbf"
+        ) +
+        scale_x_continuous(breaks = x_breaks) +
+        scale_y_continuous(limits = c(y_lo, y_hi),
+                           breaks = rap_axis_breaks(y_lo, y_hi)) +
+        labs(x = "Year", y = "RAP (mm/yr)") +
+        theme_minimal(base_size = 14)
+
+      # Restoration-horizon marker.
+      if (dur > horizon) {
+        p <- p + geom_vline(
+          aes(xintercept = horizon, text = "Restoration horizon"),
+          linetype = "dashed", color = "gray50"
+        )
+      }
+
+      # Bleaching-event markers (same frequency rule as simulate_growth).
+      bleach_years <- integer(0)
+      if (bfreq > 0) {
+        for (i in 1:(dur + 1)) {
+          if ((bfreq == 1 && i %% 4 == 0) ||
+              (bfreq == 2 && i %% 2 == 0) ||
+              (bfreq == 5)) {
+            bleach_years <- c(bleach_years, i - 1.5)
+          }
+        }
+      }
+      if (length(bleach_years)) {
+        p <- p + geom_vline(
+          data = data.frame(bx = bleach_years),
+          aes(xintercept = bx, text = "Bleaching event"),
+          inherit.aes = FALSE,
+          linetype = "solid", color = "red", linewidth = 0.7, alpha = 0.6
+        )
+      }
+
+      # SLR lines (heavy last so they draw on top).
+      if (show_slr && !is.null(slr_tl) && nrow(slr_tl) > 0) {
+        scn_order <- c("Low", "High", "IntHigh", "IntLow", "Int")
+        scn_order <- scn_order[scn_order %in% unique(slr_tl$Scenario)]
+        for (scn in scn_order) {
+          sd <- slr_tl[slr_tl$Scenario == scn, ]
+          p <- p + geom_line(
+            data = sd,
+            aes(x = Year, y = SLR, group = Scenario,
+                text = paste0(Scenario, "<br>Year ", Year,
+                              "<br>SLR: ", round(SLR, 2), " mm/yr")),
+            color = "#1f6fd6",
+            linewidth = unname(slr_weight[scn]),
+            linetype = unname(slr_dash[scn]),
+            inherit.aes = FALSE
+          )
+        }
+      }
+
+      gp <- plotly::ggplotly(p, tooltip = "text", source = "rest_tl")
+      gp <- plotly::event_register(gp, "plotly_hover")
+      gp <- gp |>
+        plotly::layout(
+          paper_bgcolor = paper_bg, plot_bgcolor = plot_bg,
+          font = list(color = font_col),
+          xaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
+          yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col)
+        )
+
+      # Geologic accretion baseline (gold dashed data-space trace).
+      gp <- gp |>
+        plotly::add_trace(
+          x = c(0, dur), y = c(3.1, 3.1),
+          type = "scatter", mode = "lines",
+          line = list(color = "gold", width = 2, dash = "dash"),
+          showlegend = FALSE, inherit = FALSE
+        )
+
+      # Manual legend (off-canvas swatch traces), mirroring the live path.
+      off_x <- c(-1e6, -1e6 + 1)
+      legend_entry <- function(g, name, color, dash = "solid") {
+        plotly::add_trace(
+          g, x = off_x, y = c(0, 0), type = "scatter", mode = "lines",
+          line = list(color = color, dash = dash, width = 2),
+          name = name, showlegend = TRUE, inherit = FALSE, hoverinfo = "skip"
+        )
+      }
+      legend_entry_vline <- function(g, name, color) {
+        plotly::add_trace(
+          g, x = off_x, y = c(0, 0), type = "scatter", mode = "markers",
+          marker = list(color = color, symbol = "line-ns-open", size = 12,
+                        line = list(color = color, width = 2)),
+          name = name, showlegend = TRUE, inherit = FALSE, hoverinfo = "skip"
+        )
+      }
+      gp <- gp |>
+        legend_entry("Baseline RAP  ", "gray", dash = "dash") |>
+        legend_entry("Restored RAP  ", "#7b3fbf") |>
+        legend_entry("Geologic baseline RAP  ", "gold", dash = "dash") |>
+        legend_entry_vline("Restoration horizon  ", "gray")
+      if (show_slr) gp <- legend_entry(gp, "Sea-level rise  ", "#1f6fd6", dash = "dash")
+      if (length(bleach_years)) gp <- legend_entry_vline(gp, "Bleaching event  ", "red")
+
+      gp <- gp |> plotly::layout(
+        showlegend = TRUE,
+        legend = list(orientation = "h", x = 0.05, y = 1.08,
+                      font = list(color = font_col),
+                      bgcolor = "rgba(0,0,0,0)"),
+        xaxis = list(range = c(0, dur)) # ,
+        # title = list(text = sub("\\.json$", "", input$timeline_source))
+      )
+      return(gp)
+    }
+
+    sim_token()                      # freeze: only a simulation run redraws (live path)
     b  <- baseline_metrics()
     bg <- baseline_growth()
     mr <- model_result()
@@ -6677,8 +6917,10 @@ output$restoration_mix_inputs <- renderUI({
   ## ---------------------------------------------------------------------------
   ## Save scenario (Restoration Planning) ----
   ## ---------------------------------------------------------------------------
-  observeEvent(input$save_scenario, {
-    # Evaluate name inputs independently:
+  # Build the current scenario as a serializable list. Returns NULL (with a
+  # notification) if required names are missing. Factored out of the old
+  # observeEvent so the download handler can serialize it on demand.
+  build_scenario_object <- function() {
     if (input$scenario_project == "") {
       showNotification("Enter a project name.", type = "error")
       return(NULL)
@@ -6688,46 +6930,33 @@ output$restoration_mix_inputs <- renderUI({
       return(NULL)
     }
 
-    # Wire the "Save scenario" button press to also run the simulation,
-    # so the appropriate simulated values for the current slider values are saved.
     announce_readiness(TRUE)
     on.exit(later::later(function() announce_readiness(FALSE), delay = 1), add = TRUE)
     sim_token(sim_token() + 1)
     write_cached_baseline()
     base_mets <- baseline_metrics()
     mr <- model_result()
-    fv <- final_vals()   # baseline/restored metrics evaluated at final simulation year
+    fv <- final_vals()
 
     restored_rap <- fv$r_rap
     baseline_rap <- fv$b_rap
     restored_cvr <- fv$r_cover
     baseline_cvr <- fv$b_cover
 
-    # Compare restored cover and baseline cover at the end of the simulation
     added_cover <- restored_cvr - baseline_cvr
-    # Prefer model-derived cost when available; else illustrative fallback
     cost <- if (!is.null(mr)) mr$cost else added_cover * OUTPLANT_COST_DEFAULT * 100
     outplants <- if (!is.null(mr) && length(mr$outplants)) mr$outplants else NA
-    elev_gain_10yr <- restored_rap * 10 # mm over 10 years
+    elev_gain_10yr <- restored_rap * 10
 
-    # ROI not included here; the Scenario Comparison plot
-    # recomputes ROI from net kg CaCO3 / cost at render.
-
-    # ---- Assemble yearly series for the expanded save ----
-    # yearly_rap: per-year total RAP + CI bands from the model's budget_df.
-    # yearly_counts: per-species baseline vs outplant colony counts (mean/lo/hi).
-    # yearly_diversity: Shannon + Simpson from per-year coral cover proportions
-    #   (CCA / reserved taxa excluded).
     yearly_rap <- NULL
     yearly_counts <- NULL
     yearly_diversity <- NULL
 
-    # Source of yearly series: restoration model when present, else baseline.
     ps  <- NULL
     cby <- NULL
     if (!is.null(mr) && nrow(mr$budget_df) > 0) {
       bd  <- mr$budget_df
-      yrs <- seq_len(nrow(bd)) - 1  # Year 0 .. duration
+      yrs <- seq_len(nrow(bd)) - 1
       ps  <- mr$pop_series
       cby <- mr$cover_by_species_yearly
 
@@ -6743,8 +6972,6 @@ output$restoration_mix_inputs <- renderUI({
         )
       })
     } else {
-      # Baseline-only save: pull yearly series from baseline_growth(), applying
-      # bioerosion to recover per-year RAP (same transform the timeline uses).
       bg <- baseline_growth()
       if (!is.null(bg) && is.data.frame(bg[[1]]) && nrow(bg[[1]]) > 0) {
         bg_df0 <- bg[[1]]
@@ -6777,28 +7004,20 @@ output$restoration_mix_inputs <- renderUI({
     if (!is.null(yearly_rap)) {
       yrs <- vapply(yearly_rap, function(z) z$year, numeric(1))
 
-      # Per-species baseline/outplant yearly counts (ps resolved above:
-      # restoration pop_series or baseline-growth attribute).
       if (!is.null(ps) && length(ps)) {
         yearly_counts <- setNames(lapply(names(ps), function(sp_nm) {
           p <- ps[[sp_nm]]
           list(
-            baseline = list(
-              mean = round(p$baseline$mean),
-              lo   = round(p$baseline$lo),
-              hi   = round(p$baseline$hi)
-            ),
-            outplant = list(
-              mean = round(p$outplant$mean),
-              lo   = round(p$outplant$lo),
-              hi   = round(p$outplant$hi)
-            )
+            baseline = list(mean = round(p$baseline$mean),
+                            lo   = round(p$baseline$lo),
+                            hi   = round(p$baseline$hi)),
+            outplant = list(mean = round(p$outplant$mean),
+                            lo   = round(p$outplant$lo),
+                            hi   = round(p$outplant$hi))
           )
         }), names(ps))
       }
 
-      # Per-species, per-year percent cover (mean). Serialize cby directly, one
-      # rounded numeric vector per species keyed by species name.
       if (!is.null(cby) && length(cby)) {
         yearly_cover <- setNames(lapply(names(cby), function(sp_nm) {
           round(as.numeric(cby[[sp_nm]]), 4)
@@ -6807,7 +7026,6 @@ output$restoration_mix_inputs <- renderUI({
         yearly_cover <- NULL
       }
 
-      # Per-year diversity from coral cover proportions (exclude CCA + reserved).
       if (!is.null(cby) && length(cby)) {
         coral_names <- names(cby)[!vapply(names(cby), function(nm) {
           str_detect(nm, "algae") || is_reserved_taxon(nm)
@@ -6820,9 +7038,10 @@ output$restoration_mix_inputs <- renderUI({
                simpson = round(unname(di["simpson"]), 4))
         })
       }
+    } else {
+      yearly_cover <- NULL
     }
 
-    # Build the scenario, forcing every field to a length-1 scalar
     scalar1 <- function(x) if (is.null(x) || length(x) == 0) NA else x[[1]]
     scenario <- list(
       project = scalar1(input$scenario_project),
@@ -6843,16 +7062,13 @@ output$restoration_mix_inputs <- renderUI({
       rest_horizon = .safe_num(input$rest_horizon),
       sim_duration = .safe_num(input$sim_duration),
       cost = scalar1(cost),
-      # roi = scalar1(roi),
       elev_gain_10yr = scalar1(elev_gain_10yr),
       saved = as.character(Sys.time()),
       olb_pct = .safe_num(input$base_REQUIRED_Other_living_benthos),
-      # Expanded yearly series.
       yearly_rap        = yearly_rap,
       yearly_counts     = yearly_counts,
       yearly_cover      = yearly_cover,
       yearly_diversity  = yearly_diversity,
-      # Nested per-species mix (variable-length), keyed by full species name.
       additional_outplant_years = additional_outplant_years(),
       mix = {
         sp <- mix_species()
@@ -6883,20 +7099,61 @@ output$restoration_mix_inputs <- renderUI({
         }), sp)
       }
     )
+    scenario
+  }
 
-    fname <- file.path(
-      input$scenario_folder, #scenario_dir,
-      paste0(
-        gsub("[^A-Za-z0-9]", "_", input$scenario_project), "__",
-        gsub("[^A-Za-z0-9]", "_", input$scenario_name), ".json"
-      )
-    )
-    write_json(scenario, fname, auto_unbox = TRUE, pretty = TRUE)
+  output$save_scenario_dl <- downloadHandler(
+    filename = function() {
+      proj <- gsub("[^A-Za-z0-9]", "_", .safe_num_chr(input$scenario_project))
+      scen <- gsub("[^A-Za-z0-9]", "_", .safe_num_chr(input$scenario_name))
+      if (!nzchar(proj)) proj <- "project"
+      if (!nzchar(scen)) scen <- "scenario"
+      paste0(proj, "__", scen, ".json")
+    },
+    content = function(file) {
+      scenario <- build_scenario_object()
+      if (is.null(scenario)) {
+        # Write an empty object so the download doesn't error; the notification
+        # from build_scenario_object() already told the user what's missing.
+        write_json(list(), file, auto_unbox = TRUE, pretty = TRUE)
+        return(invisible(NULL))
+      }
+      write_json(scenario, file, auto_unbox = TRUE, pretty = TRUE)
+    }
+  )
 
-    showNotification(
-      paste0("Saved scenario '", input$scenario_name, "' under project '", input$scenario_project, "'."),
-      type = "message"
-    )
+  # Uploaded timeline scenarios: parse each .json once on upload. Dropdown is
+  # cleared + repopulated on every upload. "Current" (sentinel) always present.
+  timeline_uploads <- reactiveVal(list())  # name (no ext) -> parsed object
+
+  observeEvent(input$timeline_upload, {
+    fi <- input$timeline_upload
+    req(fi)
+    objs <- list()
+    for (i in seq_len(nrow(fi))) {
+      nm  <- sub("\\.json$", "", fi$name[i], ignore.case = TRUE)
+      obj <- tryCatch(fromJSON(fi$datapath[i]), error = function(e) NULL)
+      if (!is.null(obj)) objs[[nm]] <- obj
+    }
+    timeline_uploads(objs)  # replace wholesale (clears previous)
+    log_msg(paste0("timeline_upload: stored ", length(objs), " scenario(s): [",
+                   paste(names(objs), collapse = ", "), "]"))
+
+    choices <- c("Current" = "__current__",
+                 setNames(names(objs), names(objs)))
+    updateSelectInput(session, "timeline_source",
+                      choices = choices, selected = "__current__")
+  })
+
+  # Parsed scenario object for the selected timeline source.
+  # "__current__" (or NULL/empty) => live parameters (return NULL).
+  timeline_scenario_obj <- reactive({
+    sel <- input$timeline_source
+    if (is.null(sel) || !nzchar(sel) || identical(sel, "__current__")) return(NULL)
+    objs <- timeline_uploads()
+    obj <- objs[[sel]]
+    if (is.null(obj)) return(NULL)
+    obj
   })
 
   ## ---------------------------------------------------------------------------
@@ -7727,39 +7984,46 @@ output$restoration_mix_inputs <- renderUI({
   ## Scenario Comparison tab ----
   ## ---------------------------------------------------------------------------
 
-  # Read all saved scenario .json files (sanitized to one clean row each)
-  all_scenarios <- reactive({
-    input$sc_refresh
-    input$save_scenario # refresh after a save
-    files <- list.files(
-      input$scenario_folder, # scenario_dir,
-      pattern = "\\.json$",
-      full.names = TRUE)
-    if (length(files) == 0) {
-      return(data.frame())
+  # Uploaded comparison scenarios: parse on upload, keyed by filename (no ext).
+  # Independent of the Outplanting-tab uploader. Cleared + replaced each upload.
+  sc_uploads <- reactiveVal(list())
+
+  observeEvent(input$sc_upload, {
+    fi <- input$sc_upload
+    req(fi)
+    objs <- list()
+    for (i in seq_len(nrow(fi))) {
+      nm  <- sub("\\.json$", "", fi$name[i], ignore.case = TRUE)
+      obj <- tryCatch(fromJSON(fi$datapath[i]), error = function(e) NULL)
+      if (!is.null(obj)) objs[[nm]] <- obj
     }
-    rows <- lapply(files, function(f) {
-      s <- tryCatch(fromJSON(f), error = function(e) NULL)
-      scenario_to_row(s)
+    sc_uploads(objs)
+  })
+
+  # Flattened one-row-per-scenario table from the uploaded objects. The
+  # `scenario` column is set to the FILENAME (minus extension) so uploads with
+  # duplicate internal names stay distinct and the checklist lists filenames.
+  all_scenarios <- reactive({
+    objs <- sc_uploads()
+    if (length(objs) == 0) return(data.frame())
+    rows <- lapply(names(objs), function(nm) {
+      row <- scenario_to_row(objs[[nm]])
+      if (is.null(row)) return(NULL)
+      row$scenario <- nm        # key by filename
+      row
     })
     rows <- rows[!vapply(rows, is.null, logical(1))]
     if (length(rows) == 0) return(data.frame())
     do.call(rbind, rows)
   })
 
-  # Populate the project selector
-  observe({
-    sc <- all_scenarios()
-    projects <- if (nrow(sc)) sort(unique(sc$project)) else character(0)
-    updateSelectInput(session, "sc_project", choices = projects)
-  })
+  # (Project selector removed; scenarios are keyed by uploaded filename.)
 
   # Populate the scenario multi-select based on chosen project.
   # All scenarios within the selected project are ENABLED (selected) by default.
   observe({
     sc <- all_scenarios()
-    req(input$sc_project)
-    scen <- if (nrow(sc)) sort(unique(sc$scenario[sc$project == input$sc_project])) else character(0)
+    scen <- if (nrow(sc)) sort(unique(sc$scenario)) else character(0)
     cmap <- sc_color_map()
 
     if (length(scen) == 0) {
@@ -7843,8 +8107,8 @@ output$restoration_mix_inputs <- renderUI({
   # Filtered scenarios for plotting (coerce numeric cols used by the plots)
   sc_selected <- reactive({
     sc <- all_scenarios()
-    req(nrow(sc) > 0, input$sc_project, input$sc_scenarios)
-    d <- sc[sc$project == input$sc_project & sc$scenario %in% input$sc_scenarios, ]
+    req(nrow(sc) > 0, input$sc_scenarios)
+    d <- sc[sc$scenario %in% input$sc_scenarios, ]
     num_cols <- c("cost", "roi", "restored_rap", "elev_gain_10yr",
                   "baseline_cover", "restored_cover", "baseline_budget",
                   "restored_budget", "baseline_rap", "site_area_m2")
@@ -7863,17 +8127,10 @@ output$restoration_mix_inputs <- renderUI({
   # mix) for the selected scenarios, straight from their .json files, since
   # all_scenarios() flattens to scalar fields only.
   sc_selected_full <- reactive({
-    req(input$sc_project, input$sc_scenarios)
-    files <- list.files(input$scenario_folder, pattern = "\\.json$", full.names = TRUE)
-    if (length(files) == 0) return(list())
-    objs <- lapply(files, function(f) tryCatch(fromJSON(f), error = function(e) NULL))
-    objs <- objs[!vapply(objs, is.null, logical(1))]
-    keep <- vapply(objs, function(o) {
-      identical(as.character(o$project), input$sc_project) &&
-        as.character(o$scenario) %in% input$sc_scenarios
-    }, logical(1))
-    objs <- objs[keep]
-    setNames(objs, vapply(objs, function(o) as.character(o$scenario), character(1)))
+    req(input$sc_scenarios)
+    objs <- sc_uploads()
+    if (length(objs) == 0) return(list())
+    objs[names(objs) %in% input$sc_scenarios]
   })
 
   # fromJSON simplifies a JSON array-of-objects into a data.frame. These helpers
@@ -8024,98 +8281,74 @@ output$restoration_mix_inputs <- renderUI({
     }
   }, ignoreInit = TRUE)
 
-  # Project cost bar (ggplotly; hover shows scenario + value)
-  output$sc_cost_bar <- plotly::renderPlotly({
-    d <- sc_selected()
-    shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
-    cols <- sc_colors()
-    d$scenario <- factor(d$scenario, levels = d$scenario)
-    p <- ggplot(d, aes(x = scenario, y = cost, fill = scenario,
-                       text = paste0(scenario, "<br>Cost: $",
-                                     format(round(cost), big.mark = ",")))) +
-      geom_col() +
-      labs(x = NULL, y = "Cost ($)") +
-      scale_fill_manual(values = cols) +
-      sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_blank())
-    plotly::ggplotly(p, tooltip = "text") |>
-      plotly::layout(showlegend = FALSE, margin = list(t = 50), title = "Project Cost")
-  })
-
-  # ROI bar: net kg CaCO3 per dollar (ggplotly; hover shows scenario + value)
-  output$sc_roi_bar <- plotly::renderPlotly({
-    d <- sc_selected()
-    shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
-    cols <- sc_colors()
-    d$scenario <- factor(d$scenario, levels = d$scenario)
-    p <- ggplot(d, aes(x = scenario, y = roi_kg_per_dollar, fill = scenario,
-                       text = paste0(scenario, "<br>ROI: ",
-                                     round(roi_kg_per_dollar, 3), " kg/$"))) +
-      geom_col() +
-      labs(x = NULL, y = "ROI (net kg CaCO\u2083/$)") +
-      scale_fill_manual(values = cols) +
-      sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_blank())
-    plotly::ggplotly(p, tooltip = "text") |>
-      plotly::layout(showlegend = FALSE, margin = list(t = 50), title = "Return on Investment")
-  })
-
-  # Per-scenario RAP bar with reference lines + status bands.
-  # Bands ride through tooltip="text" as "erosion"/"stasis".
-  output$sc_rap_bar <- plotly::renderPlotly({
+  # Combined metrics bar: Cost | ROI | Restored RAP in one figure.
+  # Built natively in plotly (not ggplotly) so the three panels share a single
+  # legend keyed on scenario color + the reference-line annotations. Panels are
+  # laid out left-to-right via three x-axes on a single plot.
+  output$sc_metrics_bar <- plotly::renderPlotly({
     d <- sc_selected()
     shiny::validate(shiny::need(nrow(d) > 0, "Select one or more scenarios."))
     cols <- sc_colors()
 
     dark <- isTRUE(input$dark_mode)
     paper_bg <- if (dark) "#232a33" else "white"
+    plot_bg  <- if (dark) "#232a33" else "white"
     font_col <- if (dark) "#e6e6e6" else "#333333"
     grid_col <- if (dark) "#5a6472" else "#d9d9d9"
 
+    d$scenario <- factor(d$scenario, levels = d$scenario)
+    scen_levels <- levels(d$scenario)
+    n_sc <- nrow(d)
+
+    bar_cols <- unname(cols[as.character(d$scenario)])
+
+    # Reference lines for the RAP panel (x3).
     geo_baseline <- 3.1
     slr_refs <- c(
       "Int @2030" = Int_rate_at(2030),
       "Int @2050" = Int_rate_at(2050),
       "Int @2070" = Int_rate_at(2070)
     )
-
     slr_for_axis <- if (isTRUE(input$sc_show_slr)) slr_refs else numeric(0)
-    data_min <- min(c(d$restored_rap, geo_baseline, slr_for_axis, -0.5), na.rm = TRUE)
-    y_lo <- rap_axis_min(data_min)
-    y_hi <- max(c(d$restored_rap, geo_baseline, slr_for_axis), na.rm = TRUE) + 1
+    rap_min <- min(c(d$restored_rap, geo_baseline, slr_for_axis, -0.5), na.rm = TRUE)
+    rap_lo  <- rap_axis_min(rap_min)
+    rap_hi  <- max(c(d$restored_rap, geo_baseline, slr_for_axis), na.rm = TRUE) + 1
 
-    d$scenario <- factor(d$scenario, levels = d$scenario)
-    n_sc <- nrow(d)
-    # geom_rect status bands spanning the full categorical width
-    bands <- status_bands_df(0.4, n_sc + 0.6, y_lo)
+    # One scatter trace per scenario carries the legend swatch; the bars
+    # themselves suppress their own legend entries so each scenario appears once.
+    fig <- plotly::plot_ly()
 
-    p <- ggplot(d, aes(x = scenario, y = restored_rap, fill = scenario)) +
-      geom_col(aes(text = paste0(scenario,
-                                 "<br>Restored RAP: ", round(restored_rap, 2), " mm/yr")),
-               alpha = 1, width = 0.7) +
-      # Removed bands; they draw in front of the scenario bars. Changed to lines.
-      # geom_rect(data = bands, inherit.aes = FALSE,
-      #           aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax,
-      #               fill = fill, text = label), alpha = 0.30) +
-      # scale_fill_manual(values = c(cols, setNames(c("red", "yellow"), c("red", "yellow")))) +
-      scale_fill_manual(values = cols) +
-      scale_y_continuous(limits = c(y_lo, y_hi), breaks = rap_axis_breaks(y_lo, y_hi)) +
-      labs(x = NULL, y = "Restored RAP (mm/yr)") +
-      sc_theme()[[1]] +
-      theme(legend.position = "none", axis.text.x = element_blank())
-
-    gp <- plotly::ggplotly(p, tooltip = "text") |>
-      plotly::layout(
-        margin = list(t = 50),
-        title = "Restored Reef Accretion Potential",
-        paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
-        font = list(color = font_col),
-        xaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col),
-        yaxis = list(color = font_col, gridcolor = grid_col, tickcolor = grid_col)
+    # --- Panel 1: Cost (xaxis / yaxis) ---
+    fig <- fig |>
+      plotly::add_bars(
+        x = d$scenario, y = d$cost,
+        marker = list(color = bar_cols),
+        xaxis = "x", yaxis = "y",
+        showlegend = FALSE, name = "Cost",
+        hovertemplate = paste0("%{x}<br>Cost: $%{y:,.0f}<extra></extra>")
       )
 
-    # Geologic baseline always drawn; SLR Int rates only when toggled on.
-    # ref_df expanded to include stasis and erosion thresholds:
+    # --- Panel 2: ROI (x2 / y2) ---
+    fig <- fig |>
+      plotly::add_bars(
+        x = d$scenario, y = d$roi_kg_per_dollar,
+        marker = list(color = bar_cols),
+        xaxis = "x2", yaxis = "y2",
+        showlegend = FALSE, name = "ROI",
+        hovertemplate = paste0("%{x}<br>ROI: %{y:.3f} kg/$<extra></extra>")
+      )
+
+    # --- Panel 3: Restored RAP (x3 / y3) ---
+    fig <- fig |>
+      plotly::add_bars(
+        x = d$scenario, y = d$restored_rap,
+        marker = list(color = bar_cols),
+        xaxis = "x3", yaxis = "y3",
+        showlegend = FALSE, name = "RAP",
+        hovertemplate = paste0("%{x}<br>Restored RAP: %{y:.2f} mm/yr<extra></extra>")
+      )
+
+    # Reference lines on the RAP panel. Drawn across the categorical range.
     ref_df <- data.frame(
       label = c("Geologic baseline", "Stasis", "Erosion"),
       yval  = c(geo_baseline, 0.5, -0.5),
@@ -8131,17 +8364,132 @@ output$restoration_mix_inputs <- renderUI({
       ))
     }
     ref_df <- ref_df[is.finite(ref_df$yval), ]
-    for (k in seq_len(nrow(ref_df))) {
-      gp <- gp |>
+
+    # ---- Shared legend ----
+    # Legend swatches live on a DEDICATED hidden axis pair (xlgd/ylgd) so their
+    # numeric coords never land on the category bar axes (which triggers the
+    # "discrete & non-discrete on same axis" warning and category drift). The
+    # hidden axis sits off-canvas and is not drawn.
+    for (s in scen_levels) {
+      fig <- fig |>
         plotly::add_trace(
-          x = c(0.4, n_sc + 0.6), y = c(ref_df$yval[k], ref_df$yval[k]),
-          type = "scatter", mode = "lines",
-          line = list(color = ref_df$col[k], width = 1.4, dash = "dash"),
-          showlegend = FALSE, inherit = FALSE, hoverinfo = "text",
-          text = paste0(ref_df$label[k], ": ", round(ref_df$yval[k], 2), " mm/yr")
+          x = c(0, 1), y = c(0, 0), type = "scatter", mode = "markers",
+          xaxis = "x4", yaxis = "y4",
+          marker = list(color = unname(cols[s]), size = 12, symbol = "square"),
+          name = s, legendgroup = "scenarios",
+          showlegend = TRUE, inherit = FALSE, hoverinfo = "skip"
         )
     }
-    gp
+    for (k in seq_len(nrow(ref_df))) {
+      fig <- fig |>
+        plotly::add_trace(
+          x = c(0, 1), y = c(0, 0), type = "scatter", mode = "lines",
+          xaxis = "x4", yaxis = "y4",
+          line = list(color = ref_df$col[k], width = 2, dash = "dash"),
+          name = ref_df$label[k], legendgroup = "reflines",
+          showlegend = TRUE, inherit = FALSE, hoverinfo = "skip"
+        )
+    }
+
+    # Three side-by-side x-axis domains with a small gutter between them.
+    gut <- 0.08
+    dom1 <- c(0,                 1/3 - gut/2)
+    dom2 <- c(1/3 + gut/2,       2/3 - gut/2)
+    dom3 <- c(2/3 + gut/2,       1)
+
+    # ---- Shared-zero alignment for the Cost + ROI panels ----
+    # Cost is always >= 0; ROI can be negative. To put y=0 at the same pixel in
+    # both panels, give them ranges whose zero sits at an identical fractional
+    # height. Compute each panel's natural [lo, hi] with a small headroom, then
+    # expand whichever panel is needed so both share the max "below-zero
+    # fraction". The RAP panel keeps its own independent range.
+    cost_max <- max(c(d$cost, 0), na.rm = TRUE)
+    cost_lo  <- 0
+    cost_hi  <- if (is.finite(cost_max) && cost_max > 0) cost_max * 1.05 else 1
+
+    roi_vals <- d$roi_kg_per_dollar[is.finite(d$roi_kg_per_dollar)]
+    roi_max  <- max(c(roi_vals, 0), na.rm = TRUE)
+    roi_min  <- min(c(roi_vals, 0), na.rm = TRUE)
+    roi_pad  <- 0.05 * max(roi_max - roi_min, 1e-9)
+    roi_hi0  <- if (roi_max > 0) roi_max + roi_pad else roi_pad
+    roi_lo0  <- if (roi_min < 0) roi_min - roi_pad else 0
+
+    # Fractional distance from the bottom of each range up to zero.
+    zero_frac <- function(lo, hi) if (hi > lo) (0 - lo) / (hi - lo) else 0
+    f_cost <- zero_frac(cost_lo, cost_hi)   # 0 (cost bottom is zero)
+    f_roi  <- zero_frac(roi_lo0, roi_hi0)
+    f_tgt  <- max(f_cost, f_roi)            # common below-zero fraction
+
+    # Re-expand each range downward so its zero sits at f_tgt of the span, with
+    # the top fixed. new_lo = hi - (hi - 0) / (1 - f_tgt).
+    expand_to_frac <- function(hi, f) if (f < 1) hi - (hi - 0) / (1 - f) else hi
+    cost_lo <- expand_to_frac(cost_hi, f_tgt)
+    roi_lo0 <- expand_to_frac(roi_hi0, f_tgt)
+
+    axis_cat <- function(domain, title) {
+      list(
+        domain = domain,
+        title = list(
+          text = sprintf("<b>%s</b>", title),
+          font = list(color = font_col, size = 16)
+        ),
+        type = "category",
+        categoryorder = "array", categoryarray = scen_levels,
+        showticklabels = FALSE, side = "top",
+        color = font_col, gridcolor = grid_col, tickcolor = grid_col
+      )
+    }
+
+    axis_y <- function(title, rng = NULL, breaks = NULL, anchor = NULL) {
+      a <- list(title = list(text = title, font = list(size = 16)),
+                color = font_col, gridcolor = grid_col, tickcolor = grid_col)
+      if (!is.null(rng))    a$range    <- rng
+      if (!is.null(breaks)) a$tickvals <- breaks
+      if (!is.null(anchor)) a$anchor   <- anchor
+      a
+    }
+
+    # Reference-line shapes, pinned to the RAP panel's pixel box.
+    ref_shapes <- lapply(seq_len(nrow(ref_df)), function(k) {
+      list(
+        type = "line", xref = "x3 domain", yref = "y3",
+        x0 = 0, x1 = 1, y0 = ref_df$yval[k], y1 = ref_df$yval[k],
+        line = list(color = ref_df$col[k], width = 1.4, dash = "dash")
+      )
+    })
+
+    # Hidden axis pair for the off-canvas legend swatches (not drawn).
+    axis_hidden <- list(
+      overlaying = "x", visible = FALSE, showgrid = FALSE,
+      zeroline = FALSE, showticklabels = FALSE,
+      range = c(10, 11), domain = c(0, 0.001)
+    )
+    axis_hidden_y <- list(
+      overlaying = "y", visible = FALSE, showgrid = FALSE,
+      zeroline = FALSE, showticklabels = FALSE,
+      range = c(10, 11), domain = c(0, 0.001)
+    )
+
+    fig |>
+      plotly::layout(
+        paper_bgcolor = paper_bg, plot_bgcolor = plot_bg,
+        font = list(color = font_col),
+        margin = list(t = 60, b = 40),
+        barmode = "overlay",
+        shapes = ref_shapes,
+        xaxis  = axis_cat(dom1, "Project Cost"),
+        xaxis2 = axis_cat(dom2, "Return on Investment"),
+        xaxis3 = axis_cat(dom3, "Restored Reef Accretion Potential"),
+        yaxis  = axis_y("Cost ($)", c(cost_lo, cost_hi)),
+        yaxis2 = axis_y("ROI (net kg CaCO\u2083/$)", c(roi_lo0, roi_hi0), anchor = "x2"),
+        yaxis3 = axis_y("Restored RAP (mm/yr)", c(rap_lo, rap_hi),
+                        breaks = rap_axis_breaks(rap_lo, rap_hi), anchor = "x3"),
+        xaxis4 = axis_hidden,
+        yaxis4 = axis_hidden_y,
+        legend = list(orientation = "v", x = 1.02, y = 1,
+                      font = list(color = font_col),
+                      bgcolor = "rgba(0,0,0,0)")
+      )
   })
 
   # ---- Population timeline for the DT-selected scenario ----
@@ -8208,7 +8556,7 @@ output$restoration_mix_inputs <- renderUI({
       scale_color_manual(values = cols, guide = "none") +
       scale_linetype_manual(values = c("Baseline" = "solid", "Outplant" = "longdash"),
                             guide = "none") +
-      scale_x_continuous(limits = c(0, max_yr + 1), breaks = seq(0, max_yr, if (max_yr < 25) 2 else 5)) +
+      scale_x_continuous(limits = c(0, max_yr + 1), breaks = seq(0, max_yr, if (max_yr < 15) 1 else if (max_yr < 25) 2 else 5)) +
       labs(x = "Year", y = "Colonies") +
       sc_theme()[[1]]
 
@@ -8284,7 +8632,7 @@ output$restoration_mix_inputs <- renderUI({
                                        "<br>Simpson: ", round(value, 3)))) +
       geom_line(linewidth = 1.1) +
       scale_color_manual(values = cols, guide = "none") +
-      scale_x_continuous(limits = c(0, max_yr + 1), breaks = seq(0, max_yr, if (max_yr < 25) 2 else 5)) +
+      scale_x_continuous(limits = c(0, max_yr + 1), breaks = seq(0, max_yr, if (max_yr < 15) 1 else if (max_yr < 25) 2 else 5)) +
       labs(x = "Year", y = "Simpson diversity (1 - D)") +
       sc_theme()[[1]]
 
@@ -8364,8 +8712,14 @@ output$restoration_mix_inputs <- renderUI({
     ncol_g <- length(year_set)
     shiny::validate(shiny::need(nrow_g > 0 && ncol_g > 0, "Nothing to plot."))
 
-    fig <- plotly::plot_ly()
-    pad_x <- 0.02; pad_y <- 0.06
+    # Per-row pixel height so pies never shrink: each scenario row gets a fixed
+    # band; the container div scrolls when the total exceeds its max-height.
+    # Height is set on the constructor (layout(height=) is deprecated).
+    row_px   <- 400
+    total_px <- max(row_px, length(scen_order) * row_px + 300)
+    fig <- plotly::plot_ly(height = total_px)
+    pad_x <- 0.002
+    pad_y <- 0.002
 
     for (ri in seq_along(scen_order)) {
       scen_name <- scen_order[ri]
@@ -8377,7 +8731,9 @@ output$restoration_mix_inputs <- renderUI({
       for (ci in seq_along(year_set)) {
         yr <- year_set[ci]
         idx <- match(yr, yr_full)
-        labs <- character(0); vals <- numeric(0); mcols <- character(0)
+        labs <- character(0)
+        vals <- numeric(0)
+        mcols <- character(0)
         if (!is.na(idx)) {
           for (sp_nm in names(yc)) {
             v <- .safe_num(yc[[sp_nm]][idx])
@@ -8391,7 +8747,7 @@ output$restoration_mix_inputs <- renderUI({
         x0 <- (ci - 1) / ncol_g + pad_x
         x1 <-  ci      / ncol_g - pad_x
         y1 <- 1 - ((ri - 1) / nrow_g) - pad_y
-        y0 <- 1 - ( ri      / nrow_g) + pad_y
+        y0 <- 1 -  (ri      / nrow_g) + pad_y
         if (length(vals) == 0) next
         fig <- plotly::add_pie(
           fig, labels = labs, values = vals,
@@ -8410,36 +8766,80 @@ output$restoration_mix_inputs <- renderUI({
     font_col <- if (dark) "#e6e6e6" else "#333333"
     paper_bg <- if (dark) "#232a33" else "white"
 
-    anns <- list()
+    # Scenario color map (for the per-row bracket color).
+    scen_cols <- sc_color_map()
+
+    # Row/column geometry. Each row occupies a 1/nrow_g band in paper coords
+    # (top row highest). We reserve a small fraction at the BOTTOM of each band
+    # for the scenario label + bracket so they sit just under that row's pies
+    # and never creep into the plotting area of the row below.
+    row_h   <- 1 / nrow_g
+    lab_gap <- min(0.012, row_h * 0.002)  # label sits this far below the band
+    brk_gap <- lab_gap + 0.002            # bracket just under the label
+    brk_tick <- min(0.100, row_h * 0.100)  # height of the upward bracket arms
+
+    anns   <- list()
+    shapes <- list()
+
     for (ri in seq_along(scen_order)) {
-      yc_row <- 1 - ((ri - 0.75) / nrow_g)
+      scen_name <- scen_order[ri]
+      # Band for this row: [band_lo, band_hi] in paper y.
+      band_hi <- 1 - (ri - 1) * row_h
+      band_lo <- 1 -  ri      * row_h
+
+      # Label placed just below the band (anchored to its top so it hangs down).
+      lab_y <- band_lo - lab_gap
       anns[[length(anns) + 1]] <- list(
-        x = 0.0, y = yc_row, xref = "paper", yref = "paper",
-        text = scen_order[ri], showarrow = FALSE, xanchor = "right",
-        font = list(color = font_col, size = 14)
+        x = 0.5, y = lab_y, xref = "paper", yref = "paper",
+        text = sprintf("<b>%s</b>", scen_name), showarrow = FALSE,
+        xanchor = "center", yanchor = "bottom",
+        font = list(color = font_col, size = 18)
+      )
+
+      # Upward-facing bracket spanning the row width, just below the label,
+      # colored by the scenario. Drawn as a single open path: up-tick, across,
+      # up-tick. x spans the full pie-grid width (match the pie pad_x margins).
+      brk_y   <- band_lo - brk_gap
+      brk_col <- if (scen_name %in% names(scen_cols)) scen_cols[[scen_name]] else "#888888"
+      x_left  <- pad_x
+      x_right <- 1 - pad_x
+      shapes[[length(shapes) + 1]] <- list(
+        type = "path", xref = "paper", yref = "paper",
+        path = sprintf("M %f %f L %f %f L %f %f L %f %f",
+                       x_left,  brk_y + brk_tick,
+                       x_left,  brk_y,
+                       x_right, brk_y,
+                       x_right, brk_y + brk_tick),
+        line = list(color = brk_col, width = 3)
       )
     }
+
+    # Year labels: center each on the SAME padded column domain the pies use so
+    # they line up with the pie centers (plotly centers each pie in its domain).
     for (ci in seq_along(year_set)) {
-      xc_col <- (ci - 0.5) / ncol_g
+      x0 <- (ci - 1) / ncol_g + pad_x
+      x1 <-  ci      / ncol_g - pad_x
+      xc_col <- (x0 + x1) / 2
       anns[[length(anns) + 1]] <- list(
         x = xc_col, y = 1.0, xref = "paper", yref = "paper",
-        text = paste0("Year ", year_set[ci]), showarrow = FALSE, yanchor = "bottom",
-        font = list(color = font_col, size = 14)
+        text = paste0("Year ", year_set[ci]), showarrow = FALSE,
+        xanchor = "center", yanchor = "bottom",
+        font = list(color = font_col, size = 20)
       )
     }
 
-    # Per-row pixel height so pies never shrink: each scenario row gets a fixed
-    # band; the container div scrolls when the total exceeds its max-height.
-    row_px   <- 240
-    total_px <- max(row_px, nrow_g * row_px + 60)
-
     fig |> plotly::layout(
-      height = total_px,
       paper_bgcolor = paper_bg, plot_bgcolor = paper_bg,
       font = list(color = font_col),
-      margin = list(l = 140, t = 40, r = 10, b = 10),
+      margin = list(l = 5, t = 80, r = 5, b = 5),
       annotations = anns,
-      title = "Percent-Cover Composition over Time",
+      shapes = shapes,
+      title = list(
+        text = "Percent-Cover Composition over Time",
+        font = list(
+          size = 24, color = font_col
+        )
+      ),
       showlegend = FALSE
     )
   })
@@ -8448,7 +8848,8 @@ output$restoration_mix_inputs <- renderUI({
   output$sc_pie_legend_ui <- renderUI({
     pd <- sc_pie_data()
     if (is.null(pd)) return(NULL)
-    have <- pd$have; scen_order <- pd$scen_order
+    have <- pd$have
+    scen_order <- pd$scen_order
     sp_cols <- resolve_species_colors(pd$all_species)
 
     present_species <- sort(unique(unlist(lapply(scen_order, function(scen_name) {
@@ -8463,14 +8864,14 @@ output$restoration_mix_inputs <- renderUI({
     dark <- isTRUE(input$dark_mode)
     txt_col <- if (dark) "#e6e6e6" else "#333333"
     tagList(
-      tags$div(style = paste0("font-weight:bold; margin-bottom:4px; color:", txt_col, ";"),
+      tags$div(style = paste0("font-weight:bold; font-size:18px; margin-bottom:4px; color:", txt_col, ";"),
                "Species"),
       lapply(present_species, function(sp_nm) {
         tags$div(style = "display:flex; align-items:center; gap:6px; margin-bottom:2px;",
           tags$span(style = paste0(
             "display:inline-block; width:14px; height:14px; border:1px solid #888;",
             "border-radius:2px; background:", unname(sp_cols[sp_nm]), ";")),
-          tags$span(style = paste0("font-size:12px; font-style:italic; color:", txt_col, ";"),
+          tags$span(style = paste0("font-size:16px; font-style:italic; color:", txt_col, ";"),
                     sp_nm)
         )
       })
