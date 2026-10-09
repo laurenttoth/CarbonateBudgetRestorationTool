@@ -2334,7 +2334,7 @@ header <- dashboardHeader(
         inputId = "dark_mode",
         label = "Dark Mode",
         status = "primary",
-        value = TRUE,
+        # value = TRUE, # Comment to turn off by default; uncomment to turn on by default
         right = TRUE,
         inline = TRUE
       )
@@ -2824,10 +2824,15 @@ body <- dashboardBody(
         'save_scenario': 'Save the results of this simulation to a .json file. Compare these outputs in the Scenario Comparison tab.',
         'run_sim': 'Run the growth simulation with the current scenario parameters.',
         'target_cover_increase': 'Hypothetical increase in coral cover, used to preview restored reef status on the map.',
-        'symbolize_by': 'Choose which metric colors the site markers.',
-        'show_named_reefs': 'Overlay labeled named-reef points and polygons on the map.',
         'filter_habitat_dd': 'Only display sites in the selected habitat(s).',
-        'filter_year_dd': 'Only display sites surveyed in the selected year(s).',
+        'filter_year_range': 'Only display sites with surveys in the selected year range.',
+        'filter_gross_range': 'Only display sites with gross bioerosion in the selected range.',
+        'filter_cover_range': 'Only display sites with total coral cover in the selected range.',
+        'symbolize_by': 'Choose which metric colors the site markers.',
+        'show_named_reefs': 'Overlay labeled named-reef locations on the map (only displays at higher zoom levels).',
+        'point_size_down': 'Decrease the size of the site markers on the map.',
+        'point_size_up': 'Increase the size of the site markers on the map.',
+        'point_size_label': 'Current size of the site markers on the map.',
         'show_slr': 'Overlay projected sea-level-rise rates on the timeline.',
         'sc_project': 'Select a project within which to compare scenarios.',
         'sc_scenarios': 'Select which scenarios to compare within the selected project.',

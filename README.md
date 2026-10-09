@@ -6,6 +6,8 @@ This repository contains a Shiny app and carbonate-budget data for sites in the 
 
 The Reef Persistence Tool was adapted by Connor M. Jenkins at the U.S. Geological Survey St. Petersburg Coastal and Marine Science Center from Alice Webb's original Reef Persistence Tool. Adaptation conceptualized and guided by Dr. Lauren T. Toth (USGS) and Dr. John Morris (NOAA).
 
+Full access is currently limited to users who have been provided an access token. The URL above is for demonstration purposes only.
+
 ## Usage
 
 Use the `☰` button in the header bar to show/hide the navigation sidebar. Click on the sidebar tabs to navigate between pages.
@@ -56,7 +58,7 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     - Fill out the template, save it under a new name, and load it using the `Load .xlsx` input. Input parameters will be populated automatically based on the contents of the uploaded file.
 
-    - A copy of the most recently uploaded baseline cover file is cached in a `cache` folder created where `app.R` is stored. The cached data can be re-uploaded by clicking the `↑Cache` button. Use the `Clear cache` button to delete the cached file (the original file will be unaffected).
+    -A cache file is overwritten with a copy of the scenario parameters every time the simulation is run. The cached data can be re-uploaded by clicking the `↑ Cache` button, e.g. to return to the last set of inputs if the current set has not been simulated. Use the `Clear cache` button to delete the cache.
 
     **(b) Create from scratch:** Use the inputs to name the site and designate its location, area, subregion, habitat, and baseline cover. Use the `Save baseline` button to save the scratch inputs in an `.xlsx` file which can be uploaded to the app in a subsequent session. Once the saved from-scratch `.xlsx` is uploaded, its data will be cached.
 
@@ -130,7 +132,7 @@ Use this tab to simulate a restoration effort at a reef site. Follow these steps
 
     **IMPORTANT: Existing scenarios' filenames may be edited, but the double-underscore between the project and scenario labels must be retained.** The app uses this convention to automatically recognize and differentiate projects and scenarios.
 
-    Toggle between saved scenarios' projection timelines by uploading the .json file(s) in the Projected Reef Accretion Potential timeline box and selecting one of the uploaded scenarios from the adjacent dropdown. Multiple scenarios can be uploaded simultaneously. The scenarios can also be uploaded in the `Scenario Comparison` tab to explore and compare their outcome metrics.  
+    Toggle between saved scenarios' projection timelines by uploading the .json file(s) in the Projected Reef Accretion Potential timeline box and selecting one of the uploaded scenarios from the adjacent dropdown. Multiple scenarios can be uploaded simultaneously. The scenarios can also be uploaded in the `Scenario Comparison` tab to explore and compare their outcome metrics.
 
 #### Scenario Comparison
 
@@ -160,7 +162,7 @@ Use this tab to monitor an ongoing restoration effort using observed coral-cover
 
 Without observed data, a basic simulation of a restoration effort at an NCRMP site can be "monitored". Growth is modeled as a linear regression between the original percent-cover and the target percent-cover calculated from the target percent-cover increase selected on the `Reef Site Map`. Click a site on the map to select it for this simulated monitoring, or use the `Select site` dropdown in the `Inputs` section of the `Restoration Monitoring` tab.
 
-Use the `Coral cover .xlsx` and `Bioerosion .xlsx` to submit observed data for monitoring, if available. Use the `↑Example` and `↓Template` buttons to upload example data or download a template, respectively. See the `README` sheets of these workbook files for more information on data entry. See `Restoration_Monitoring_EXAMPLE.xlsx` and `Bioerosion_EXAMPLE.xlsx` in the repository's `www` folder for examples of a complete set of monitoring observation data.
+Use the `Coral cover .xlsx` and `Bioerosion .xlsx` to submit observed data for monitoring, if available. Use the `↑ Example` and `↓ Template` buttons to upload example data or download a template, respectively. See the `README` sheets of these workbook files for more information on data entry. See `Restoration_Monitoring_EXAMPLE.xlsx` and `Bioerosion_EXAMPLE.xlsx` in the repository's `www` folder for examples of a complete set of monitoring observation data.
 
 If the observed reports include data for more than one site, use the `Select site` dropdown to select the site to monitor.
 
